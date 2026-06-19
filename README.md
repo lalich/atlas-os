@@ -34,10 +34,17 @@ atlas greenrock sample-report
 atlas greenrock run-screen
 atlas greenrock candidates
 atlas greenrock report-draft
+atlas greenrock latest-report
+atlas greenrock latest-report --print
+atlas greenrock latest-run
+atlas greenrock latest-candidates
 atlas approvals list
+atlas approvals pending
+atlas approvals latest
 atlas approvals show 1
 atlas approvals approve 1
 atlas approvals reject 1
+atlas dashboard
 atlas runs list
 atlas runs show <run_id>
 atlas artifacts list
@@ -66,10 +73,10 @@ atlas greenrock report-draft
 
 The local screener writes:
 
-- `.atlas/output/greenrock_candidates.csv`
-- `.atlas/output/greenrock_large_cap.csv`
-- `.atlas/output/greenrock_small_cap.csv`
-- `.atlas/output/greenrock_report_draft.md`
+- `.atlas/output/greenrock/<run_id>/greenrock_candidates.csv`
+- `.atlas/output/greenrock/<run_id>/greenrock_large_cap.csv`
+- `.atlas/output/greenrock/<run_id>/greenrock_small_cap.csv`
+- `.atlas/output/greenrock/<run_id>/greenrock_report_draft.md`
 
 The draft report is local mock output only and still requires human approval before any client-facing use.
 
@@ -111,6 +118,22 @@ GreenRock report drafting uses step states of `initialized`, `running`, `complet
 ```
 
 The draft includes an executive summary, methodology, large-cap and small-cap candidate tables, per-name screening rationale, risk notes, human approval language, mock-data language, and compliance-friendly disclaimers. It avoids guarantees and direct personalized recommendations.
+
+## Analyst Shortcuts
+
+These commands provide quick review views without needing to inspect raw database records:
+
+```bash
+atlas greenrock latest-report
+atlas greenrock latest-report --print
+atlas greenrock latest-run
+atlas greenrock latest-candidates
+atlas approvals pending
+atlas approvals latest
+atlas dashboard
+```
+
+`latest-report` finds the newest GreenRock report by workflow run timestamp. `latest-candidates` summarizes the latest run-specific large-cap and small-cap CSV files. `dashboard` shows recent runs, pending approvals, artifact counts, and the latest GreenRock report path.
 
 ## Tests
 

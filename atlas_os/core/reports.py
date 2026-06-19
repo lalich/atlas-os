@@ -79,6 +79,13 @@ def list_reports_for_run(connection: Connection, run_id: str) -> tuple[ReportRec
     return tuple(_row_to_report(row) for row in rows)
 
 
+def list_reports(connection: Connection) -> tuple[ReportRecord, ...]:
+    rows = connection.execute(
+        "SELECT * FROM reports ORDER BY created_at DESC, id DESC",
+    ).fetchall()
+    return tuple(_row_to_report(row) for row in rows)
+
+
 def _row_to_report(row: Row) -> ReportRecord:
     return ReportRecord(
         id=row["id"],
@@ -96,4 +103,3 @@ def _row_to_report(row: Row) -> ReportRecord:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
