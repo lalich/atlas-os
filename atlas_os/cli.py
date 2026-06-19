@@ -7,9 +7,16 @@ from pathlib import Path
 
 from atlas_os import __version__
 from atlas_os.config import get_settings
-from atlas_os.db.database import initialize_database
-from atlas_os.greenrock.report import build_report_draft, build_sample_report
-from atlas_os.greenrock.screener import run_screen, write_screen_outputs
+from atlas_os.core.approvals import (
+    approve_approval,
+    get_approval,
+    list_approvals,
+    reject_approval,
+)
+from atlas_os.db.database import connect, initialize_database
+from atlas_os.greenrock.report import build_sample_report
+from atlas_os.greenrock.screener import run_screen
+from atlas_os.greenrock.workflow import run_greenrock_screening_workflow
 from atlas_os.logging_config import configure_logging
 
 
@@ -23,6 +30,16 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command")
 
     subparsers.add_parser("status", help="Show local Atlas OS status.")
+
+    approvals = subparsers.add_parser("approvals", help="Approval queue commands.")
+    approval_subparsers = approvals.add_subparsers(dest="approval_command")
+    approval_subparsers.add_parser("list", help="List approval queue records.")
+    approval_show = approval_subparsers.add_parser("show", help="Show one approval record.")
+    approval_show.add_argument("approval_id", type=int)
+    approval_approve = approval_subparsers.add_parser("approve", help="Approve one pending record.")
+    approval_approve.add_argument("approval_id", type=int)
+    approval_reject = approval_subparsers.add_parser("reject", help="Reject one pending record.")
+    approval_reject.add_argument("approval_id", type=int)
 
     greenrock = subparsers.add_parser("greenrock", help="GreenRock Analysts commands.")
     greenrock_subparsers = greenrock.add_subparsers(dest="greenrock_command")
@@ -71,13 +88,18 @@ def run_greenrock_sample_report() -> int:
 
 def run_greenrock_screen() -> int:
     settings = get_settings()
-    result = run_screen()
-    paths = write_screen_outputs(result, settings.output_dir)
+    db_path = initialize_database(settings.db_path)
+    with connect(db_path) as connection:
+        workflow_run, artifacts, approval = run_greenrock_screening_workflow(
+            connection,
+            settings.output_dir,
+            include_report_draft=True,
+        )
     print("GreenRock local screen complete")
-    print(f"selected candidates: {len(result.selected)}")
-    print(f"all candidates CSV: {paths['all']}")
-    print(f"large-cap CSV: {paths['large_cap']}")
-    print(f"small-cap CSV: {paths['small_cap']}")
+    print(f"run_id: {workflow_run.run_id}")
+    print(f"status: {workflow_run.status}")
+    print(f"artifacts: {len(artifacts)}")
+    print(f"approval_id: {approval.id if approval else 'none'}")
     print("Mock data only. No external services were used.")
     return 0
 
@@ -98,13 +120,78 @@ def run_greenrock_candidates() -> int:
 
 def run_greenrock_report_draft() -> int:
     settings = get_settings()
-    settings.output_dir.mkdir(parents=True, exist_ok=True)
-    write_screen_outputs(run_screen(), settings.output_dir)
-    report = build_report_draft()
-    output_path = Path(settings.output_dir) / "greenrock_report_draft.md"
-    output_path.write_text(report.markdown, encoding="utf-8")
-    print(f"GreenRock report draft created: {output_path}")
-    print("Draft only. Human approval is required before client-facing use.")
+    db_path = initialize_database(settings.db_path)
+    with connect(db_path) as connection:
+        workflow_run, artifacts, approval = run_greenrock_screening_workflow(
+            connection,
+            settings.output_dir,
+            include_report_draft=True,
+        )
+    print("GreenRock report draft created")
+    print(f"run_id: {workflow_run.run_id}")
+    print(f"status: {workflow_run.status}")
+    print(f"artifacts: {len(artifacts)}")
+    print(f"approval_id: {approval.id if approval else 'none'}")
+    print("Draft is blocked until approved by a human.")
+    return 0
+
+
+def run_approvals_list() -> int:
+    settings = get_settings()
+    db_path = initialize_database(settings.db_path)
+    with connect(db_path) as connection:
+        approvals = list_approvals(connection)
+    print("Approval queue")
+    if not approvals:
+        print("No approval records found.")
+        return 0
+    print("id status artifact_type run_id artifact_path")
+    for approval in approvals:
+        print(
+            f"{approval.id} "
+            f"{approval.status.value} "
+            f"{approval.artifact_type} "
+            f"{approval.run_id or '-'} "
+            f"{approval.artifact_path or '-'}"
+        )
+    return 0
+
+
+def run_approvals_show(approval_id: int) -> int:
+    settings = get_settings()
+    db_path = initialize_database(settings.db_path)
+    with connect(db_path) as connection:
+        approval = get_approval(connection, approval_id)
+    print(f"Approval {approval.id}")
+    print(f"status: {approval.status.value}")
+    print(f"run_id: {approval.run_id}")
+    print(f"artifact_id: {approval.artifact_id}")
+    print(f"artifact_type: {approval.artifact_type}")
+    print(f"artifact_path: {approval.artifact_path}")
+    print(f"requested_at: {approval.requested_at}")
+    print(f"decided_at: {approval.decided_at}")
+    print(f"decided_by: {approval.decided_by}")
+    print(f"notes: {approval.notes}")
+    return 0
+
+
+def run_approvals_approve(approval_id: int) -> int:
+    settings = get_settings()
+    db_path = initialize_database(settings.db_path)
+    with connect(db_path) as connection:
+        approval = approve_approval(connection, approval_id)
+    print(f"Approval {approval.id} approved")
+    print("Report draft may now be used according to human-approved workflow rules.")
+    return 0
+
+
+def run_approvals_reject(approval_id: int) -> int:
+    settings = get_settings()
+    db_path = initialize_database(settings.db_path)
+    with connect(db_path) as connection:
+        approval = reject_approval(connection, approval_id)
+    print(f"Approval {approval.id} rejected")
+    print("Report draft remains blocked from client-facing use.")
     return 0
 
 
@@ -128,6 +215,17 @@ def main(argv: list[str] | None = None) -> int:
         if args.greenrock_command == "report-draft":
             return run_greenrock_report_draft()
         parser.error("greenrock requires a subcommand")
+
+    if args.command == "approvals":
+        if args.approval_command == "list":
+            return run_approvals_list()
+        if args.approval_command == "show":
+            return run_approvals_show(args.approval_id)
+        if args.approval_command == "approve":
+            return run_approvals_approve(args.approval_id)
+        if args.approval_command == "reject":
+            return run_approvals_reject(args.approval_id)
+        parser.error("approvals requires a subcommand")
 
     parser.print_help()
     return 0

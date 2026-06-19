@@ -19,6 +19,27 @@ CREATE TABLE IF NOT EXISTS tasks (
     FOREIGN KEY (project_id) REFERENCES projects (id)
 );
 
+CREATE TABLE IF NOT EXISTS workflow_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL UNIQUE,
+    division TEXT NOT NULL,
+    workflow_name TEXT NOT NULL,
+    status TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    completed_at TEXT,
+    output_paths TEXT NOT NULL DEFAULT '{}',
+    mock_data_used INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS artifacts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL,
+    artifact_type TEXT NOT NULL,
+    path TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (run_id) REFERENCES workflow_runs (run_id)
+);
+
 CREATE TABLE IF NOT EXISTS agents (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     agent_key TEXT NOT NULL UNIQUE,
@@ -32,6 +53,8 @@ CREATE TABLE IF NOT EXISTS approvals (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id INTEGER,
     task_id INTEGER,
+    run_id TEXT,
+    artifact_id INTEGER,
     artifact_type TEXT NOT NULL,
     artifact_path TEXT,
     status TEXT NOT NULL DEFAULT 'pending',
@@ -40,7 +63,9 @@ CREATE TABLE IF NOT EXISTS approvals (
     decided_by TEXT,
     notes TEXT,
     FOREIGN KEY (project_id) REFERENCES projects (id),
-    FOREIGN KEY (task_id) REFERENCES tasks (id)
+    FOREIGN KEY (task_id) REFERENCES tasks (id),
+    FOREIGN KEY (run_id) REFERENCES workflow_runs (run_id),
+    FOREIGN KEY (artifact_id) REFERENCES artifacts (id)
 );
 
 CREATE TABLE IF NOT EXISTS audit_logs (
@@ -66,4 +91,3 @@ CREATE TABLE IF NOT EXISTS reports (
     approved_at TEXT,
     FOREIGN KEY (project_id) REFERENCES projects (id)
 );
-

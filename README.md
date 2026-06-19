@@ -34,6 +34,10 @@ atlas greenrock sample-report
 atlas greenrock run-screen
 atlas greenrock candidates
 atlas greenrock report-draft
+atlas approvals list
+atlas approvals show 1
+atlas approvals approve 1
+atlas approvals reject 1
 ```
 
 You can also run the CLI without installing the console script:
@@ -62,6 +66,20 @@ The local screener writes:
 - `.atlas/output/greenrock_report_draft.md`
 
 The draft report is local mock output only and still requires human approval before any client-facing use.
+
+## Approval Queue
+
+GreenRock screening and report-draft commands persist a local workflow run to SQLite, store artifact records, and create a pending approval for the draft report.
+
+```bash
+atlas greenrock report-draft
+atlas approvals list
+atlas approvals show <id>
+atlas approvals approve <id>
+atlas approvals reject <id>
+```
+
+Report drafts remain blocked from client-facing use while their approval status is `pending` or `rejected`.
 
 ## Tests
 
