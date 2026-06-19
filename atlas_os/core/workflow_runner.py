@@ -92,7 +92,7 @@ class WorkflowRunner:
         context = WorkflowContext(
             connection=self.connection,
             run=workflow_run,
-            output_dir=self.output_dir,
+            output_dir=self.output_dir / self.division / workflow_run.run_id,
         )
         step_records = [create_workflow_step(self.connection, workflow_run.run_id, step.name) for step in self.steps]
 
@@ -159,4 +159,3 @@ class WorkflowRunner:
             artifacts=tuple(context.artifacts),
             approval_id=context.approval_id,
         )
-

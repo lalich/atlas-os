@@ -34,6 +34,7 @@ class CliInspectionTests(unittest.TestCase):
                 runs_show = _run_cli(["runs", "show", run_id])
                 self.assertIn("screen_candidates", runs_show)
                 self.assertIn("blocked_for_approval", runs_show)
+                self.assertIn(f"greenrock/{run_id}/greenrock_report_draft.md", runs_show)
 
                 artifacts_list = _run_cli(["artifacts", "list"])
                 self.assertIn("report_draft_md", artifacts_list)
@@ -41,6 +42,7 @@ class CliInspectionTests(unittest.TestCase):
                 artifact_id = _first_artifact_id(artifacts_list)
                 artifacts_show = _run_cli(["artifacts", "show", artifact_id])
                 self.assertIn("artifact_type:", artifacts_show)
+                self.assertIn(f"greenrock/{run_id}/greenrock_report_draft.md", artifacts_show)
 
                 audit_list = _run_cli(["audit", "list"])
                 self.assertIn("workflow_run_created", audit_list)
@@ -89,4 +91,3 @@ def _first_audit_id(output: str) -> str:
 
 if __name__ == "__main__":
     unittest.main()
-
