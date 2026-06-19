@@ -65,7 +65,7 @@ def _screen_candidates(context: WorkflowContext) -> None:
 
 def _draft_report(context: WorkflowContext) -> None:
     context.output_dir.mkdir(parents=True, exist_ok=True)
-    report = build_report_draft()
+    report = build_report_draft(run_id=context.run.run_id)
     report_path = context.output_dir / "greenrock_report_draft.md"
     report_path.write_text(report.markdown, encoding="utf-8")
     report_artifact = context.record_artifact(
@@ -93,4 +93,3 @@ def _draft_report(context: WorkflowContext) -> None:
     )
     context.approval_id = approval.id
     context.blocked_for_approval = True
-

@@ -102,6 +102,16 @@ atlas audit show <audit_id>
 
 GreenRock report drafting uses step states of `initialized`, `running`, `completed`, `failed`, and `blocked_for_approval`. The draft report step remains blocked until the linked approval is approved.
 
+## GreenRock Report Draft
+
+`atlas greenrock report-draft` creates a professional mock GreenRock Analysts Monthly Report draft in the run-specific output folder:
+
+```text
+.atlas/output/greenrock/<run_id>/greenrock_report_draft.md
+```
+
+The draft includes an executive summary, methodology, large-cap and small-cap candidate tables, per-name screening rationale, risk notes, human approval language, mock-data language, and compliance-friendly disclaimers. It avoids guarantees and direct personalized recommendations.
+
 ## Tests
 
 ```bash
