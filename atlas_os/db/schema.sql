@@ -31,6 +31,17 @@ CREATE TABLE IF NOT EXISTS workflow_runs (
     mock_data_used INTEGER NOT NULL DEFAULT 1
 );
 
+CREATE TABLE IF NOT EXISTS workflow_steps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL,
+    step_name TEXT NOT NULL,
+    status TEXT NOT NULL,
+    started_at TEXT,
+    completed_at TEXT,
+    error TEXT,
+    FOREIGN KEY (run_id) REFERENCES workflow_runs (run_id)
+);
+
 CREATE TABLE IF NOT EXISTS artifacts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     run_id TEXT NOT NULL,
@@ -72,22 +83,34 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id INTEGER,
     task_id INTEGER,
+    run_id TEXT,
+    artifact_id INTEGER,
+    approval_id INTEGER,
     actor TEXT NOT NULL,
     action TEXT NOT NULL,
     detail TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (project_id) REFERENCES projects (id),
-    FOREIGN KEY (task_id) REFERENCES tasks (id)
+    FOREIGN KEY (task_id) REFERENCES tasks (id),
+    FOREIGN KEY (run_id) REFERENCES workflow_runs (run_id),
+    FOREIGN KEY (artifact_id) REFERENCES artifacts (id),
+    FOREIGN KEY (approval_id) REFERENCES approvals (id)
 );
 
 CREATE TABLE IF NOT EXISTS reports (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id INTEGER,
+    run_id TEXT,
+    artifact_id INTEGER,
+    approval_id INTEGER,
     title TEXT NOT NULL,
     report_type TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'draft',
     content_path TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     approved_at TEXT,
-    FOREIGN KEY (project_id) REFERENCES projects (id)
+    FOREIGN KEY (project_id) REFERENCES projects (id),
+    FOREIGN KEY (run_id) REFERENCES workflow_runs (run_id),
+    FOREIGN KEY (artifact_id) REFERENCES artifacts (id),
+    FOREIGN KEY (approval_id) REFERENCES approvals (id)
 );

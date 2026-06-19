@@ -51,6 +51,13 @@ def list_artifacts_for_run(connection: Connection, run_id: str) -> tuple[Artifac
     return tuple(_row_to_artifact(row) for row in rows)
 
 
+def list_artifacts(connection: Connection) -> tuple[Artifact, ...]:
+    rows = connection.execute(
+        "SELECT * FROM artifacts ORDER BY created_at DESC, id DESC",
+    ).fetchall()
+    return tuple(_row_to_artifact(row) for row in rows)
+
+
 def _row_to_artifact(row: Row) -> Artifact:
     return Artifact(
         id=row["id"],

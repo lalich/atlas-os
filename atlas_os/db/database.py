@@ -30,13 +30,42 @@ def connect(db_path: Path) -> sqlite3.Connection:
 
 
 def _migrate_existing_database(connection: sqlite3.Connection) -> None:
+    _add_missing_columns(
+        connection,
+        "approvals",
+        {
+            "run_id": "ALTER TABLE approvals ADD COLUMN run_id TEXT",
+            "artifact_id": "ALTER TABLE approvals ADD COLUMN artifact_id INTEGER",
+        },
+    )
+    _add_missing_columns(
+        connection,
+        "audit_logs",
+        {
+            "run_id": "ALTER TABLE audit_logs ADD COLUMN run_id TEXT",
+            "artifact_id": "ALTER TABLE audit_logs ADD COLUMN artifact_id INTEGER",
+            "approval_id": "ALTER TABLE audit_logs ADD COLUMN approval_id INTEGER",
+        },
+    )
+    _add_missing_columns(
+        connection,
+        "reports",
+        {
+            "run_id": "ALTER TABLE reports ADD COLUMN run_id TEXT",
+            "artifact_id": "ALTER TABLE reports ADD COLUMN artifact_id INTEGER",
+            "approval_id": "ALTER TABLE reports ADD COLUMN approval_id INTEGER",
+        },
+    )
+
+
+def _add_missing_columns(
+    connection: sqlite3.Connection,
+    table_name: str,
+    migrations: dict[str, str],
+) -> None:
     columns = {
         row[1]
-        for row in connection.execute("PRAGMA table_info(approvals)").fetchall()
-    }
-    migrations = {
-        "run_id": "ALTER TABLE approvals ADD COLUMN run_id TEXT",
-        "artifact_id": "ALTER TABLE approvals ADD COLUMN artifact_id INTEGER",
+        for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()
     }
     for column_name, statement in migrations.items():
         if column_name not in columns:

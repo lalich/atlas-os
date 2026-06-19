@@ -38,6 +38,12 @@ atlas approvals list
 atlas approvals show 1
 atlas approvals approve 1
 atlas approvals reject 1
+atlas runs list
+atlas runs show <run_id>
+atlas artifacts list
+atlas artifacts show <artifact_id>
+atlas audit list
+atlas audit show <audit_id>
 ```
 
 You can also run the CLI without installing the console script:
@@ -81,6 +87,21 @@ atlas approvals reject <id>
 
 Report drafts remain blocked from client-facing use while their approval status is `pending` or `rejected`.
 
+## Run Inspection
+
+Workflow runs persist step states, artifacts, report records, and audit log entries in local SQLite.
+
+```bash
+atlas runs list
+atlas runs show <run_id>
+atlas artifacts list
+atlas artifacts show <artifact_id>
+atlas audit list
+atlas audit show <audit_id>
+```
+
+GreenRock report drafting uses step states of `initialized`, `running`, `completed`, `failed`, and `blocked_for_approval`. The draft report step remains blocked until the linked approval is approved.
+
 ## Tests
 
 ```bash
@@ -89,7 +110,7 @@ python3 -m unittest discover
 
 ## Safety Rule
 
-Atlas OS must not publish, email, distribute, or otherwise release client-facing material without explicit human approval. Phase 0 only produces local sample output.
+Atlas OS must not publish, email, distribute, or otherwise release client-facing material without explicit human approval. Current workflows use local mock data only.
 
 ## Documentation
 

@@ -7,6 +7,9 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from sqlite3 import Connection, Row
 
+from atlas_os.core.audit_log import create_audit_log
+from atlas_os.core.reports import update_report_status_for_approval
+
 
 class ApprovalStatus(StrEnum):
     PENDING = "pending"
@@ -50,7 +53,17 @@ def create_approval_request(
         (run_id, artifact_id, artifact_type, artifact_path, ApprovalStatus.PENDING.value, notes),
     )
     connection.commit()
-    return get_approval(connection, cursor.lastrowid)
+    approval = get_approval(connection, cursor.lastrowid)
+    create_audit_log(
+        connection,
+        actor="approval_queue",
+        action="approval_created",
+        detail=f"{artifact_type}: {artifact_path}",
+        run_id=run_id,
+        artifact_id=artifact_id,
+        approval_id=approval.id,
+    )
+    return approval
 
 
 def list_approvals(connection: Connection) -> tuple[ApprovalRequest, ...]:
@@ -126,7 +139,18 @@ def _decide_approval(
             (run_status, approval.run_id),
         )
     connection.commit()
-    return get_approval(connection, approval_id)
+    update_report_status_for_approval(connection, approval_id, status.value)
+    decided = get_approval(connection, approval_id)
+    create_audit_log(
+        connection,
+        actor="approval_queue",
+        action=f"approval_{status.value}",
+        detail=f"Approval {approval_id} {status.value}",
+        run_id=approval.run_id,
+        artifact_id=approval.artifact_id,
+        approval_id=approval_id,
+    )
+    return decided
 
 
 def _row_to_approval(row: Row) -> ApprovalRequest:
