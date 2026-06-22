@@ -60,6 +60,7 @@ PDF export is blocked until the linked approval is approved.
 ```bash
 atlas approvals approve <approval_id>
 atlas greenrock export-pdf <approval_id>
+atlas greenrock export-pdf <approval_id> --open
 atlas greenrock final-packet <approval_id>
 ```
 
@@ -77,6 +78,7 @@ PDF export is idempotent for a run: rerunning export updates/reuses `greenrock_r
 
 ```bash
 atlas greenrock final-packet <approval_id>
+atlas greenrock final-packet <approval_id> --print
 ```
 
 The final packet shows approval status, approval timestamp, run ID, Markdown path, PDF path if exported, artifact list, mock-data disclaimer, and human approval confirmation. Pending or rejected approvals are clearly marked as not final.
@@ -88,6 +90,14 @@ atlas greenrock open-pdf <approval_id>
 ```
 
 This opens the exported PDF on macOS only when the approval is approved and the PDF artifact exists. If no PDF exists, Atlas prints the export command to run next.
+
+## Dashboard Final Status
+
+```bash
+atlas dashboard
+```
+
+The dashboard shows the latest GreenRock report status, approval status, final PDF status, and final PDF path when exported.
 
 ## Commit and Push Changes
 

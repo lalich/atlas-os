@@ -41,7 +41,9 @@ atlas greenrock latest-candidates
 atlas greenrock review
 atlas greenrock open-latest
 atlas greenrock export-pdf <approval_id>
+atlas greenrock export-pdf <approval_id> --open
 atlas greenrock final-packet <approval_id>
+atlas greenrock final-packet <approval_id> --print
 atlas greenrock open-pdf <approval_id>
 atlas approvals list
 atlas approvals pending
@@ -136,7 +138,9 @@ atlas greenrock latest-candidates
 atlas greenrock review
 atlas greenrock open-latest
 atlas greenrock export-pdf <approval_id>
+atlas greenrock export-pdf <approval_id> --open
 atlas greenrock final-packet <approval_id>
+atlas greenrock final-packet <approval_id> --print
 atlas greenrock open-pdf <approval_id>
 atlas approvals pending
 atlas approvals latest
@@ -152,7 +156,9 @@ PDF export is allowed only after the linked report approval is approved:
 ```bash
 atlas approvals approve <approval_id>
 atlas greenrock export-pdf <approval_id>
+atlas greenrock export-pdf <approval_id> --open
 atlas greenrock final-packet <approval_id>
+atlas greenrock final-packet <approval_id> --print
 atlas greenrock open-pdf <approval_id>
 ```
 
@@ -170,14 +176,18 @@ Use the final packet view after approval to confirm the report, PDF, artifacts, 
 
 ```bash
 atlas greenrock final-packet <approval_id>
+atlas greenrock final-packet <approval_id> --print
 ```
 
 Pending or rejected approvals are not treated as final packets. Use `atlas greenrock open-pdf <approval_id>` to open an exported approved PDF on macOS, or to see the next step if no PDF exists yet.
+
+`atlas dashboard` also shows the latest GreenRock approval status, final PDF status, and final PDF path when exported.
 
 ## Operator Docs
 
 - [Operator Runbook](docs/OPERATOR_RUNBOOK.md)
 - [GreenRock Product Notes](docs/GREENROCK_PRODUCT_NOTES.md)
+- [Monthly Report Release Checklist](docs/MONTHLY_REPORT_RELEASE_CHECKLIST.md)
 
 ## Tests
 

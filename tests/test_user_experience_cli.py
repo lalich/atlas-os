@@ -73,6 +73,7 @@ class UserExperienceCliTests(unittest.TestCase):
                     patch("atlas_os.cli.sys.platform", "darwin"),
                     patch("atlas_os.cli.subprocess.run") as mocked_open,
                 ):
+                    mocked_open.return_value.returncode = 0
                     open_output = _run_cli(["greenrock", "open-latest"])
                 self.assertIn("Opened latest GreenRock report:", open_output)
                 mocked_open.assert_called_once()

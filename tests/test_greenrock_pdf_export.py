@@ -119,6 +119,22 @@ class GreenRockPdfExportTests(unittest.TestCase):
             self.assertIn("mock_data_disclaimer:", packet)
             self.assertIn("human_approval_confirmation: approved", packet)
 
+    def test_final_packet_print_includes_markdown_report_contents(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {
+                "ATLAS_DB_PATH": str(root / "atlas.db"),
+                "ATLAS_OUTPUT_DIR": str(root / "output"),
+            }
+            with patch.dict("os.environ", env, clear=False):
+                draft_output = _run_cli(["greenrock", "report-draft"])
+                approval_id = _line_value(draft_output, "approval_id")
+                _run_cli(["approvals", "approve", approval_id])
+                packet = _run_cli(["greenrock", "final-packet", approval_id, "--print"])
+
+            self.assertIn("Markdown report contents", packet)
+            self.assertIn("# GreenRock Analysts Monthly Opportunity Report", packet)
+
     def test_pending_approval_cannot_produce_final_packet_as_final(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -168,10 +184,59 @@ class GreenRockPdfExportTests(unittest.TestCase):
                     patch("atlas_os.cli.sys.platform", "darwin"),
                     patch("atlas_os.cli.subprocess.run") as mocked_open,
                 ):
+                    mocked_open.return_value.returncode = 0
                     output = _run_cli(["greenrock", "open-pdf", approval_id])
 
             self.assertIn("Opened GreenRock PDF:", output)
             mocked_open.assert_called_once()
+
+    def test_export_pdf_open_flag_opens_after_successful_export(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {
+                "ATLAS_DB_PATH": str(root / "atlas.db"),
+                "ATLAS_OUTPUT_DIR": str(root / "output"),
+            }
+            with patch.dict("os.environ", env, clear=False):
+                draft_output = _run_cli(["greenrock", "report-draft"])
+                approval_id = _line_value(draft_output, "approval_id")
+                _run_cli(["approvals", "approve", approval_id])
+                with (
+                    patch("atlas_os.cli.sys.platform", "darwin"),
+                    patch("atlas_os.cli.subprocess.run") as mocked_open,
+                ):
+                    mocked_open.return_value.returncode = 0
+                    output = _run_cli(["greenrock", "export-pdf", approval_id, "--open"])
+
+            self.assertIn("GreenRock final PDF exported", output)
+            self.assertIn("Opened GreenRock PDF:", output)
+            open_calls = [
+                call_args
+                for call_args in mocked_open.call_args_list
+                if call_args.args[0][0] == "open"
+            ]
+            self.assertEqual(len(open_calls), 1)
+
+    def test_dashboard_shows_final_pdf_status(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {
+                "ATLAS_DB_PATH": str(root / "atlas.db"),
+                "ATLAS_OUTPUT_DIR": str(root / "output"),
+            }
+            with patch.dict("os.environ", env, clear=False):
+                draft_output = _run_cli(["greenrock", "report-draft"])
+                approval_id = _line_value(draft_output, "approval_id")
+                dashboard_before = _run_cli(["dashboard"])
+                _run_cli(["approvals", "approve", approval_id])
+                _run_cli(["greenrock", "export-pdf", approval_id])
+                dashboard_after = _run_cli(["dashboard"])
+
+            self.assertIn("final_pdf_status: not exported", dashboard_before)
+            self.assertIn("approval_status: pending", dashboard_before)
+            self.assertIn("final_pdf_status: exported", dashboard_after)
+            self.assertIn("approval_status: approved", dashboard_after)
+            self.assertIn("greenrock_report_final.pdf", dashboard_after)
 
 
 def _run_cli(args: list[str]) -> str:
