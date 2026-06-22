@@ -35,6 +35,7 @@ def _migrate_existing_database(connection: sqlite3.Connection) -> None:
         "tasks",
         {
             "division": "ALTER TABLE tasks ADD COLUMN division TEXT NOT NULL DEFAULT 'general'",
+            "notes": "ALTER TABLE tasks ADD COLUMN notes TEXT",
         },
     )
     _add_missing_columns(

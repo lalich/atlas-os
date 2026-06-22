@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from sqlite3 import Connection, Row
 
 
-TASK_STATUSES = ("pending", "in_progress", "done")
+TASK_STATUSES = ("pending", "in_progress", "awaiting_review", "done")
 
 
 @dataclass(frozen=True)
@@ -15,6 +15,7 @@ class ManualTask:
     name: str
     division: str
     status: str
+    notes: str | None
     assigned_agent: str | None
     created_at: str
     updated_at: str
@@ -24,14 +25,15 @@ def create_manual_task(
     connection: Connection,
     name: str,
     division: str,
+    notes: str | None = None,
     assigned_agent: str | None = None,
 ) -> ManualTask:
     cursor = connection.execute(
         """
-        INSERT INTO tasks (name, division, status, assigned_agent)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO tasks (name, division, status, notes, assigned_agent)
+        VALUES (?, ?, ?, ?, ?)
         """,
-        (name.strip(), division.strip() or "general", "pending", assigned_agent),
+        (name.strip(), division.strip() or "general", "pending", notes, assigned_agent),
     )
     connection.commit()
     return get_manual_task(connection, cursor.lastrowid)
@@ -79,6 +81,7 @@ def _row_to_task(row: Row) -> ManualTask:
         name=row["name"],
         division=row["division"],
         status=row["status"],
+        notes=row["notes"],
         assigned_agent=row["assigned_agent"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],

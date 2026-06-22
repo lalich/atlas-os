@@ -186,7 +186,7 @@ Pending or rejected approvals are not treated as final packets. Use `atlas green
 
 ## Atlas Command Center
 
-Phase 3A adds a local browser dashboard:
+Phase 3B upgrades the local browser dashboard into Atlas Mission Control:
 
 ```bash
 atlas serve
@@ -198,9 +198,28 @@ Then open:
 http://127.0.0.1:8000
 ```
 
-The Command Center shows the Atlas OS overview, project/division switcher, recent workflow runs, pending approvals, latest GreenRock report/PDF, artifact list, audit log summary, manual task board, and planned agent monitor. The GreenRock page includes latest run status, candidate summaries, approval records, and local artifact open links.
+The home page is the Atlas Inbox. It is designed to answer: what needs attention now?
+
+Command Center pages:
+
+- `/` Atlas Inbox with attention counters, actionable cards, recent workflow feed, and navigation.
+- `/projects` project directory for GreenRock Analysts, Variance Capital / The Bat Signal, GreenRock Insurance, and Atlas Core.
+- `/greenrock` report review console with latest run/report/PDF status, candidate summaries, approval actions, local artifact open links, and PDF export after approval.
+- `/tasks` local kanban-style manual task board with backlog, in progress, awaiting review, and completed columns.
+- `/agents` planned agent HUD with inactive/planned status labels.
+- `/reports` local report and artifact index.
+
+Browser approval/rejection actions require a confirmation page before updating local SQLite records. PDF export remains blocked until the linked report approval is approved.
 
 The web app is local development mode only. It uses mock data, keeps the human approval gate mandatory, and does not include publish, send, email, external API, or credential controls.
+
+## Using Atlas Command Center
+
+```bash
+atlas serve
+```
+
+Open `http://127.0.0.1:8000`, review the Atlas Inbox, then use the GreenRock page to inspect report status, approve/reject pending drafts, open local Markdown/PDF artifacts, or export an approved PDF. Use the task board for manual operator tasks only; it does not trigger autonomous execution.
 
 ## Operator Docs
 

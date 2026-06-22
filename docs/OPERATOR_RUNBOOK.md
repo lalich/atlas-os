@@ -99,7 +99,7 @@ atlas dashboard
 
 The dashboard shows the latest GreenRock report status, approval status, final PDF status, and final PDF path when exported.
 
-## Open Atlas Command Center
+## Using Atlas Command Center
 
 ```bash
 atlas serve
@@ -107,15 +107,41 @@ atlas serve
 
 Open `http://127.0.0.1:8000` in a browser.
 
-Use the Command Center to inspect recent workflow runs, pending approvals, latest GreenRock report/PDF paths, artifact records, audit log summaries, the manual task board, and the planned agent monitor.
+The home page is the Atlas Inbox. Start there to see what needs attention now:
 
-The GreenRock page supports local approval/rejection buttons with confirmation prompts and local Markdown/PDF open links. Approval only unlocks local final packet/PDF work; the interface has no publish or send controls.
+- Pending approvals.
+- Reports ready for PDF export.
+- Completed workflows.
+- Failed workflows.
+- Manual tasks awaiting action.
+- Clearly labeled placeholders for future Insurance, Bat Signal, and critique workflows.
+
+Use the navigation cards for:
+
+- Project Directory.
+- GreenRock Analysts.
+- Task Board.
+- Agent Monitor.
+- Approvals.
+- Artifacts / Reports.
+
+## Approve or Reject in Browser
+
+Open `http://127.0.0.1:8000/greenrock`.
+
+Pending report approvals show approve/reject buttons. Each button opens a confirmation page before any local record is changed. Approval only updates the local approval queue and unlocks local final packet/PDF work; it does not publish, send, email, or distribute anything.
+
+PDF export from the browser is available only after approval. It creates or reuses the run-specific `greenrock_report_final.pdf`.
+
+## Open Reports and PDFs
+
+On the GreenRock and Reports pages, use the local open links for Markdown reports, CSV artifacts, and approved PDFs. On macOS, Atlas attempts to open the file locally. On unsupported systems, keep using the displayed path.
 
 ## Manage Manual Tasks
 
 Open `http://127.0.0.1:8000/tasks`.
 
-Manual tasks can be created, assigned to a division, and moved through `pending`, `in_progress`, and `done`. This board is an operator placeholder only and does not trigger autonomous execution.
+Manual tasks can be created with a title, division, notes, and a local state. The kanban columns are backlog, in progress, awaiting review, and completed. This board is an operator placeholder only and does not trigger autonomous execution.
 
 ## Review Planned Agents
 

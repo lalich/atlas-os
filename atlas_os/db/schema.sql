@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     division TEXT NOT NULL DEFAULT 'general',
     name TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
+    notes TEXT,
     assigned_agent TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
