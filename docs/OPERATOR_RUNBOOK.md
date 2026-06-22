@@ -14,7 +14,34 @@ The report is written to:
 .atlas/output/greenrock/<run_id>/greenrock_report_draft.md
 ```
 
-The workflow uses mock data only and creates a pending approval record.
+The default workflow uses mock data and creates a pending approval record.
+
+To make the data mode explicit:
+
+```bash
+atlas greenrock report-draft --data mock
+```
+
+## Attempt Real Data Mode Safely
+
+Real mode is optional and fail-closed.
+
+```bash
+atlas greenrock report-draft --data real
+```
+
+If no provider is configured, Atlas prints a blocked message and does not create a report, approval, artifact, email, publication, or external action.
+
+Optional local yfinance setup:
+
+```bash
+python3 -m pip install -e ".[market-data]"
+export ATLAS_MARKET_DATA_PROVIDER=yfinance
+export ATLAS_GREENROCK_REAL_TICKERS=AAPL,MSFT,NVDA
+atlas greenrock report-draft --data real
+```
+
+Real-data reports still remain draft-only and blocked for human approval.
 
 ## Inspect Candidates
 
@@ -91,6 +118,22 @@ atlas greenrock open-pdf <approval_id>
 
 This opens the exported PDF on macOS only when the approval is approved and the PDF artifact exists. If no PDF exists, Atlas prints the export command to run next.
 
+## Clean Up Older Drafts
+
+Preview cleanup first:
+
+```bash
+atlas greenrock cleanup-drafts --dry-run
+```
+
+Run cleanup:
+
+```bash
+atlas greenrock cleanup-drafts
+```
+
+Cleanup preserves the latest GreenRock draft run/artifacts and every approved final PDF. Older draft Markdown and CSV files are removed locally and their artifact records are marked archived. Approval records and audit logs are not deleted.
+
 ## Dashboard Final Status
 
 ```bash
@@ -124,6 +167,10 @@ Use the navigation cards for:
 - Agent Monitor.
 - Approvals.
 - Artifacts / Reports.
+
+On the GreenRock page, use **Run GreenRock Report** to generate a new local draft through the normal workflow. The button creates a pending approval and does not bypass human review.
+
+Open `http://127.0.0.1:8000/greenrock/final-reports` to review the final PDF archive.
 
 ## Approve or Reject in Browser
 
@@ -162,7 +209,7 @@ Review generated files before committing. Local databases, output reports, logs,
 
 ## Safety Reminders
 
-- Use mock data only until live integrations are explicitly approved.
+- Use mock mode by default unless real-data mode has been explicitly configured for local testing.
 - Do not access client files, credentials, OneDrive, Gmail, IBKR, or external APIs.
 - Do not send email or distribute reports from Atlas OS.
 - Do not treat mock output as investment advice.

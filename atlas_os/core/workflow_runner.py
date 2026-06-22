@@ -67,6 +67,7 @@ class WorkflowRunner:
         steps: tuple[WorkflowStep, ...],
         output_dir: Path,
         mock_data_used: bool = True,
+        data_mode: str | None = None,
     ) -> None:
         self.connection = connection
         self.division = division
@@ -74,6 +75,7 @@ class WorkflowRunner:
         self.steps = steps
         self.output_dir = output_dir
         self.mock_data_used = mock_data_used
+        self.data_mode = data_mode or ("mock" if mock_data_used else "real")
 
     def run(self) -> WorkflowExecution:
         workflow_run = create_workflow_run(
@@ -81,6 +83,7 @@ class WorkflowRunner:
             division=self.division,
             workflow_name=self.workflow_name,
             mock_data_used=self.mock_data_used,
+            data_mode=self.data_mode,
         )
         create_audit_log(
             self.connection,

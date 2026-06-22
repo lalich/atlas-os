@@ -30,7 +30,8 @@ CREATE TABLE IF NOT EXISTS workflow_runs (
     started_at TEXT NOT NULL,
     completed_at TEXT,
     output_paths TEXT NOT NULL DEFAULT '{}',
-    mock_data_used INTEGER NOT NULL DEFAULT 1
+    mock_data_used INTEGER NOT NULL DEFAULT 1,
+    data_mode TEXT NOT NULL DEFAULT 'mock'
 );
 
 CREATE TABLE IF NOT EXISTS workflow_steps (
@@ -50,6 +51,8 @@ CREATE TABLE IF NOT EXISTS artifacts (
     artifact_type TEXT NOT NULL,
     path TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    status TEXT NOT NULL DEFAULT 'active',
+    archived_at TEXT,
     FOREIGN KEY (run_id) REFERENCES workflow_runs (run_id)
 );
 

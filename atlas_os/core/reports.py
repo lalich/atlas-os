@@ -61,6 +61,15 @@ def update_report_status_for_approval(
     connection.commit()
 
 
+def update_report_status(connection: Connection, report_id: int, status: str) -> ReportRecord:
+    connection.execute(
+        "UPDATE reports SET status = ? WHERE id = ?",
+        (status, report_id),
+    )
+    connection.commit()
+    return get_report(connection, report_id)
+
+
 def get_report(connection: Connection, report_id: int) -> ReportRecord:
     row = connection.execute(
         "SELECT * FROM reports WHERE id = ?",

@@ -64,6 +64,8 @@ class ScreeningResult:
     all_candidates: tuple[StockCandidate, ...] = ()
     large_cap: tuple[StockCandidate, ...] = ()
     small_cap: tuple[StockCandidate, ...] = ()
+    data_mode: str = "mock"
+    data_source: str = "mock_sample_data"
 
 
 @dataclass(frozen=True)

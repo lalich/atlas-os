@@ -6,6 +6,7 @@ from datetime import date
 
 from atlas_os.greenrock.models import GreenRockReport, StockCandidate
 from atlas_os.greenrock.scoring import signal_label
+from atlas_os.greenrock.models import ScreeningResult
 from atlas_os.greenrock.screener import run_sample_screen, run_screen
 
 
@@ -49,8 +50,16 @@ def build_sample_report() -> GreenRockReport:
     )
 
 
-def build_report_draft(run_id: str | None = None) -> GreenRockReport:
-    screening = run_screen()
+def build_report_draft(
+    run_id: str | None = None,
+    screening: ScreeningResult | None = None,
+    data_mode: str = "mock",
+    data_source: str = "mock_sample_data",
+) -> GreenRockReport:
+    screening = screening or run_screen()
+    resolved_data_mode = (screening.data_mode or data_mode).upper()
+    resolved_data_source = screening.data_source or data_source
+    is_mock = resolved_data_mode == "MOCK"
     lines = [
         "# GreenRock Analysts Monthly Opportunity Report",
         "",
@@ -58,8 +67,13 @@ def build_report_draft(run_id: str | None = None) -> GreenRockReport:
         "",
         f"**Date:** {date.today().isoformat()}",
         f"**Run ID:** {run_id or 'local-preview'}",
+        f"**Data Mode:** {resolved_data_mode}",
+        f"**Data Source:** {resolved_data_source}",
         "",
-        "> Draft only. This report uses mock data and requires human approval before any client-facing use.",
+        (
+            "> Draft only. This report requires human approval before any client-facing use. "
+            f"Data mode for this run: {resolved_data_mode}."
+        ),
         "",
         "## How to Read This Report",
         "",
@@ -73,7 +87,7 @@ def build_report_draft(run_id: str | None = None) -> GreenRockReport:
         "## Executive Summary",
         "",
         (
-            "The latest mock screen found a full slate of technical-dislocation candidates across both "
+            f"The latest {resolved_data_mode.lower()} screen found a review set of technical-dislocation candidates across both "
             "market-cap groups. Large-cap names generally represent higher-liquidity review candidates, "
             "while the small/mid-cap group may offer sharper dislocation signals with higher volatility "
             "and liquidity sensitivity. The report is intentionally written as a research starting point: "
@@ -83,10 +97,9 @@ def build_report_draft(run_id: str | None = None) -> GreenRockReport:
         "## Market Setup / Regime Placeholder",
         "",
         (
-            "Phase 2A does not ingest live market data or macro inputs. In a production workflow, this "
-            "section would summarize the broader market regime, volatility backdrop, sector participation, "
-            "and liquidity conditions that frame the opportunity set. For now, it remains a placeholder "
-            "to preserve the final report structure while using mock data only."
+            "This section is a placeholder for broader market regime, volatility backdrop, sector "
+            "participation, and liquidity conditions that frame the opportunity set. It is not a "
+            "recommendation and remains subject to human review before any client-facing use."
         ),
         "",
         "## Top Large-Cap Candidates",
@@ -126,20 +139,16 @@ def build_report_draft(run_id: str | None = None) -> GreenRockReport:
         "## Methodology Appendix",
         "",
         (
-            "GreenRock Score is a 0-100 mock technical score built from 52-week low proximity, Bollinger "
+            "GreenRock Score is a 0-100 technical score built from 52-week low proximity, Bollinger "
             "Band location, RSI, 10-day volume acceleration, moving average structure, and a bonus for "
             "trading below the lower 2.5 standard deviation Bollinger Band. Signal labels map as follows: "
             "85-100 Exceptional, 70-84 Strong, 55-69 Watchlist, and below 55 Excluded or Low Priority. "
             "Large-cap and small/mid-cap groups are separated at a $5B mock market-cap threshold."
         ),
         "",
-        "## Mock-Data Disclaimer",
+        "## Data Mode Disclaimer",
         "",
-        (
-            "All securities, prices, volumes, market capitalizations, scores, and company names in this "
-            "draft are mock sample data. No external APIs, live market data, client files, credentials, "
-            "brokerage accounts, email systems, or distribution services were used."
-        ),
+        _data_mode_disclaimer(is_mock, resolved_data_source),
         "",
         "## Compliance Notes",
         "",
@@ -153,6 +162,7 @@ def build_report_draft(run_id: str | None = None) -> GreenRockReport:
     return GreenRockReport(
         title="GreenRock Analysts Monthly Opportunity Report",
         markdown="\n".join(lines) + "\n",
+        source=resolved_data_source,
     )
 
 
@@ -189,7 +199,7 @@ def _screening_rationale(candidates: tuple[StockCandidate, ...]) -> str:
                 "**Why It Screened In**",
                 "",
                 (
-                    f"- Mock price is within {indicators.low_proximity:.1%} of the mock 52-week low, "
+                    f"- Price is within {indicators.low_proximity:.1%} of the 52-week low, "
                     "placing it in the screen's technical dislocation zone."
                 ),
                 (
@@ -198,7 +208,7 @@ def _screening_rationale(candidates: tuple[StockCandidate, ...]) -> str:
                 ),
                 (
                     "- 10-day average volume is rising, suggesting improving attention in the mock "
-                    "data set."
+                    "or configured market data set."
                 ),
                 (
                     "- Moving average structure remains dislocated, with the 8 EMA below the 10 SMA "
@@ -213,9 +223,22 @@ def _screening_rationale(candidates: tuple[StockCandidate, ...]) -> str:
                 ),
                 (
                     "- Weakening volume acceleration, a deteriorating RSI profile, or a continued "
-                    "break below the mock low region would move the name lower in the review queue."
+                    "break below the low region would move the name lower in the review queue."
                 ),
                 "",
             ]
         )
     return "\n".join(lines).strip()
+
+
+def _data_mode_disclaimer(is_mock: bool, data_source: str) -> str:
+    if is_mock:
+        return (
+            "This draft uses mock sample data. No external APIs, live market data, client files, "
+            "credentials, brokerage accounts, email systems, or distribution services were used."
+        )
+    return (
+        f"This draft uses real-market-data mode from {data_source}. It remains draft-only, "
+        "approval-gated, and not approved for publication, email distribution, or client-facing use. "
+        "No client files, brokerage trading systems, email systems, or publishing services were used."
+    )

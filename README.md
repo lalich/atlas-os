@@ -32,8 +32,11 @@ atlas --help
 atlas status
 atlas greenrock sample-report
 atlas greenrock run-screen
+atlas greenrock run-screen --data mock
 atlas greenrock candidates
 atlas greenrock report-draft
+atlas greenrock report-draft --data mock
+atlas greenrock report-draft --data real
 atlas greenrock latest-report
 atlas greenrock latest-report --print
 atlas greenrock latest-run
@@ -45,6 +48,8 @@ atlas greenrock export-pdf <approval_id> --open
 atlas greenrock final-packet <approval_id>
 atlas greenrock final-packet <approval_id> --print
 atlas greenrock open-pdf <approval_id>
+atlas greenrock cleanup-drafts
+atlas greenrock cleanup-drafts --dry-run
 atlas approvals list
 atlas approvals pending
 atlas approvals latest
@@ -71,12 +76,12 @@ python -m atlas_os.cli greenrock run-screen
 
 ## GreenRock Local Screening
 
-Phase 1A includes a mock-data-only GreenRock screening engine. It calculates SMA, EMA, RSI, 2.5 standard deviation Bollinger Bands, 52-week low proximity, 10-day average volume trend, and moving average rate of change.
+GreenRock screening defaults to mock data and calculates SMA, EMA, RSI, 2.5 standard deviation Bollinger Bands, 52-week low proximity, 10-day average volume trend, and moving average rate of change.
 
 ```bash
-atlas greenrock run-screen
+atlas greenrock run-screen --data mock
 atlas greenrock candidates
-atlas greenrock report-draft
+atlas greenrock report-draft --data mock
 ```
 
 The local screener writes:
@@ -86,7 +91,32 @@ The local screener writes:
 - `.atlas/output/greenrock/<run_id>/greenrock_small_cap.csv`
 - `.atlas/output/greenrock/<run_id>/greenrock_report_draft.md`
 
-The draft report is local mock output only and still requires human approval before any client-facing use.
+Draft reports remain local, approval-gated, and blocked from client-facing use. Mock mode is the default.
+
+## GreenRock Real Data Mode
+
+Phase 4A adds a production-shaped market data adapter while keeping mock mode as the default.
+
+```bash
+atlas greenrock report-draft --data real
+```
+
+Real mode fails safely unless a provider is configured locally. A failed configuration attempt does not create a report, approval, artifact, email, publication, or external action.
+
+Optional first provider:
+
+```bash
+python3 -m pip install -e ".[market-data]"
+```
+
+Then configure local-only placeholders in `.env` or your shell:
+
+```text
+ATLAS_MARKET_DATA_PROVIDER=yfinance
+ATLAS_GREENROCK_REAL_TICKERS=AAPL,MSFT,NVDA
+```
+
+Reports clearly state `Data Mode: MOCK` or `Data Mode: REAL`. Real-data reports are still draft-only and blocked until human approval.
 
 ## Approval Queue
 
@@ -184,6 +214,17 @@ Pending or rejected approvals are not treated as final packets. Use `atlas green
 
 `atlas dashboard` also shows the latest GreenRock approval status, final PDF status, and final PDF path when exported.
 
+## Report Lifecycle Cleanup
+
+Use cleanup after final PDFs are exported or after several draft runs have accumulated:
+
+```bash
+atlas greenrock cleanup-drafts --dry-run
+atlas greenrock cleanup-drafts
+```
+
+Cleanup keeps the latest GreenRock draft run/artifacts and preserves all approved final PDFs. Older draft Markdown and CSV files are removed locally and their artifact records are marked archived. Approval records and audit logs are preserved.
+
 ## Atlas Command Center
 
 Phase 3B upgrades the local browser dashboard into Atlas Mission Control:
@@ -204,7 +245,8 @@ Command Center pages:
 
 - `/` Atlas Inbox with attention counters, actionable cards, recent workflow feed, and navigation.
 - `/projects` project directory for GreenRock Analysts, Variance Capital / The Bat Signal, GreenRock Insurance, and Atlas Core.
-- `/greenrock` report review console with latest run/report/PDF status, candidate summaries, approval actions, local artifact open links, and PDF export after approval.
+- `/greenrock` report review console with a Run GreenRock Report button, latest run/report/PDF status, candidate summaries, approval actions, local artifact open links, and PDF export after approval.
+- `/greenrock/final-reports` final PDF archive for approved exported GreenRock PDFs.
 - `/tasks` local kanban-style manual task board with backlog, in progress, awaiting review, and completed columns.
 - `/agents` planned agent HUD with inactive/planned status labels.
 - `/reports` local report and artifact index.
@@ -226,6 +268,7 @@ Open `http://127.0.0.1:8000`, review the Atlas Inbox, then use the GreenRock pag
 - [Operator Runbook](docs/OPERATOR_RUNBOOK.md)
 - [GreenRock Product Notes](docs/GREENROCK_PRODUCT_NOTES.md)
 - [Monthly Report Release Checklist](docs/MONTHLY_REPORT_RELEASE_CHECKLIST.md)
+- [Data Sources](docs/DATA_SOURCES.md)
 
 ## Tests
 
@@ -235,7 +278,7 @@ python3 -m unittest discover
 
 ## Safety Rule
 
-Atlas OS must not publish, email, distribute, or otherwise release client-facing material without explicit human approval. Current workflows use local mock data only.
+Atlas OS must not publish, email, distribute, or otherwise release client-facing material without explicit human approval. Mock mode remains the default; real-data mode is optional, local, and still approval-gated.
 
 ## Documentation
 

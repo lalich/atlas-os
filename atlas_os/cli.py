@@ -24,6 +24,8 @@ from atlas_os.core.reports import ReportRecord, list_reports, list_reports_for_r
 from atlas_os.core.workflow_runs import WorkflowRun, get_workflow_run, list_workflow_runs
 from atlas_os.core.workflow_steps import list_workflow_steps
 from atlas_os.db.database import connect, initialize_database
+from atlas_os.greenrock.lifecycle import cleanup_greenrock_drafts
+from atlas_os.greenrock.market_data import MarketDataConfigurationError
 from atlas_os.greenrock.pdf_export import render_markdown_report_to_pdf
 from atlas_os.greenrock.report import build_sample_report
 from atlas_os.greenrock.screener import run_screen
@@ -82,17 +84,29 @@ def build_parser() -> argparse.ArgumentParser:
         "sample-report",
         help="Generate a local sample GreenRock report from mock data.",
     )
-    greenrock_subparsers.add_parser(
+    run_screen_parser = greenrock_subparsers.add_parser(
         "run-screen",
         help="Run the local GreenRock mock screening engine and write CSV outputs.",
+    )
+    run_screen_parser.add_argument(
+        "--data",
+        choices=("mock", "real"),
+        default="mock",
+        help="Market data mode. Defaults to mock.",
     )
     greenrock_subparsers.add_parser(
         "candidates",
         help="Print the current local GreenRock selected candidates.",
     )
-    greenrock_subparsers.add_parser(
+    report_draft = greenrock_subparsers.add_parser(
         "report-draft",
         help="Generate a local GreenRock draft report from mock screening data.",
+    )
+    report_draft.add_argument(
+        "--data",
+        choices=("mock", "real"),
+        default="mock",
+        help="Market data mode. Defaults to mock.",
     )
     latest_report = greenrock_subparsers.add_parser(
         "latest-report",
@@ -147,6 +161,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Open an approved exported GreenRock PDF on macOS.",
     )
     open_pdf.add_argument("approval_id", type=int)
+    cleanup_drafts = greenrock_subparsers.add_parser(
+        "cleanup-drafts",
+        help="Archive older GreenRock draft artifacts while preserving latest draft and final PDFs.",
+    )
+    cleanup_drafts.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be removed without deleting files or archiving artifacts.",
+    )
 
     return parser
 
@@ -174,21 +197,30 @@ def run_greenrock_sample_report() -> int:
     return 0
 
 
-def run_greenrock_screen() -> int:
+def run_greenrock_screen(data_mode: str = "mock") -> int:
     settings = get_settings()
     db_path = initialize_database(settings.db_path)
-    with connect(db_path) as connection:
-        workflow_run, artifacts, approval = run_greenrock_screening_workflow(
-            connection,
-            settings.output_dir,
-            include_report_draft=True,
-        )
+    try:
+        with connect(db_path) as connection:
+            workflow_run, artifacts, approval = run_greenrock_screening_workflow(
+                connection,
+                settings.output_dir,
+                include_report_draft=True,
+                data_mode=data_mode,
+            )
+    except MarketDataConfigurationError as error:
+        print("GreenRock screen blocked")
+        print(f"data_mode: {data_mode.upper()}")
+        print(f"reason: {error}")
+        print("No report, approval, artifact, email, publication, or external action was created.")
+        return 1
     print("GreenRock local screen complete")
     print(f"run_id: {workflow_run.run_id}")
     print(f"status: {workflow_run.status}")
+    print(f"data_mode: {workflow_run.data_mode.upper()}")
     print(f"artifacts: {len(artifacts)}")
     print(f"approval_id: {approval.id if approval else 'none'}")
-    print("Mock data only. No external services were used.")
+    print("Draft remains blocked until approved by a human.")
     return 0
 
 
@@ -206,18 +238,27 @@ def run_greenrock_candidates() -> int:
     return 0
 
 
-def run_greenrock_report_draft() -> int:
+def run_greenrock_report_draft(data_mode: str = "mock") -> int:
     settings = get_settings()
     db_path = initialize_database(settings.db_path)
-    with connect(db_path) as connection:
-        workflow_run, artifacts, approval = run_greenrock_screening_workflow(
-            connection,
-            settings.output_dir,
-            include_report_draft=True,
-        )
+    try:
+        with connect(db_path) as connection:
+            workflow_run, artifacts, approval = run_greenrock_screening_workflow(
+                connection,
+                settings.output_dir,
+                include_report_draft=True,
+                data_mode=data_mode,
+            )
+    except MarketDataConfigurationError as error:
+        print("GreenRock report draft blocked")
+        print(f"data_mode: {data_mode.upper()}")
+        print(f"reason: {error}")
+        print("No report, approval, artifact, email, publication, or external action was created.")
+        return 1
     print("GreenRock report draft created")
     print(f"run_id: {workflow_run.run_id}")
     print(f"status: {workflow_run.status}")
+    print(f"data_mode: {workflow_run.data_mode.upper()}")
     print(f"artifacts: {len(artifacts)}")
     print(f"approval_id: {approval.id if approval else 'none'}")
     print("Draft is blocked until approved by a human.")
@@ -229,12 +270,14 @@ def run_greenrock_latest_report(print_contents: bool = False) -> int:
     db_path = initialize_database(settings.db_path)
     with connect(db_path) as connection:
         latest_report = _latest_greenrock_report(connection)
+        latest_run = _latest_greenrock_run(connection)
     if latest_report is None:
         print("No GreenRock reports found.")
         return 0
     print("Latest GreenRock report")
     print(f"run_id: {latest_report.run_id}")
     print(f"status: {latest_report.status}")
+    print(f"data_mode: {latest_run.data_mode.upper() if latest_run else 'UNKNOWN'}")
     print(f"path: {latest_report.content_path}")
     if print_contents and latest_report.content_path:
         print("")
@@ -256,6 +299,7 @@ def run_greenrock_latest_run() -> int:
     print("Latest GreenRock run")
     print(f"run_id: {latest_run.run_id}")
     print(f"status: {latest_run.status}")
+    print(f"data_mode: {latest_run.data_mode.upper()}")
     print(f"approval_status: {approval_status}")
     print(f"artifact_count: {len(artifacts)}")
     print(f"started_at: {latest_run.started_at}")
@@ -372,18 +416,24 @@ def run_greenrock_final_packet(approval_id: int, print_contents: bool = False) -
         report = _report_for_approval(connection, approval_id)
         artifacts = list_artifacts_for_run(connection, approval.run_id) if approval.run_id else ()
         pdf_artifact = _pdf_artifact_for_run(connection, approval.run_id) if approval.run_id else None
+        workflow_run = get_workflow_run(connection, approval.run_id) if approval.run_id else None
 
     print("GreenRock Final Report Packet")
     print(f"approval_id: {approval.id}")
     print(f"approval_status: {approval.status.value}")
     print(f"approval_timestamp: {approval.decided_at}")
     print(f"run_id: {approval.run_id}")
+    print(f"data_mode: {workflow_run.data_mode.upper() if workflow_run else 'UNKNOWN'}")
     print(f"markdown_report_path: {report.content_path if report else None}")
     print(f"pdf_path: {pdf_artifact.path if pdf_artifact else 'not exported'}")
     print("artifacts:")
     for artifact in artifacts:
         print(f"  {artifact.id} {artifact.artifact_type} {artifact.path}")
-    print("mock_data_disclaimer: This packet uses mock data only.")
+    if workflow_run and workflow_run.data_mode == "real":
+        print("mock_data_disclaimer: not applicable - this packet is labeled REAL data mode.")
+        print("data_mode_disclaimer: Real-data packets remain approval-gated and local-only.")
+    else:
+        print("mock_data_disclaimer: This packet uses mock data only.")
     if approval.status != ApprovalStatus.APPROVED:
         print("human_approval_confirmation: not approved - this is not a final packet.")
         print("next_step: approve the report before treating it as final.")
@@ -416,6 +466,32 @@ def run_greenrock_open_pdf(approval_id: int) -> int:
 
     pdf_path = Path(pdf_artifact.path)
     _open_path_or_print(pdf_path, opened_label="Opened GreenRock PDF", fallback_label="GreenRock PDF")
+    return 0
+
+
+def run_greenrock_cleanup_drafts(dry_run: bool = False) -> int:
+    settings = get_settings()
+    db_path = initialize_database(settings.db_path)
+    with connect(db_path) as connection:
+        result = cleanup_greenrock_drafts(connection, dry_run=dry_run)
+
+    print("GreenRock draft cleanup")
+    print(f"dry_run: {result.dry_run}")
+    print(f"latest_draft_run_id: {result.latest_draft_run_id or 'none'}")
+    print(f"removed_file_count: {len(result.removed_files)}")
+    print(f"archived_artifact_count: {len(result.archived_artifact_ids) if not dry_run else 0}")
+    print(f"preserved_final_pdf_count: {len(result.preserved_final_pdfs)}")
+    print(f"preserved_latest_artifact_count: {len(result.preserved_latest_artifacts)}")
+    print("removed_files:")
+    for path in result.removed_files:
+        print(f"  {path}")
+    print("preserved_final_pdfs:")
+    for path in result.preserved_final_pdfs:
+        print(f"  {path}")
+    print("preserved_latest_artifacts:")
+    for path in result.preserved_latest_artifacts:
+        print(f"  {path}")
+    print("Audit logs and approval records were preserved.")
     return 0
 
 
@@ -655,6 +731,8 @@ def run_dashboard() -> int:
     if latest_report:
         print(f"run_id: {latest_report.run_id}")
         print(f"status: {latest_report.status}")
+        latest_run = _latest_greenrock_run(connection)
+        print(f"data_mode: {latest_run.data_mode.upper() if latest_run else 'UNKNOWN'}")
         print(f"path: {latest_report.content_path}")
         print(f"approval_status: {latest_report_approval.status.value if latest_report_approval else 'none'}")
         print(f"final_pdf_status: {'exported' if latest_pdf_artifact else 'not exported'}")
@@ -782,11 +860,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.greenrock_command == "sample-report":
             return run_greenrock_sample_report()
         if args.greenrock_command == "run-screen":
-            return run_greenrock_screen()
+            return run_greenrock_screen(args.data)
         if args.greenrock_command == "candidates":
             return run_greenrock_candidates()
         if args.greenrock_command == "report-draft":
-            return run_greenrock_report_draft()
+            return run_greenrock_report_draft(args.data)
         if args.greenrock_command == "latest-report":
             return run_greenrock_latest_report(args.print_contents)
         if args.greenrock_command == "latest-run":
@@ -803,6 +881,8 @@ def main(argv: list[str] | None = None) -> int:
             return run_greenrock_final_packet(args.approval_id, args.print_contents)
         if args.greenrock_command == "open-pdf":
             return run_greenrock_open_pdf(args.approval_id)
+        if args.greenrock_command == "cleanup-drafts":
+            return run_greenrock_cleanup_drafts(args.dry_run)
         parser.error("greenrock requires a subcommand")
 
     if args.command == "approvals":

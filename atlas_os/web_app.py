@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import html
+import os
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -33,6 +34,8 @@ from atlas_os.core.reports import get_report, list_reports
 from atlas_os.core.workflow_runs import get_workflow_run, list_workflow_runs
 from atlas_os.db.database import connect, initialize_database
 from atlas_os.greenrock.pdf_export import render_markdown_report_to_pdf
+from atlas_os.greenrock.market_data import MarketDataConfigurationError
+from atlas_os.greenrock.workflow import run_greenrock_screening_workflow
 from atlas_os.greenrock.scoring import signal_label
 
 
@@ -106,6 +109,15 @@ def create_app():
     @app.get("/greenrock", response_class=HTMLResponse)
     def greenrock() -> str:
         return render_greenrock()
+
+    @app.post("/greenrock/run-report")
+    def run_greenrock_report():
+        ok, message = run_greenrock_report_from_browser()
+        return RedirectResponse(_with_status("/greenrock", message), status_code=303)
+
+    @app.get("/greenrock/final-reports", response_class=HTMLResponse)
+    def final_reports() -> str:
+        return render_greenrock_final_reports()
 
     @app.get("/approvals/{approval_id}", response_class=HTMLResponse)
     def approval_detail(approval_id: int) -> str:
@@ -197,6 +209,8 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
         return WebResponse(200, render_projects(_first(query, "status")))
     if method == "GET" and route == "/greenrock":
         return WebResponse(200, render_greenrock(_first(query, "status")))
+    if method == "GET" and route == "/greenrock/final-reports":
+        return WebResponse(200, render_greenrock_final_reports(_first(query, "status")))
     if method == "GET" and route == "/tasks":
         return WebResponse(200, render_tasks(_first(query, "status")))
     if method == "GET" and route == "/agents":
@@ -235,6 +249,9 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
     if method == "POST" and route == "/tasks":
         save_manual_task(form.get("name", ""), form.get("division", "general"), form.get("notes", ""))
         return WebResponse(303, "", location=_with_status("/tasks", "Manual task created."))
+    if method == "POST" and route == "/greenrock/run-report":
+        ok, message = run_greenrock_report_from_browser()
+        return WebResponse(303, "", location=_with_status("/greenrock", message))
     if method == "POST" and route.startswith("/tasks/") and route.endswith("/status"):
         task_id = _route_int_part(route, 2)
         if task_id is None:
@@ -308,18 +325,18 @@ def render_dashboard(status_message: str | None = None) -> str:
     </section>
     <section class="nav-grid">
       {_nav_card("Project Directory", "/projects", "GreenRock, Bat Signal, Insurance, Atlas Core")}
-      {_nav_card("GreenRock Analysts", "/greenrock", "Reports, approvals, candidates, final packets")}
+      {_nav_card("GreenRock Analysts", "/greenrock", "Run latest draft, approvals, candidates")}
       {_nav_card("Task Board", "/tasks", "Manual work queue by division")}
       {_nav_card("Agent Monitor", "/agents", "Planned local agent activity HUD")}
       {_nav_card("Approvals", "/greenrock", "Pending report approval actions")}
-      {_nav_card("Artifacts / Reports", "/reports", "Local outputs and report records")}
+      {_nav_card("Final PDF Archive", "/greenrock/final-reports", "Approved local PDFs preserved long-term")}
     </section>
     <section class="panel">
       <div class="section-head">
         <h2>Recent Workflow Feed</h2>
         <span class="subtle">Latest run, approval, and PDF state</span>
       </div>
-      {_workflow_feed(context["runs"][:8], context)}
+      {_workflow_feed(_primary_workflow_runs(context), context)}
     </section>
     """
     return _page("Atlas Command Center", content, active="/")
@@ -387,7 +404,7 @@ def render_greenrock(status_message: str | None = None) -> str:
       {_attention_card("neutral", _safe(latest_run.status if latest_run else "none"), "Latest Report Status", _safe(latest_run.run_id if latest_run else "No run yet"))}
       {_attention_card(_approval_color(latest_approval), _safe(latest_approval.status.value if latest_approval else "none"), "Latest Approval Status", "Human gate remains mandatory")}
       {_attention_card("green" if latest_pdf else "yellow", "exported" if latest_pdf else "not exported", "Latest PDF Status", _safe(latest_pdf.path if latest_pdf else "Approve first, then export locally"))}
-      {_attention_card("neutral", str(len(artifacts)), "Run Artifacts", "Run-specific local outputs")}
+      {_attention_card("neutral", _safe(latest_run.data_mode.upper() if latest_run else "NONE"), "Data Mode", "Mock remains default; real mode is approval-gated")}
     </section>
     <section class="panel">
       <div class="section-head">
@@ -395,12 +412,16 @@ def render_greenrock(status_message: str | None = None) -> str:
         <span class="subtle">Local review only. No publish or send controls.</span>
       </div>
       <div class="action-row">
+        <form method="post" action="/greenrock/run-report" onsubmit="return confirm('Run a new local GreenRock report draft?');">
+          <button type="submit">Run GreenRock Report</button>
+        </form>
         {_path_action(latest_report.content_path if latest_report else None, "View Markdown report")}
         {_path_action(latest_pdf.path if latest_pdf else None, "Open PDF")}
         {_approval_button(latest_approval, "approve", "/greenrock")}
         {_approval_button(latest_approval, "reject", "/greenrock")}
         {_export_pdf_button(latest_approval, latest_pdf)}
         {_final_packet_hint(latest_approval)}
+        <a class="button secondary" href="/greenrock/final-reports">Final PDF Archive</a>
       </div>
     </section>
     <section class="candidate-grid">
@@ -490,6 +511,7 @@ def render_agents(status_message: str | None = None) -> str:
 
 def render_reports(status_message: str | None = None) -> str:
     context = _load_context()
+    visible_reports = _visible_report_records(context)
     content = f"""
     {_status_banner(status_message)}
     <section class="hero compact">
@@ -499,14 +521,31 @@ def render_reports(status_message: str | None = None) -> str:
     </section>
     <section class="panel">
       <h2>Reports</h2>
-      {_reports_table(context["reports"])}
+      {_reports_table(visible_reports)}
     </section>
     <section class="panel">
-      <h2>Artifacts</h2>
-      {_artifacts_table(context["artifacts"][:30])}
+      <h2>Final PDF Archive</h2>
+      {_final_reports_table(_final_pdf_archive_rows(context))}
     </section>
     """
     return _page("Artifacts / Reports", content, active="/reports")
+
+
+def render_greenrock_final_reports(status_message: str | None = None) -> str:
+    context = _load_context()
+    content = f"""
+    {_status_banner(status_message)}
+    <section class="hero compact greenrock-hero">
+      <p class="eyebrow">GreenRock Analysts</p>
+      <h1>Final PDF Archive</h1>
+      <p>Approved local PDFs are preserved as the long-term report archive.</p>
+    </section>
+    <section class="panel">
+      <h2>Final Reports</h2>
+      {_final_reports_table(_final_pdf_archive_rows(context))}
+    </section>
+    """
+    return _page("GreenRock Final Reports", content, active="/reports")
 
 
 def render_approval_confirmation(approval_id: int, action: str) -> str:
@@ -563,6 +602,7 @@ def render_run_detail(run_id: str) -> str:
       {_detail_panel("Division", run.division)}
       {_detail_panel("Started", run.started_at)}
       {_detail_panel("Completed", run.completed_at or "not completed")}
+      {_detail_panel("Data Mode", run.data_mode.upper())}
     </section>
     <section class="panel"><h2>Approvals</h2>{_approvals_table(approvals, actions=True)}</section>
     <section class="panel"><h2>Artifacts</h2>{_artifacts_table(artifacts)}</section>
@@ -635,6 +675,23 @@ def export_greenrock_pdf(approval_id: int):
         return artifact
 
 
+def run_greenrock_report_from_browser() -> tuple[bool, str]:
+    settings = get_settings()
+    db_path = initialize_database(settings.db_path)
+    data_mode = _default_greenrock_data_mode()
+    try:
+        with connect(db_path) as connection:
+            workflow_run, _, approval = run_greenrock_screening_workflow(
+                connection,
+                settings.output_dir,
+                include_report_draft=True,
+                data_mode=data_mode,
+            )
+    except MarketDataConfigurationError as error:
+        return False, f"GreenRock report blocked: {error}"
+    return True, f"GreenRock report draft created for {workflow_run.run_id}; approval {approval.id if approval else 'none'} is pending."
+
+
 def save_manual_task(name: str, division: str, notes: str | None = None) -> None:
     if not name.strip():
         return
@@ -682,6 +739,66 @@ def _load_context() -> dict:
         "latest_report": latest_report,
         "latest_pdf": latest_pdf,
     }
+
+
+def _default_greenrock_data_mode() -> str:
+    configured = os.getenv("ATLAS_GREENROCK_DEFAULT_DATA_MODE", "mock").strip().lower()
+    return configured if configured in {"mock", "real"} else "mock"
+
+
+def _primary_workflow_runs(context) -> tuple:
+    latest_run = context["latest_run"]
+    final_pdf_run_ids = {
+        artifact.run_id
+        for artifact in context["artifacts"]
+        if artifact.artifact_type == "report_final_pdf"
+    }
+    selected = []
+    seen = set()
+    for run in context["runs"]:
+        if run == latest_run or run.run_id in final_pdf_run_ids or run.division != "greenrock":
+            if run.run_id not in seen:
+                selected.append(run)
+                seen.add(run.run_id)
+    return tuple(selected[:8])
+
+
+def _visible_report_records(context) -> tuple:
+    latest_report = context["latest_report"]
+    visible = []
+    if latest_report:
+        visible.append(latest_report)
+    final_pdf_run_ids = {
+        artifact.run_id
+        for artifact in context["artifacts"]
+        if artifact.artifact_type == "report_final_pdf"
+    }
+    for report in context["reports"]:
+        if report.run_id in final_pdf_run_ids and report not in visible:
+            visible.append(report)
+    return tuple(visible)
+
+
+def _final_pdf_archive_rows(context) -> tuple[dict[str, str], ...]:
+    approvals_by_run = {
+        approval.run_id: approval
+        for approval in context["approvals"]
+        if approval.run_id and approval.status == ApprovalStatus.APPROVED
+    }
+    rows = []
+    for artifact in context["artifacts"]:
+        if artifact.artifact_type != "report_final_pdf":
+            continue
+        approval = approvals_by_run.get(artifact.run_id)
+        rows.append(
+            {
+                "run_id": artifact.run_id,
+                "approval_id": str(approval.id if approval else "unknown"),
+                "path": artifact.path,
+                "created_at": artifact.created_at,
+            }
+        )
+    return tuple(rows)
 
 
 def _build_inbox_items(context, pending_approvals, reports_ready, failed_runs) -> list[dict[str, str]]:
@@ -816,13 +933,14 @@ def _workflow_feed(runs, context) -> str:
             f"<td><span class='badge {run.status}'>{_safe(run.status)}</span></td>"
             f"<td>{_safe(run.started_at)}</td>"
             f"<td>{_safe(run.completed_at or '-')}</td>"
+            f"<td>{_safe(run.data_mode.upper())}</td>"
             f"<td>{_safe(approval_status)}</td>"
             f"<td>{_safe(pdf_status)}</td>"
             "</tr>"
         )
     return (
         "<table><thead><tr><th>Run</th><th>Workflow</th><th>Status</th><th>Created</th>"
-        "<th>Completed</th><th>Approval</th><th>PDF</th></tr></thead><tbody>"
+        "<th>Completed</th><th>Data Mode</th><th>Approval</th><th>PDF</th></tr></thead><tbody>"
         + "".join(rows)
         + "</tbody></table>"
     )
@@ -879,6 +997,27 @@ def _reports_table(reports) -> str:
         for report in reports[:30]
     )
     return "<table><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Run</th><th>Path</th></tr></thead><tbody>" + rows + "</tbody></table>"
+
+
+def _final_reports_table(rows: tuple[dict[str, str], ...]) -> str:
+    if not rows:
+        return "<p class='empty'>No final PDFs exported yet.</p>"
+    body = "".join(
+        "<tr>"
+        f"<td>{_safe(row['run_id'])}</td>"
+        f"<td>{_safe(row['approval_id'])}</td>"
+        f"<td class='path'>{_safe(row['path'])}</td>"
+        f"<td>{_safe(row['created_at'])}</td>"
+        f"<td>{_open_link(row['path'], 'Open PDF')}</td>"
+        "</tr>"
+        for row in rows
+    )
+    return (
+        "<table><thead><tr><th>Run</th><th>Approval</th><th>PDF Path</th>"
+        "<th>Exported</th><th>Local</th></tr></thead><tbody>"
+        + body
+        + "</tbody></table>"
+    )
 
 
 def _artifacts_table(artifacts) -> str:

@@ -139,7 +139,7 @@ class CommandCenterTests(unittest.TestCase):
         self.assertEqual(export_response.status, 303)
         self.assertEqual(len(pdfs), 1)
         self.assertTrue(pdf_is_valid)
-        self.assertIn("report_final_pdf", reports.body)
+        self.assertIn("greenrock_report_final.pdf", reports.body)
 
     def test_pending_approval_pdf_export_returns_safe_blocked_response(self) -> None:
         with _isolated_env():

@@ -1,6 +1,6 @@
 # Monthly Report Release Checklist
 
-Use this checklist for the local GreenRock monthly report workflow. Current Atlas OS output uses mock data only.
+Use this checklist for the local GreenRock monthly report workflow. Atlas OS defaults to mock data; real-data mode remains local, approval-gated, and explicitly labeled when used.
 
 ## 1. Generate Draft
 
@@ -81,11 +81,27 @@ atlas dashboard
 - Confirm final PDF status is `exported`.
 - Confirm pending approvals are expected.
 
+## 8. Optional Draft Cleanup
+
+Preview cleanup:
+
+```bash
+atlas greenrock cleanup-drafts --dry-run
+```
+
+Run cleanup only after confirming the latest draft and final PDFs should be preserved:
+
+```bash
+atlas greenrock cleanup-drafts
+```
+
+- Confirm the latest draft is still available.
+- Confirm final PDFs are still available in the archive.
+- Confirm approval records and audit logs remain intact.
+
 ## Safety
 
-- Do not use live market data.
-- Do not call external APIs.
+- Use mock mode by default unless real-data mode has been explicitly configured for local testing.
 - Do not send email.
 - Do not access client files or credentials.
 - Do not publish any client-facing material without explicit human approval.
-

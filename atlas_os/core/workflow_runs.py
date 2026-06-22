@@ -20,6 +20,7 @@ class WorkflowRun:
     completed_at: str | None
     output_paths: dict[str, str]
     mock_data_used: bool
+    data_mode: str = "mock"
 
 
 def create_workflow_run(
@@ -27,17 +28,28 @@ def create_workflow_run(
     division: str,
     workflow_name: str,
     mock_data_used: bool = True,
+    data_mode: str | None = None,
 ) -> WorkflowRun:
     run_id = f"{division}-{uuid.uuid4().hex[:12]}"
     started_at = _now()
+    resolved_data_mode = data_mode or ("mock" if mock_data_used else "real")
     connection.execute(
         """
         INSERT INTO workflow_runs (
-            run_id, division, workflow_name, status, started_at, output_paths, mock_data_used
+            run_id, division, workflow_name, status, started_at, output_paths, mock_data_used, data_mode
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (run_id, division, workflow_name, "running", started_at, "{}", int(mock_data_used)),
+        (
+            run_id,
+            division,
+            workflow_name,
+            "running",
+            started_at,
+            "{}",
+            int(mock_data_used),
+            resolved_data_mode,
+        ),
     )
     connection.commit()
     return WorkflowRun(
@@ -49,6 +61,7 @@ def create_workflow_run(
         completed_at=None,
         output_paths={},
         mock_data_used=mock_data_used,
+        data_mode=resolved_data_mode,
     )
 
 
@@ -99,9 +112,9 @@ def _row_to_run(row: Row) -> WorkflowRun:
         completed_at=row["completed_at"],
         output_paths=json.loads(row["output_paths"] or "{}"),
         mock_data_used=bool(row["mock_data_used"]),
+        data_mode=row["data_mode"],
     )
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
-

@@ -20,6 +20,7 @@ class GreenRockReportTests(unittest.TestCase):
             "## Technical Dislocation Screen",
             "**Date:**",
             "**Run ID:** greenrock-test-run",
+            "**Data Mode:** MOCK",
             "## How to Read This Report",
             "## Executive Summary",
             "## Market Setup / Regime Placeholder",
@@ -32,7 +33,7 @@ class GreenRockReportTests(unittest.TestCase):
             "## Risk Notes",
             "## Methodology Appendix",
             "## Human Approval Disclaimer",
-            "## Mock-Data Disclaimer",
+            "## Data Mode Disclaimer",
             "## Compliance Notes",
         ]
         for text in required_text:
@@ -67,6 +68,7 @@ class GreenRockReportTests(unittest.TestCase):
 
             self.assertTrue(report_path.exists())
             self.assertIn(f"**Run ID:** {workflow_run.run_id}", markdown)
+            self.assertIn("**Data Mode:** MOCK", markdown)
             self.assertEqual(approval.artifact_path, str(report_path))
 
 

@@ -40,6 +40,21 @@ def _migrate_existing_database(connection: sqlite3.Connection) -> None:
     )
     _add_missing_columns(
         connection,
+        "workflow_runs",
+        {
+            "data_mode": "ALTER TABLE workflow_runs ADD COLUMN data_mode TEXT NOT NULL DEFAULT 'mock'",
+        },
+    )
+    _add_missing_columns(
+        connection,
+        "artifacts",
+        {
+            "status": "ALTER TABLE artifacts ADD COLUMN status TEXT NOT NULL DEFAULT 'active'",
+            "archived_at": "ALTER TABLE artifacts ADD COLUMN archived_at TEXT",
+        },
+    )
+    _add_missing_columns(
+        connection,
         "approvals",
         {
             "run_id": "ALTER TABLE approvals ADD COLUMN run_id TEXT",

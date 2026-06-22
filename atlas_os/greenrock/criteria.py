@@ -92,7 +92,7 @@ def _is_closer_to_lower_band(price: float, lower: float, upper: float) -> bool:
 
 def _candidate_note(indicators: IndicatorSnapshot, failed_rules: tuple[str, ...]) -> str:
     if failed_rules:
-        return f"Mock candidate missed {len(failed_rules)} local screening rule(s)."
+        return f"Candidate missed {len(failed_rules)} local screening rule(s)."
     if indicators.latest_close < indicators.bollinger_lower:
-        return "Mock candidate passes all rules with bonus below lower Bollinger Band."
-    return "Mock candidate passes all local GreenRock screening rules."
+        return "Candidate passes all rules with bonus below lower Bollinger Band."
+    return "Candidate passes all local GreenRock screening rules."

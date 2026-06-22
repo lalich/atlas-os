@@ -1,4 +1,4 @@
-"""Local GreenRock screening engine using mock data only."""
+"""GreenRock screening engine."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import csv
 from pathlib import Path
 
 from atlas_os.greenrock.criteria import evaluate_stock, passes_core_criteria
+from atlas_os.greenrock.market_data import MarketDataProvider, MockMarketDataProvider
 from atlas_os.greenrock.models import StockCandidate, ScreeningResult
 from atlas_os.greenrock.sample_data import SAMPLE_CANDIDATES, load_mock_stocks
 
@@ -42,8 +43,9 @@ def run_sample_screen() -> ScreeningResult:
     return run_screen()
 
 
-def run_screen() -> ScreeningResult:
-    all_candidates = tuple(evaluate_stock(stock) for stock in load_mock_stocks())
+def run_screen(provider: MarketDataProvider | None = None) -> ScreeningResult:
+    market_data_provider = provider or MockMarketDataProvider()
+    all_candidates = tuple(evaluate_stock(stock) for stock in market_data_provider.fetch_stocks())
     eligible = tuple(candidate for candidate in all_candidates if passes_core_criteria(candidate))
     large_cap = _top_by_bucket(eligible, "large_cap", limit=11)
     small_cap = _top_by_bucket(eligible, "small_cap", limit=11)
@@ -53,6 +55,8 @@ def run_screen() -> ScreeningResult:
         all_candidates=all_candidates,
         large_cap=large_cap,
         small_cap=small_cap,
+        data_mode=market_data_provider.data_mode,
+        data_source=market_data_provider.source_name,
     )
 
 
