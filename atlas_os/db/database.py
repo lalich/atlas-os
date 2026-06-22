@@ -32,6 +32,13 @@ def connect(db_path: Path) -> sqlite3.Connection:
 def _migrate_existing_database(connection: sqlite3.Connection) -> None:
     _add_missing_columns(
         connection,
+        "tasks",
+        {
+            "division": "ALTER TABLE tasks ADD COLUMN division TEXT NOT NULL DEFAULT 'general'",
+        },
+    )
+    _add_missing_columns(
+        connection,
         "approvals",
         {
             "run_id": "ALTER TABLE approvals ADD COLUMN run_id TEXT",

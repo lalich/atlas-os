@@ -99,6 +99,30 @@ atlas dashboard
 
 The dashboard shows the latest GreenRock report status, approval status, final PDF status, and final PDF path when exported.
 
+## Open Atlas Command Center
+
+```bash
+atlas serve
+```
+
+Open `http://127.0.0.1:8000` in a browser.
+
+Use the Command Center to inspect recent workflow runs, pending approvals, latest GreenRock report/PDF paths, artifact records, audit log summaries, the manual task board, and the planned agent monitor.
+
+The GreenRock page supports local approval/rejection buttons with confirmation prompts and local Markdown/PDF open links. Approval only unlocks local final packet/PDF work; the interface has no publish or send controls.
+
+## Manage Manual Tasks
+
+Open `http://127.0.0.1:8000/tasks`.
+
+Manual tasks can be created, assigned to a division, and moved through `pending`, `in_progress`, and `done`. This board is an operator placeholder only and does not trigger autonomous execution.
+
+## Review Planned Agents
+
+Open `http://127.0.0.1:8000/agents`.
+
+The monitor lists planned agents as inactive placeholders until they are explicitly implemented.
+
 ## Commit and Push Changes
 
 ```bash

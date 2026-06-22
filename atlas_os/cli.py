@@ -42,6 +42,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("status", help="Show local Atlas OS status.")
     subparsers.add_parser("dashboard", help="Show analyst-friendly Atlas OS overview.")
+    serve = subparsers.add_parser("serve", help="Start the local Atlas Command Center web app.")
+    serve.add_argument("--host", default="127.0.0.1", help="Host for the local web app.")
+    serve.add_argument("--port", default=8000, type=int, help="Port for the local web app.")
 
     runs = subparsers.add_parser("runs", help="Workflow run inspection commands.")
     runs_subparsers = runs.add_subparsers(dest="runs_command")
@@ -661,6 +664,13 @@ def run_dashboard() -> int:
     return 0
 
 
+def run_serve(host: str, port: int) -> int:
+    from atlas_os.web_app import serve
+
+    serve(host=host, port=port)
+    return 0
+
+
 def _print_approval_rows(approvals: tuple[ApprovalRequest, ...]) -> None:
     print("id status artifact_type run_id artifact_path")
     for approval in approvals:
@@ -764,6 +774,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "dashboard":
         return run_dashboard()
+
+    if args.command == "serve":
+        return run_serve(args.host, args.port)
 
     if args.command == "greenrock":
         if args.greenrock_command == "sample-report":

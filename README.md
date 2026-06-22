@@ -52,6 +52,7 @@ atlas approvals show 1
 atlas approvals approve 1
 atlas approvals reject 1
 atlas dashboard
+atlas serve
 atlas runs list
 atlas runs show <run_id>
 atlas artifacts list
@@ -182,6 +183,24 @@ atlas greenrock final-packet <approval_id> --print
 Pending or rejected approvals are not treated as final packets. Use `atlas greenrock open-pdf <approval_id>` to open an exported approved PDF on macOS, or to see the next step if no PDF exists yet.
 
 `atlas dashboard` also shows the latest GreenRock approval status, final PDF status, and final PDF path when exported.
+
+## Atlas Command Center
+
+Phase 3A adds a local browser dashboard:
+
+```bash
+atlas serve
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8000
+```
+
+The Command Center shows the Atlas OS overview, project/division switcher, recent workflow runs, pending approvals, latest GreenRock report/PDF, artifact list, audit log summary, manual task board, and planned agent monitor. The GreenRock page includes latest run status, candidate summaries, approval records, and local artifact open links.
+
+The web app is local development mode only. It uses mock data, keeps the human approval gate mandatory, and does not include publish, send, email, external API, or credential controls.
 
 ## Operator Docs
 

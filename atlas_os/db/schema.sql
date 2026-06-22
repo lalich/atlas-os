@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS projects (
 CREATE TABLE IF NOT EXISTS tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id INTEGER,
+    division TEXT NOT NULL DEFAULT 'general',
     name TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
     assigned_agent TEXT,
