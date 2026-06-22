@@ -53,6 +53,23 @@ atlas approvals reject <approval_id>
 
 Only approve after human review. Approval updates the linked workflow run and report status.
 
+## Export Approved PDF
+
+PDF export is blocked until the linked approval is approved.
+
+```bash
+atlas approvals approve <approval_id>
+atlas greenrock export-pdf <approval_id>
+```
+
+The approved PDF is saved to the same run folder as the Markdown report:
+
+```text
+.atlas/output/greenrock/<run_id>/greenrock_report_final.pdf
+```
+
+The export creates a `report_final_pdf` artifact record. Do not export pending or rejected reports for client-facing use.
+
 ## Commit and Push Changes
 
 ```bash
@@ -71,4 +88,3 @@ Review generated files before committing. Local databases, output reports, logs,
 - Do not send email or distribute reports from Atlas OS.
 - Do not treat mock output as investment advice.
 - No client-facing report may be published without explicit human approval.
-

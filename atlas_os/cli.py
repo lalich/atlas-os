@@ -18,12 +18,13 @@ from atlas_os.core.approvals import (
     list_approvals,
     reject_approval,
 )
-from atlas_os.core.artifacts import get_artifact, list_artifacts, list_artifacts_for_run
-from atlas_os.core.audit_log import get_audit_log, list_audit_logs
+from atlas_os.core.artifacts import create_artifact, get_artifact, list_artifacts, list_artifacts_for_run
+from atlas_os.core.audit_log import create_audit_log, get_audit_log, list_audit_logs
 from atlas_os.core.reports import ReportRecord, list_reports, list_reports_for_run
 from atlas_os.core.workflow_runs import WorkflowRun, get_workflow_run, list_workflow_runs
 from atlas_os.core.workflow_steps import list_workflow_steps
 from atlas_os.db.database import connect, initialize_database
+from atlas_os.greenrock.pdf_export import render_markdown_report_to_pdf
 from atlas_os.greenrock.report import build_sample_report
 from atlas_os.greenrock.screener import run_screen
 from atlas_os.greenrock.workflow import run_greenrock_screening_workflow
@@ -116,6 +117,11 @@ def build_parser() -> argparse.ArgumentParser:
         "open-latest",
         help="Open the latest GreenRock report file on macOS.",
     )
+    export_pdf = greenrock_subparsers.add_parser(
+        "export-pdf",
+        help="Export an approved GreenRock report to PDF.",
+    )
+    export_pdf.add_argument("approval_id", type=int)
 
     return parser
 
@@ -286,6 +292,42 @@ def run_greenrock_open_latest() -> int:
         print(f"Opened latest GreenRock report: {report_path}")
     else:
         print(f"Latest GreenRock report: {report_path}")
+    return 0
+
+
+def run_greenrock_export_pdf(approval_id: int) -> int:
+    settings = get_settings()
+    db_path = initialize_database(settings.db_path)
+    with connect(db_path) as connection:
+        approval = get_approval(connection, approval_id)
+        if approval.status != ApprovalStatus.APPROVED:
+            print(f"PDF export blocked: approval {approval_id} is {approval.status.value}.")
+            print("Approve the report before exporting a final PDF.")
+            return 1
+        report = _report_for_approval(connection, approval_id)
+        if report is None or not report.content_path or not report.run_id:
+            print(f"PDF export blocked: no report found for approval {approval_id}.")
+            return 1
+
+        markdown_path = Path(report.content_path)
+        pdf_path = markdown_path.with_name("greenrock_report_final.pdf")
+        render_markdown_report_to_pdf(markdown_path, pdf_path)
+        artifact = create_artifact(connection, report.run_id, "report_final_pdf", pdf_path)
+        create_audit_log(
+            connection,
+            actor="greenrock_pdf_export",
+            action="artifact_created",
+            detail=f"report_final_pdf: {pdf_path}",
+            run_id=report.run_id,
+            artifact_id=artifact.id,
+            approval_id=approval_id,
+        )
+
+    print("GreenRock final PDF exported")
+    print(f"approval_id: {approval_id}")
+    print(f"run_id: {report.run_id}")
+    print(f"pdf_path: {pdf_path}")
+    print(f"artifact_id: {artifact.id}")
     return 0
 
 
@@ -564,6 +606,13 @@ def _latest_greenrock_report(connection) -> ReportRecord | None:
     return None
 
 
+def _report_for_approval(connection, approval_id: int) -> ReportRecord | None:
+    for report in list_reports(connection):
+        if report.approval_id == approval_id:
+            return report
+    return None
+
+
 def _approvals_for_run(connection, run_id: str) -> tuple[ApprovalRequest, ...]:
     return tuple(approval for approval in list_approvals(connection) if approval.run_id == run_id)
 
@@ -617,6 +666,8 @@ def main(argv: list[str] | None = None) -> int:
             return run_greenrock_review()
         if args.greenrock_command == "open-latest":
             return run_greenrock_open_latest()
+        if args.greenrock_command == "export-pdf":
+            return run_greenrock_export_pdf(args.approval_id)
         parser.error("greenrock requires a subcommand")
 
     if args.command == "approvals":

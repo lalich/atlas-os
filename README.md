@@ -40,6 +40,7 @@ atlas greenrock latest-run
 atlas greenrock latest-candidates
 atlas greenrock review
 atlas greenrock open-latest
+atlas greenrock export-pdf <approval_id>
 atlas approvals list
 atlas approvals pending
 atlas approvals latest
@@ -132,12 +133,28 @@ atlas greenrock latest-run
 atlas greenrock latest-candidates
 atlas greenrock review
 atlas greenrock open-latest
+atlas greenrock export-pdf <approval_id>
 atlas approvals pending
 atlas approvals latest
 atlas dashboard
 ```
 
 `latest-report` finds the newest GreenRock report by workflow run timestamp. `latest-candidates` summarizes the latest run-specific large-cap and small/mid-cap CSV files. `review` shows the latest run, report path, approval status, top candidates, and pending approval ID. `open-latest` opens the latest report on macOS or prints the path on unsupported systems. `dashboard` shows recent runs, pending approvals, artifact counts, and the latest GreenRock report path.
+
+## Approved PDF Export
+
+PDF export is allowed only after the linked report approval is approved:
+
+```bash
+atlas approvals approve <approval_id>
+atlas greenrock export-pdf <approval_id>
+```
+
+Approved exports are saved beside the Markdown report:
+
+```text
+.atlas/output/greenrock/<run_id>/greenrock_report_final.pdf
+```
 
 ## Operator Docs
 
