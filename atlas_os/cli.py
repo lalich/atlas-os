@@ -122,6 +122,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Export an approved GreenRock report to PDF.",
     )
     export_pdf.add_argument("approval_id", type=int)
+    final_packet = greenrock_subparsers.add_parser(
+        "final-packet",
+        help="Show final approved GreenRock report packet.",
+    )
+    final_packet.add_argument("approval_id", type=int)
+    open_pdf = greenrock_subparsers.add_parser(
+        "open-pdf",
+        help="Open an approved exported GreenRock PDF on macOS.",
+    )
+    open_pdf.add_argument("approval_id", type=int)
 
     return parser
 
@@ -312,11 +322,17 @@ def run_greenrock_export_pdf(approval_id: int) -> int:
         markdown_path = Path(report.content_path)
         pdf_path = markdown_path.with_name("greenrock_report_final.pdf")
         render_markdown_report_to_pdf(markdown_path, pdf_path)
-        artifact = create_artifact(connection, report.run_id, "report_final_pdf", pdf_path)
+        existing_artifact = _pdf_artifact_for_run(connection, report.run_id)
+        if existing_artifact:
+            artifact = existing_artifact
+            audit_action = "artifact_updated"
+        else:
+            artifact = create_artifact(connection, report.run_id, "report_final_pdf", pdf_path)
+            audit_action = "artifact_created"
         create_audit_log(
             connection,
             actor="greenrock_pdf_export",
-            action="artifact_created",
+            action=audit_action,
             detail=f"report_final_pdf: {pdf_path}",
             run_id=report.run_id,
             artifact_id=artifact.id,
@@ -328,6 +344,61 @@ def run_greenrock_export_pdf(approval_id: int) -> int:
     print(f"run_id: {report.run_id}")
     print(f"pdf_path: {pdf_path}")
     print(f"artifact_id: {artifact.id}")
+    return 0
+
+
+def run_greenrock_final_packet(approval_id: int) -> int:
+    settings = get_settings()
+    db_path = initialize_database(settings.db_path)
+    with connect(db_path) as connection:
+        approval = get_approval(connection, approval_id)
+        report = _report_for_approval(connection, approval_id)
+        artifacts = list_artifacts_for_run(connection, approval.run_id) if approval.run_id else ()
+        pdf_artifact = _pdf_artifact_for_run(connection, approval.run_id) if approval.run_id else None
+
+    print("GreenRock Final Report Packet")
+    print(f"approval_id: {approval.id}")
+    print(f"approval_status: {approval.status.value}")
+    print(f"approval_timestamp: {approval.decided_at}")
+    print(f"run_id: {approval.run_id}")
+    print(f"markdown_report_path: {report.content_path if report else None}")
+    print(f"pdf_path: {pdf_artifact.path if pdf_artifact else 'not exported'}")
+    print("artifacts:")
+    for artifact in artifacts:
+        print(f"  {artifact.id} {artifact.artifact_type} {artifact.path}")
+    print("mock_data_disclaimer: This packet uses mock data only.")
+    if approval.status != ApprovalStatus.APPROVED:
+        print("human_approval_confirmation: not approved - this is not a final packet.")
+        print("next_step: approve the report before treating it as final.")
+        return 1
+    print("human_approval_confirmation: approved by human review workflow.")
+    if not pdf_artifact:
+        print("next_step: run atlas greenrock export-pdf <approval_id> to create the final PDF.")
+    return 0
+
+
+def run_greenrock_open_pdf(approval_id: int) -> int:
+    settings = get_settings()
+    db_path = initialize_database(settings.db_path)
+    with connect(db_path) as connection:
+        approval = get_approval(connection, approval_id)
+        pdf_artifact = _pdf_artifact_for_run(connection, approval.run_id) if approval.run_id else None
+
+    if approval.status != ApprovalStatus.APPROVED:
+        print(f"Cannot open PDF: approval {approval_id} is {approval.status.value}.")
+        print("Next step: approve the report, then export the PDF.")
+        return 1
+    if not pdf_artifact or not Path(pdf_artifact.path).exists():
+        print(f"No exported PDF found for approval {approval_id}.")
+        print(f"Next step: atlas greenrock export-pdf {approval_id}")
+        return 1
+
+    pdf_path = Path(pdf_artifact.path)
+    if sys.platform == "darwin":
+        subprocess.run(["open", str(pdf_path)], check=False)
+        print(f"Opened GreenRock PDF: {pdf_path}")
+    else:
+        print(f"GreenRock PDF: {pdf_path}")
     return 0
 
 
@@ -613,6 +684,15 @@ def _report_for_approval(connection, approval_id: int) -> ReportRecord | None:
     return None
 
 
+def _pdf_artifact_for_run(connection, run_id: str | None):
+    if not run_id:
+        return None
+    for artifact in list_artifacts_for_run(connection, run_id):
+        if artifact.artifact_type == "report_final_pdf":
+            return artifact
+    return None
+
+
 def _approvals_for_run(connection, run_id: str) -> tuple[ApprovalRequest, ...]:
     return tuple(approval for approval in list_approvals(connection) if approval.run_id == run_id)
 
@@ -668,6 +748,10 @@ def main(argv: list[str] | None = None) -> int:
             return run_greenrock_open_latest()
         if args.greenrock_command == "export-pdf":
             return run_greenrock_export_pdf(args.approval_id)
+        if args.greenrock_command == "final-packet":
+            return run_greenrock_final_packet(args.approval_id)
+        if args.greenrock_command == "open-pdf":
+            return run_greenrock_open_pdf(args.approval_id)
         parser.error("greenrock requires a subcommand")
 
     if args.command == "approvals":

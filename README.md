@@ -41,6 +41,8 @@ atlas greenrock latest-candidates
 atlas greenrock review
 atlas greenrock open-latest
 atlas greenrock export-pdf <approval_id>
+atlas greenrock final-packet <approval_id>
+atlas greenrock open-pdf <approval_id>
 atlas approvals list
 atlas approvals pending
 atlas approvals latest
@@ -134,6 +136,8 @@ atlas greenrock latest-candidates
 atlas greenrock review
 atlas greenrock open-latest
 atlas greenrock export-pdf <approval_id>
+atlas greenrock final-packet <approval_id>
+atlas greenrock open-pdf <approval_id>
 atlas approvals pending
 atlas approvals latest
 atlas dashboard
@@ -148,6 +152,8 @@ PDF export is allowed only after the linked report approval is approved:
 ```bash
 atlas approvals approve <approval_id>
 atlas greenrock export-pdf <approval_id>
+atlas greenrock final-packet <approval_id>
+atlas greenrock open-pdf <approval_id>
 ```
 
 Approved exports are saved beside the Markdown report:
@@ -155,6 +161,18 @@ Approved exports are saved beside the Markdown report:
 ```text
 .atlas/output/greenrock/<run_id>/greenrock_report_final.pdf
 ```
+
+Repeated PDF exports update/reuse the same PDF path and do not create duplicate `report_final_pdf` artifact records for the same run.
+
+## Final Approved Packet
+
+Use the final packet view after approval to confirm the report, PDF, artifacts, and safety status:
+
+```bash
+atlas greenrock final-packet <approval_id>
+```
+
+Pending or rejected approvals are not treated as final packets. Use `atlas greenrock open-pdf <approval_id>` to open an exported approved PDF on macOS, or to see the next step if no PDF exists yet.
 
 ## Operator Docs
 
