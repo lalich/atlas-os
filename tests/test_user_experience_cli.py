@@ -32,7 +32,7 @@ class UserExperienceCliTests(unittest.TestCase):
                 self.assertIn(f"greenrock/{second_run_id}/greenrock_report_draft.md", latest_report)
 
                 latest_report_contents = _run_cli(["greenrock", "latest-report", "--print"])
-                self.assertIn("# GreenRock Analysts Monthly Report", latest_report_contents)
+                self.assertIn("# GreenRock Analysts Monthly Opportunity Report", latest_report_contents)
                 self.assertIn(f"**Run ID:** {second_run_id}", latest_report_contents)
 
                 latest_run = _run_cli(["greenrock", "latest-run"])
@@ -45,7 +45,7 @@ class UserExperienceCliTests(unittest.TestCase):
                 self.assertIn("Large-cap candidates", latest_candidates)
                 self.assertIn("Small-cap candidates", latest_candidates)
                 self.assertIn("LC01", latest_candidates)
-                self.assertIn("SC01", latest_candidates)
+                self.assertIn("Small Cap Mock", latest_candidates)
 
                 pending = _run_cli(["approvals", "pending"])
                 self.assertIn(first_run_id, pending)
@@ -61,6 +61,21 @@ class UserExperienceCliTests(unittest.TestCase):
                 self.assertIn("Pending approvals", dashboard)
                 self.assertIn("artifact_count: 8", dashboard)
                 self.assertIn(second_run_id, dashboard)
+
+                review = _run_cli(["greenrock", "review"])
+                self.assertIn("GreenRock Review", review)
+                self.assertIn(f"latest_run: {second_run_id}", review)
+                self.assertIn("pending_approval_id:", review)
+                self.assertIn("Top large-cap names", review)
+                self.assertIn("Top small/mid-cap names", review)
+
+                with (
+                    patch("atlas_os.cli.sys.platform", "darwin"),
+                    patch("atlas_os.cli.subprocess.run") as mocked_open,
+                ):
+                    open_output = _run_cli(["greenrock", "open-latest"])
+                self.assertIn("Opened latest GreenRock report:", open_output)
+                mocked_open.assert_called_once()
 
 
 def _run_cli(args: list[str]) -> str:
@@ -82,4 +97,3 @@ def _line_value(output: str, label: str) -> str:
 
 if __name__ == "__main__":
     unittest.main()
-

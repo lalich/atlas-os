@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import csv
+import subprocess
+import sys
 from pathlib import Path
 
 from atlas_os import __version__
@@ -105,6 +107,14 @@ def build_parser() -> argparse.ArgumentParser:
     greenrock_subparsers.add_parser(
         "latest-candidates",
         help="Show candidate summaries from the latest GreenRock run.",
+    )
+    greenrock_subparsers.add_parser(
+        "review",
+        help="Show latest GreenRock report review summary.",
+    )
+    greenrock_subparsers.add_parser(
+        "open-latest",
+        help="Open the latest GreenRock report file on macOS.",
     )
 
     return parser
@@ -234,6 +244,48 @@ def run_greenrock_latest_candidates() -> int:
     print(f"run_id: {latest_run.run_id}")
     _print_candidate_file("Large-cap candidates", latest_run.output_paths.get("large_cap"))
     _print_candidate_file("Small-cap candidates", latest_run.output_paths.get("small_cap"))
+    return 0
+
+
+def run_greenrock_review() -> int:
+    settings = get_settings()
+    db_path = initialize_database(settings.db_path)
+    with connect(db_path) as connection:
+        latest_run = _latest_greenrock_run(connection)
+        latest_report = _latest_greenrock_report(connection)
+        if latest_run is None or latest_report is None:
+            print("No GreenRock report found. Run atlas greenrock report-draft first.")
+            return 0
+        approvals = _approvals_for_run(connection, latest_run.run_id)
+    pending_approval = next((approval for approval in approvals if approval.status == ApprovalStatus.PENDING), None)
+    approval_status = approvals[0].status.value if approvals else "none"
+
+    print("GreenRock Review")
+    print(f"latest_run: {latest_run.run_id}")
+    print(f"run_status: {latest_run.status}")
+    print(f"latest_report_path: {latest_report.content_path}")
+    print(f"approval_status: {approval_status}")
+    print(f"pending_approval_id: {pending_approval.id if pending_approval else 'none'}")
+    _print_candidate_file("Top large-cap names", latest_run.output_paths.get("large_cap"), limit=5)
+    _print_candidate_file("Top small/mid-cap names", latest_run.output_paths.get("small_cap"), limit=5)
+    return 0
+
+
+def run_greenrock_open_latest() -> int:
+    settings = get_settings()
+    db_path = initialize_database(settings.db_path)
+    with connect(db_path) as connection:
+        latest_report = _latest_greenrock_report(connection)
+    if latest_report is None or not latest_report.content_path:
+        print("No GreenRock report found. Run atlas greenrock report-draft first.")
+        return 0
+
+    report_path = Path(latest_report.content_path)
+    if sys.platform == "darwin":
+        subprocess.run(["open", str(report_path)], check=False)
+        print(f"Opened latest GreenRock report: {report_path}")
+    else:
+        print(f"Latest GreenRock report: {report_path}")
     return 0
 
 
@@ -516,7 +568,7 @@ def _approvals_for_run(connection, run_id: str) -> tuple[ApprovalRequest, ...]:
     return tuple(approval for approval in list_approvals(connection) if approval.run_id == run_id)
 
 
-def _print_candidate_file(title: str, path: str | None) -> None:
+def _print_candidate_file(title: str, path: str | None, limit: int | None = None) -> None:
     print("")
     print(title)
     if not path:
@@ -528,7 +580,8 @@ def _print_candidate_file(title: str, path: str | None) -> None:
         return
     print("symbol score market_cap company")
     with candidate_path.open(newline="", encoding="utf-8") as csv_file:
-        for row in csv.DictReader(csv_file):
+        rows = list(csv.DictReader(csv_file))
+        for row in rows[:limit]:
             print(f"{row['symbol']} {row['score']} {row['market_cap']} {row['company_name']}")
 
 
@@ -560,6 +613,10 @@ def main(argv: list[str] | None = None) -> int:
             return run_greenrock_latest_run()
         if args.greenrock_command == "latest-candidates":
             return run_greenrock_latest_candidates()
+        if args.greenrock_command == "review":
+            return run_greenrock_review()
+        if args.greenrock_command == "open-latest":
+            return run_greenrock_open_latest()
         parser.error("greenrock requires a subcommand")
 
     if args.command == "approvals":

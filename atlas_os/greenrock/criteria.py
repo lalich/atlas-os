@@ -12,6 +12,7 @@ from atlas_os.greenrock.indicators import (
     week_52_low_proximity,
 )
 from atlas_os.greenrock.models import IndicatorSnapshot, MockStock, StockCandidate
+from atlas_os.greenrock.scoring import greenrock_score
 
 LARGE_CAP_THRESHOLD = 5_000_000_000
 
@@ -57,7 +58,7 @@ def evaluate_stock(stock: MockStock) -> StockCandidate:
         ),
     }
 
-    score = _score_candidate(indicators, rule_results)
+    score = greenrock_score(indicators, rule_results)
     bucket = "large_cap" if stock.market_cap >= LARGE_CAP_THRESHOLD else "small_cap"
     passed = tuple(name for name, passed_rule in rule_results.items() if passed_rule)
     failed = tuple(name for name, passed_rule in rule_results.items() if not passed_rule)
@@ -89,19 +90,9 @@ def _is_closer_to_lower_band(price: float, lower: float, upper: float) -> bool:
     return abs(price - lower) < abs(upper - price)
 
 
-def _score_candidate(indicators: IndicatorSnapshot, rule_results: dict[str, bool]) -> float:
-    score = sum(10 for passed in rule_results.values() if passed)
-    score += max(0, (0.10 - indicators.low_proximity) * 100)
-    score += max(0, (50 - indicators.rsi_14) * 0.3)
-    if indicators.latest_close < indicators.bollinger_lower:
-        score += 8
-    return round(score, 2)
-
-
 def _candidate_note(indicators: IndicatorSnapshot, failed_rules: tuple[str, ...]) -> str:
     if failed_rules:
         return f"Mock candidate missed {len(failed_rules)} local screening rule(s)."
     if indicators.latest_close < indicators.bollinger_lower:
         return "Mock candidate passes all rules with bonus below lower Bollinger Band."
     return "Mock candidate passes all local GreenRock screening rules."
-

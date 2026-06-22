@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date
 
 from atlas_os.greenrock.models import GreenRockReport, StockCandidate
+from atlas_os.greenrock.scoring import signal_label
 from atlas_os.greenrock.screener import run_sample_screen, run_screen
 
 
@@ -51,47 +52,56 @@ def build_sample_report() -> GreenRockReport:
 def build_report_draft(run_id: str | None = None) -> GreenRockReport:
     screening = run_screen()
     lines = [
-        "# GreenRock Analysts Monthly Report",
+        "# GreenRock Analysts Monthly Opportunity Report",
+        "",
+        "## Technical Dislocation Screen",
         "",
         f"**Date:** {date.today().isoformat()}",
         f"**Run ID:** {run_id or 'local-preview'}",
         "",
         "> Draft only. This report uses mock data and requires human approval before any client-facing use.",
         "",
+        "## How to Read This Report",
+        "",
+        (
+            "This monthly note is designed as a focused review queue for technical dislocation setups. "
+            "The tables highlight mock securities that meet GreenRock's local screening framework, while "
+            "the rationale sections explain why each name surfaced and what would weaken the setup. "
+            "Signal labels are prioritization aids for internal review only, not recommendations."
+        ),
+        "",
         "## Executive Summary",
         "",
         (
-            "This local draft highlights mock equity candidates that screened favorably under the "
-            "GreenRock Analysts mean-reversion and technical-condition framework. The screen selected "
-            f"{len(screening.large_cap)} large-cap names and {len(screening.small_cap)} small-cap names "
-            "for review. These names are not recommendations, forecasts, or instructions to buy or sell "
-            "securities; they are sample outputs intended to validate the Atlas OS workflow."
+            "The latest mock screen found a full slate of technical-dislocation candidates across both "
+            "market-cap groups. Large-cap names generally represent higher-liquidity review candidates, "
+            "while the small/mid-cap group may offer sharper dislocation signals with higher volatility "
+            "and liquidity sensitivity. The report is intentionally written as a research starting point: "
+            "it identifies setups for further review, not conclusions or personalized investment actions."
         ),
         "",
-        "## Methodology",
+        "## Market Setup / Regime Placeholder",
         "",
         (
-            "The local GreenRock screen uses mock historical price and volume data only. Candidates are "
-            "ranked by proximity to the 52-week low, time spent near the low region, RSI below 50, "
-            "rising 10-day average volume, short-term moving average positioning, 50-day versus "
-            "150-day moving average structure, improving relative moving average rate of change, and "
-            "positioning versus 2.5 standard deviation Bollinger Bands. Large-cap and small-cap groups "
-            "are separated at a $5B mock market-cap threshold, with up to 11 names selected from each group."
+            "Phase 2A does not ingest live market data or macro inputs. In a production workflow, this "
+            "section would summarize the broader market regime, volatility backdrop, sector participation, "
+            "and liquidity conditions that frame the opportunity set. For now, it remains a placeholder "
+            "to preserve the final report structure while using mock data only."
         ),
         "",
-        "## Large Cap Candidates",
+        "## Top Large-Cap Candidates",
         "",
         _candidate_table(screening.large_cap),
         "",
-        "## Large Cap Screening Rationale",
+        "## Large-Cap Setup Notes",
         "",
         _screening_rationale(screening.large_cap),
         "",
-        "## Small Cap Candidates",
+        "## Top Small/Mid-Cap Candidates",
         "",
         _candidate_table(screening.small_cap),
         "",
-        "## Small Cap Screening Rationale",
+        "## Small/Mid-Cap Setup Notes",
         "",
         _screening_rationale(screening.small_cap),
         "",
@@ -113,6 +123,16 @@ def build_report_draft(run_id: str | None = None) -> GreenRockReport:
             "a human approver explicitly approves the linked Atlas OS approval record."
         ),
         "",
+        "## Methodology Appendix",
+        "",
+        (
+            "GreenRock Score is a 0-100 mock technical score built from 52-week low proximity, Bollinger "
+            "Band location, RSI, 10-day volume acceleration, moving average structure, and a bonus for "
+            "trading below the lower 2.5 standard deviation Bollinger Band. Signal labels map as follows: "
+            "85-100 Exceptional, 70-84 Strong, 55-69 Watchlist, and below 55 Excluded or Low Priority. "
+            "Large-cap and small/mid-cap groups are separated at a $5B mock market-cap threshold."
+        ),
+        "",
         "## Mock-Data Disclaimer",
         "",
         (
@@ -131,15 +151,15 @@ def build_report_draft(run_id: str | None = None) -> GreenRockReport:
         ),
     ]
     return GreenRockReport(
-        title="GreenRock Analysts Monthly Report",
+        title="GreenRock Analysts Monthly Opportunity Report",
         markdown="\n".join(lines) + "\n",
     )
 
 
 def _candidate_table(candidates: tuple[StockCandidate, ...]) -> str:
     lines = [
-        "| Symbol | Company | Market Cap | Score | RSI | 52w Low Proximity | Note |",
-        "|---|---|---:|---:|---:|---:|---|",
+        "| Symbol | Company | Market Cap | GreenRock Score | Signal | RSI | 52w Low Proximity |",
+        "|---|---|---:|---:|---|---:|---:|",
     ]
     for candidate in candidates:
         indicators = candidate.indicators
@@ -149,9 +169,9 @@ def _candidate_table(candidates: tuple[StockCandidate, ...]) -> str:
             f"{candidate.company_name} | "
             f"${candidate.market_cap / 1_000_000_000:.2f}B | "
             f"{candidate.score:.2f} | "
+            f"{signal_label(candidate.score)} | "
             f"{indicators.rsi_14:.1f} | "
-            f"{indicators.low_proximity:.1%} | "
-            f"{candidate.note} |"
+            f"{indicators.low_proximity:.1%} |"
         )
     return "\n".join(lines)
 
@@ -164,14 +184,36 @@ def _screening_rationale(candidates: tuple[StockCandidate, ...]) -> str:
             [
                 f"### {candidate.symbol} - {candidate.company_name}",
                 "",
+                f"**Signal:** {signal_label(candidate.score)} | **GreenRock Score:** {candidate.score:.2f}",
+                "",
+                "**Why It Screened In**",
+                "",
                 (
-                    f"{candidate.symbol} screened in because the mock price is within "
-                    f"{indicators.low_proximity:.1%} of its mock 52-week low, RSI is "
-                    f"{indicators.rsi_14:.1f}, 10-day average volume is rising, the 8 EMA "
-                    "is below the 10 SMA, and the 50 DMA remains below the 150 DMA. The "
-                    "latest mock price is closer to the lower 2.5 standard deviation "
-                    "Bollinger Band than the upper band, supporting further internal review "
-                    "under the GreenRock screening framework."
+                    f"- Mock price is within {indicators.low_proximity:.1%} of the mock 52-week low, "
+                    "placing it in the screen's technical dislocation zone."
+                ),
+                (
+                    f"- RSI is {indicators.rsi_14:.1f}, which keeps the name below the screen's "
+                    "neutral momentum threshold."
+                ),
+                (
+                    "- 10-day average volume is rising, suggesting improving attention in the mock "
+                    "data set."
+                ),
+                (
+                    "- Moving average structure remains dislocated, with the 8 EMA below the 10 SMA "
+                    "and the 50 DMA below the 150 DMA."
+                ),
+                "",
+                "**What Would Invalidate the Setup**",
+                "",
+                (
+                    "- A sustained move away from the lower Bollinger Band without improving trend "
+                    "quality would reduce the technical dislocation signal."
+                ),
+                (
+                    "- Weakening volume acceleration, a deteriorating RSI profile, or a continued "
+                    "break below the mock low region would move the name lower in the review queue."
                 ),
                 "",
             ]

@@ -16,16 +16,21 @@ class GreenRockReportTests(unittest.TestCase):
         report = build_report_draft(run_id="greenrock-test-run")
 
         required_text = [
-            "# GreenRock Analysts Monthly Report",
+            "# GreenRock Analysts Monthly Opportunity Report",
+            "## Technical Dislocation Screen",
             "**Date:**",
             "**Run ID:** greenrock-test-run",
+            "## How to Read This Report",
             "## Executive Summary",
-            "## Methodology",
-            "## Large Cap Candidates",
-            "## Small Cap Candidates",
-            "## Large Cap Screening Rationale",
-            "## Small Cap Screening Rationale",
+            "## Market Setup / Regime Placeholder",
+            "## Top Large-Cap Candidates",
+            "## Top Small/Mid-Cap Candidates",
+            "GreenRock Score",
+            "Signal",
+            "**Why It Screened In**",
+            "**What Would Invalidate the Setup**",
             "## Risk Notes",
+            "## Methodology Appendix",
             "## Human Approval Disclaimer",
             "## Mock-Data Disclaimer",
             "## Compliance Notes",
@@ -42,6 +47,8 @@ class GreenRockReportTests(unittest.TestCase):
         self.assertIn("guarantee outcomes", report.markdown)
         self.assertIn("blocked from publication", report.markdown)
         self.assertIn("mock sample data", report.markdown)
+        self.assertNotIn("you should buy", report.markdown.lower())
+        self.assertNotIn("guaranteed", report.markdown.lower())
 
     def test_workflow_report_file_contains_run_id_and_run_specific_path(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -65,4 +72,3 @@ class GreenRockReportTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

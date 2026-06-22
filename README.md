@@ -38,6 +38,8 @@ atlas greenrock latest-report
 atlas greenrock latest-report --print
 atlas greenrock latest-run
 atlas greenrock latest-candidates
+atlas greenrock review
+atlas greenrock open-latest
 atlas approvals list
 atlas approvals pending
 atlas approvals latest
@@ -128,12 +130,19 @@ atlas greenrock latest-report
 atlas greenrock latest-report --print
 atlas greenrock latest-run
 atlas greenrock latest-candidates
+atlas greenrock review
+atlas greenrock open-latest
 atlas approvals pending
 atlas approvals latest
 atlas dashboard
 ```
 
-`latest-report` finds the newest GreenRock report by workflow run timestamp. `latest-candidates` summarizes the latest run-specific large-cap and small-cap CSV files. `dashboard` shows recent runs, pending approvals, artifact counts, and the latest GreenRock report path.
+`latest-report` finds the newest GreenRock report by workflow run timestamp. `latest-candidates` summarizes the latest run-specific large-cap and small/mid-cap CSV files. `review` shows the latest run, report path, approval status, top candidates, and pending approval ID. `open-latest` opens the latest report on macOS or prints the path on unsupported systems. `dashboard` shows recent runs, pending approvals, artifact counts, and the latest GreenRock report path.
+
+## Operator Docs
+
+- [Operator Runbook](docs/OPERATOR_RUNBOOK.md)
+- [GreenRock Product Notes](docs/GREENROCK_PRODUCT_NOTES.md)
 
 ## Tests
 
