@@ -35,6 +35,7 @@ from atlas_os.core.workflow_runs import get_workflow_run, list_workflow_runs
 from atlas_os.db.database import connect, initialize_database
 from atlas_os.greenrock.pdf_export import render_markdown_report_to_pdf
 from atlas_os.greenrock.market_data import MarketDataConfigurationError
+from atlas_os.greenrock.universe import load_ticker_universe
 from atlas_os.greenrock.workflow import run_greenrock_screening_workflow
 from atlas_os.greenrock.scoring import signal_label
 
@@ -299,6 +300,7 @@ def render_dashboard(status_message: str | None = None) -> str:
     completed_runs = [run for run in context["runs"] if run.status in {"completed", "approved", "awaiting_approval"}]
     failed_runs = [run for run in context["runs"] if run.status == "failed"]
     inbox_items = _build_inbox_items(context, pending_approvals, reports_ready, failed_runs)
+    latest_source = _latest_report_data_source(context["latest_report"])
 
     content = f"""
     {_status_banner(status_message)}
@@ -314,7 +316,7 @@ def render_dashboard(status_message: str | None = None) -> str:
       {_attention_card("red", str(len(pending_approvals)), "Pending Approvals", "Human review required")}
       {_attention_card("yellow", str(len(reports_ready)), "Reports Ready For PDF Export", "Approved locally, PDF not exported")}
       {_attention_card("green", str(len(completed_runs)), "Completed Workflows", "Finished or approval-gated runs")}
-      {_attention_card("neutral", "No" if not failed_runs else str(len(failed_runs)), "Failed Workflows", "No failed workflows" if not failed_runs else "Review failed runs")}
+      {_attention_card("neutral", _safe(latest_source or "none"), "Latest Data Source", "Shown on the newest GreenRock draft")}
     </section>
     <section class="panel">
       <div class="section-head">
@@ -378,6 +380,8 @@ def render_greenrock(status_message: str | None = None) -> str:
     latest_run = context["latest_run"]
     latest_report = context["latest_report"]
     latest_pdf = context["latest_pdf"]
+    universe = context["ticker_universe"]
+    latest_source = _latest_report_data_source(latest_report)
     approvals = [
         approval
         for approval in context["approvals"]
@@ -404,7 +408,7 @@ def render_greenrock(status_message: str | None = None) -> str:
       {_attention_card("neutral", _safe(latest_run.status if latest_run else "none"), "Latest Report Status", _safe(latest_run.run_id if latest_run else "No run yet"))}
       {_attention_card(_approval_color(latest_approval), _safe(latest_approval.status.value if latest_approval else "none"), "Latest Approval Status", "Human gate remains mandatory")}
       {_attention_card("green" if latest_pdf else "yellow", "exported" if latest_pdf else "not exported", "Latest PDF Status", _safe(latest_pdf.path if latest_pdf else "Approve first, then export locally"))}
-      {_attention_card("neutral", _safe(latest_run.data_mode.upper() if latest_run else "NONE"), "Data Mode", "Mock remains default; real mode is approval-gated")}
+      {_attention_card("neutral", _safe(latest_run.data_mode.upper() if latest_run else "NONE"), "Data Mode", _safe(latest_source or "No data source yet"))}
     </section>
     <section class="panel">
       <div class="section-head">
@@ -433,6 +437,14 @@ def render_greenrock(status_message: str | None = None) -> str:
         <h2>Top Small/Mid-Cap Candidates</h2>
         {_candidate_table(small_candidates)}
       </div>
+    </section>
+    <section class="panel">
+      <div class="section-head">
+        <h2>Mega Rock Ticker Universe</h2>
+        <span class="subtle">{len(universe.tickers)} tickers at {universe.path}</span>
+      </div>
+      <p class="subtle">Real mode uses environment tickers first, then this local Mega Rock universe.</p>
+      <div class="ticker-cloud">{''.join(f'<span>{_safe(ticker)}</span>' for ticker in universe.tickers)}</div>
     </section>
     <section class="panel">
       <div class="section-head">
@@ -723,6 +735,7 @@ def _load_context() -> dict:
     runs = list_workflow_runs(connection)
     reports = list_reports(connection)
     artifacts = list_artifacts(connection)
+    ticker_universe = load_ticker_universe(settings.output_dir)
     latest_run = next((run for run in runs if run.division == "greenrock"), None)
     latest_report = _latest_report_for_runs(reports, runs)
     latest_pdf = _latest_pdf_for_run(connection, latest_report.run_id if latest_report else None)
@@ -738,6 +751,7 @@ def _load_context() -> dict:
         "latest_run": latest_run,
         "latest_report": latest_report,
         "latest_pdf": latest_pdf,
+        "ticker_universe": ticker_universe,
     }
 
 
@@ -926,6 +940,8 @@ def _workflow_feed(runs, context) -> str:
         approvals = [approval for approval in context["approvals"] if approval.run_id == run.run_id]
         approval_status = approvals[0].status.value if approvals else "none"
         pdf_status = "exported" if _latest_pdf_for_run(context["connection"], run.run_id) else "not exported"
+        report = next((item for item in context["reports"] if item.run_id == run.run_id), None)
+        data_source = _latest_report_data_source(report) or "-"
         rows.append(
             "<tr>"
             f"<td><a href='/runs/{quote(run.run_id)}'>{_safe(run.run_id)}</a></td>"
@@ -934,13 +950,14 @@ def _workflow_feed(runs, context) -> str:
             f"<td>{_safe(run.started_at)}</td>"
             f"<td>{_safe(run.completed_at or '-')}</td>"
             f"<td>{_safe(run.data_mode.upper())}</td>"
+            f"<td>{_safe(data_source)}</td>"
             f"<td>{_safe(approval_status)}</td>"
             f"<td>{_safe(pdf_status)}</td>"
             "</tr>"
         )
     return (
         "<table><thead><tr><th>Run</th><th>Workflow</th><th>Status</th><th>Created</th>"
-        "<th>Completed</th><th>Data Mode</th><th>Approval</th><th>PDF</th></tr></thead><tbody>"
+        "<th>Completed</th><th>Data Mode</th><th>Data Source</th><th>Approval</th><th>PDF</th></tr></thead><tbody>"
         + "".join(rows)
         + "</tbody></table>"
     )
@@ -953,6 +970,18 @@ def _candidate_signal(row: dict[str, str]) -> str:
         return signal_label(float(row.get("score", "0")))
     except ValueError:
         return ""
+
+
+def _latest_report_data_source(report) -> str | None:
+    if not report or not report.content_path:
+        return None
+    path = Path(report.content_path)
+    if not path.exists():
+        return None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("**Data Source:**"):
+            return line.removeprefix("**Data Source:**").strip()
+    return None
 
 
 def _approvals_table(approvals, actions: bool) -> str:
@@ -1361,6 +1390,8 @@ def _page(title: str, content: str, active: str = "/") -> str:
     .badge.rejected, .badge.failed {{ background: rgba(243,201,105,.14); color: #ffe5a3; }}
     .badge.planned, .badge.inactive {{ background: rgba(140,108,255,.15); color: #ddd5ff; }}
     .badge.signal {{ background: rgba(243,201,105,.14); color: #ffe3a1; }}
+    .ticker-cloud {{ display: flex; flex-wrap: wrap; gap: 8px; }}
+    .ticker-cloud span {{ border: 1px solid rgba(55,214,122,.28); background: rgba(55,214,122,.08); border-radius: 999px; padding: 5px 9px; color: #d6ffe4; font-size: 12px; }}
     .actions, .action-row, .confirm-form {{ display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }}
     .action-row form {{ margin: 0; }}
     .task-form {{ display: grid; grid-template-columns: minmax(220px, 1fr) 260px minmax(260px, 1fr) auto; gap: 10px; }}

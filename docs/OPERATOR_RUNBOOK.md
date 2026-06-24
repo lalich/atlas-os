@@ -37,11 +37,24 @@ Optional local yfinance setup:
 ```bash
 python3 -m pip install -e ".[market-data]"
 export ATLAS_MARKET_DATA_PROVIDER=yfinance
-export ATLAS_GREENROCK_REAL_TICKERS=AAPL,MSFT,NVDA
+export ATLAS_GREENROCK_REAL_TICKERS=
 atlas greenrock report-draft --data real
 ```
 
+With `ATLAS_GREENROCK_REAL_TICKERS` blank, Atlas uses the local Mega Rock universe.
+
 Real-data reports still remain draft-only and blocked for human approval.
+
+## Manage Mega Rock Universe
+
+```bash
+atlas greenrock universe list
+atlas greenrock universe add TSLA PLTR
+atlas greenrock universe remove TSLA
+atlas greenrock universe reset-mega-rock
+```
+
+The Mega Rock universe is local only and stored at `.atlas/output/greenrock/universes/mega_rock.csv`.
 
 ## Inspect Candidates
 

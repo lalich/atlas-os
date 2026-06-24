@@ -20,7 +20,9 @@ atlas greenrock latest-report --print
 ```
 
 - Review executive summary, methodology, tables, rationale, risks, and disclaimers.
-- Confirm mock-data and human-approval disclaimers are present.
+- Confirm data mode and data source are clearly labeled.
+- If using real mode, confirm the Mega Rock Universe section is present.
+- Confirm data-mode and human-approval disclaimers are present.
 - Confirm no personalized recommendations, guarantees, or promissory language are present.
 
 ## 3. Inspect Candidates
@@ -30,7 +32,7 @@ atlas greenrock latest-candidates
 ```
 
 - Review large-cap and small/mid-cap candidate lists.
-- Confirm GreenRock Scores and signal labels look reasonable for mock data.
+- Confirm GreenRock Scores and signal labels look reasonable for the selected data mode.
 
 ## 4. Approve Or Reject
 
@@ -69,7 +71,7 @@ atlas greenrock final-packet <approval_id> --print
 - Confirm approval status is `approved`.
 - Confirm Markdown and PDF paths are present.
 - Confirm `report_final_pdf` appears exactly once in the artifact list.
-- Confirm mock-data and human-approval confirmations are present.
+- Confirm data-mode and human-approval confirmations are present.
 
 ## 7. Dashboard Check
 

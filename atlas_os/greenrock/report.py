@@ -79,7 +79,7 @@ def build_report_draft(
         "",
         (
             "This monthly note is designed as a focused review queue for technical dislocation setups. "
-            "The tables highlight mock securities that meet GreenRock's local screening framework, while "
+            "The tables highlight securities that meet GreenRock's local screening framework, while "
             "the rationale sections explain why each name surfaced and what would weaken the setup. "
             "Signal labels are prioritization aids for internal review only, not recommendations."
         ),
@@ -101,6 +101,10 @@ def build_report_draft(
             "participation, and liquidity conditions that frame the opportunity set. It is not a "
             "recommendation and remains subject to human review before any client-facing use."
         ),
+        "",
+        "## Mega Rock Universe",
+        "",
+        _mega_rock_section(resolved_data_mode, resolved_data_source, len(screening.all_candidates)),
         "",
         "## Top Large-Cap Candidates",
         "",
@@ -241,4 +245,17 @@ def _data_mode_disclaimer(is_mock: bool, data_source: str) -> str:
         f"This draft uses real-market-data mode from {data_source}. It remains draft-only, "
         "approval-gated, and not approved for publication, email distribution, or client-facing use. "
         "No client files, brokerage trading systems, email systems, or publishing services were used."
+    )
+
+
+def _mega_rock_section(data_mode: str, data_source: str, candidate_count: int) -> str:
+    if data_source == "yfinance:mega_rock":
+        return (
+            f"This {data_mode} run screened {candidate_count} securities from the local Mega Rock "
+            "ticker universe using the configured yfinance provider. The universe is an operator-managed "
+            "starting point and does not imply that any security is suitable for any person or portfolio."
+        )
+    return (
+        f"This {data_mode} run screened {candidate_count} securities from data source `{data_source}`. "
+        "Ticker universe composition is an operator input and remains subject to review."
     )

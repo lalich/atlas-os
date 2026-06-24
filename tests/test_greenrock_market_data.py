@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import tempfile
+import types
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -12,6 +13,7 @@ from unittest.mock import patch
 from atlas_os.cli import main
 from atlas_os.db.database import connect, initialize_database
 from atlas_os.greenrock.market_data import MarketDataProvider
+from atlas_os.greenrock.market_data import get_market_data_provider
 from atlas_os.greenrock.sample_data import load_mock_stocks
 from atlas_os.greenrock.screener import run_screen
 from atlas_os.greenrock.workflow import run_greenrock_screening_workflow
@@ -106,12 +108,62 @@ class GreenRockMarketDataTests(unittest.TestCase):
         self.assertIn("REAL", response.body)
         self.assertIn(workflow_run.run_id, response.body)
 
+    def test_real_provider_uses_mega_rock_universe_when_env_tickers_absent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fake_yfinance = types.SimpleNamespace()
+            with (
+                patch.dict("sys.modules", {"yfinance": fake_yfinance}),
+                patch.dict(
+                    "os.environ",
+                    {
+                        "ATLAS_MARKET_DATA_PROVIDER": "yfinance",
+                        "ATLAS_GREENROCK_REAL_TICKERS": "",
+                    },
+                    clear=False,
+                ),
+            ):
+                provider = get_market_data_provider("real", output_dir=root / "output")
+
+        self.assertEqual(provider.data_mode, "real")
+        self.assertEqual(provider.source_name, "yfinance:mega_rock")
+        self.assertIn("AAPL", provider.tickers)
+        self.assertIn("NVDA", provider.tickers)
+
+    def test_universe_cli_add_remove_and_reset(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {
+                "ATLAS_DB_PATH": str(root / "atlas.db"),
+                "ATLAS_OUTPUT_DIR": str(root / "output"),
+            }
+            with patch.dict("os.environ", env, clear=False):
+                list_output = _run_cli(["greenrock", "universe", "list"])
+                add_output = _run_cli(["greenrock", "universe", "add", "TSLA", "PLTR"])
+                remove_output = _run_cli(["greenrock", "universe", "remove", "TSLA"])
+                final_output = _run_cli(["greenrock", "universe", "list"])
+                reset_output = _run_cli(["greenrock", "universe", "reset-mega-rock"])
+
+        self.assertIn("name: mega_rock", list_output)
+        self.assertIn("ticker_count:", add_output)
+        self.assertIn("ticker_count:", remove_output)
+        self.assertIn("PLTR", final_output)
+        self.assertNotIn("  TSLA", final_output)
+        self.assertIn("GreenRock ticker universe reset", reset_output)
+
 
 def _run_cli_raw(args: list[str]) -> tuple[str, int]:
     buffer = io.StringIO()
     with redirect_stdout(buffer):
         exit_code = main(args)
     return buffer.getvalue(), exit_code
+
+
+def _run_cli(args: list[str]) -> str:
+    output, exit_code = _run_cli_raw(args)
+    if exit_code != 0:
+        raise AssertionError(f"CLI exited with {exit_code}: {args}\n{output}")
+    return output
 
 
 if __name__ == "__main__":

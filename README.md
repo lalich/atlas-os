@@ -50,6 +50,10 @@ atlas greenrock final-packet <approval_id> --print
 atlas greenrock open-pdf <approval_id>
 atlas greenrock cleanup-drafts
 atlas greenrock cleanup-drafts --dry-run
+atlas greenrock universe list
+atlas greenrock universe add TSLA PLTR
+atlas greenrock universe remove TSLA
+atlas greenrock universe reset-mega-rock
 atlas approvals list
 atlas approvals pending
 atlas approvals latest
@@ -95,7 +99,7 @@ Draft reports remain local, approval-gated, and blocked from client-facing use. 
 
 ## GreenRock Real Data Mode
 
-Phase 4A adds a production-shaped market data adapter while keeping mock mode as the default.
+Phase 4A/4C adds a production-shaped yfinance market data adapter and local ticker universe management while keeping mock mode as the default.
 
 ```bash
 atlas greenrock report-draft --data real
@@ -112,11 +116,23 @@ python3 -m pip install -e ".[market-data]"
 Then configure local-only placeholders in `.env` or your shell:
 
 ```text
+ATLAS_GREENROCK_DEFAULT_DATA_MODE=mock
 ATLAS_MARKET_DATA_PROVIDER=yfinance
-ATLAS_GREENROCK_REAL_TICKERS=AAPL,MSFT,NVDA
+ATLAS_GREENROCK_REAL_TICKERS=
 ```
 
-Reports clearly state `Data Mode: MOCK` or `Data Mode: REAL`. Real-data reports are still draft-only and blocked until human approval.
+When `ATLAS_GREENROCK_REAL_TICKERS` is blank, real mode uses the local Mega Rock universe stored under `.atlas/output/greenrock/universes/mega_rock.csv`.
+
+Manage the universe locally:
+
+```bash
+atlas greenrock universe list
+atlas greenrock universe add TSLA PLTR
+atlas greenrock universe remove TSLA
+atlas greenrock universe reset-mega-rock
+```
+
+Reports clearly state `Data Mode: MOCK` or `Data Mode: REAL` and show the data source, such as `yfinance:mega_rock`. Real-data reports are still draft-only and blocked until human approval.
 
 ## Approval Queue
 

@@ -22,14 +22,35 @@ Real mode is production-shaped but fail-closed. If no provider is configured, At
 
 ## Optional Provider Settings
 
-For the first scaffolded real provider, Atlas supports a yfinance-shaped adapter.
+For the first real provider, Atlas supports a yfinance adapter.
 
 Local `.env` placeholders:
 
 ```text
 ATLAS_MARKET_DATA_PROVIDER=yfinance
-ATLAS_GREENROCK_REAL_TICKERS=AAPL,MSFT,NVDA
+ATLAS_GREENROCK_REAL_TICKERS=
 ```
+
+When `ATLAS_GREENROCK_REAL_TICKERS` is blank, Atlas uses the local Mega Rock universe.
+
+## Mega Rock Universe
+
+The Mega Rock universe is an operator-managed local ticker list used as the default real-mode universe for GreenRock.
+
+```bash
+atlas greenrock universe list
+atlas greenrock universe add TSLA PLTR
+atlas greenrock universe remove TSLA
+atlas greenrock universe reset-mega-rock
+```
+
+The universe is stored locally at:
+
+```text
+.atlas/output/greenrock/universes/mega_rock.csv
+```
+
+The default Mega Rock list contains large, liquid U.S.-listed names intended as a starting universe only. Universe inclusion does not imply suitability, recommendation, or expected performance.
 
 Optional dependency:
 

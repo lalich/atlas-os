@@ -5,10 +5,12 @@ from __future__ import annotations
 import os
 from abc import ABC, abstractmethod
 from datetime import date
+from pathlib import Path
 from typing import Iterable
 
 from atlas_os.greenrock.models import MockStock, PriceBar
 from atlas_os.greenrock.sample_data import load_mock_stocks
+from atlas_os.greenrock.universe import DEFAULT_UNIVERSE_NAME, load_ticker_universe
 
 
 class MarketDataConfigurationError(RuntimeError):
@@ -46,7 +48,7 @@ class RealMarketDataProvider(MarketDataProvider):
 class YFinanceMarketDataProvider(RealMarketDataProvider):
     source_name = "yfinance"
 
-    def __init__(self, tickers: Iterable[str]) -> None:
+    def __init__(self, tickers: Iterable[str], universe_name: str | None = None) -> None:
         try:
             import yfinance  # noqa: F401
         except ImportError as exc:
@@ -57,8 +59,12 @@ class YFinanceMarketDataProvider(RealMarketDataProvider):
         self.tickers = tuple(ticker.strip().upper() for ticker in tickers if ticker.strip())
         if not self.tickers:
             raise MarketDataConfigurationError(
-                "Real mode requires ATLAS_GREENROCK_REAL_TICKERS, for example AAPL,MSFT."
+                "Real mode requires tickers from ATLAS_GREENROCK_REAL_TICKERS or the local Mega Rock universe."
             )
+        self.universe_name = universe_name
+        self.source_name = (
+            f"yfinance:{universe_name}" if universe_name else "yfinance:env_tickers"
+        )
 
     def fetch_stocks(self) -> tuple[MockStock, ...]:
         try:
@@ -68,11 +74,13 @@ class YFinanceMarketDataProvider(RealMarketDataProvider):
                 "Real mode provider 'yfinance' is configured but the optional yfinance package "
                 "is not installed. Install atlas-os with the market-data extra or use --data mock."
             ) from exc
+        if hasattr(yf, "set_tz_cache_location"):
+            yf.set_tz_cache_location("/tmp/atlas-yfinance-cache")
 
         stocks: list[MockStock] = []
         for ticker in self.tickers:
             instrument = yf.Ticker(ticker)
-            history = instrument.history(period="1y", interval="1d", auto_adjust=False)
+            history = instrument.history(period="18mo", interval="1d", auto_adjust=False)
             if history is None or history.empty:
                 continue
 
@@ -89,7 +97,10 @@ class YFinanceMarketDataProvider(RealMarketDataProvider):
             if len(bars) < 252:
                 continue
 
-            info = getattr(instrument, "info", {}) or {}
+            try:
+                info = getattr(instrument, "info", {}) or {}
+            except Exception:
+                info = {}
             market_cap = float(info.get("marketCap") or 0)
             company_name = str(info.get("shortName") or info.get("longName") or ticker)
             stocks.append(
@@ -108,7 +119,7 @@ class YFinanceMarketDataProvider(RealMarketDataProvider):
         return tuple(stocks)
 
 
-def get_market_data_provider(data_mode: str) -> MarketDataProvider:
+def get_market_data_provider(data_mode: str, output_dir: Path | None = None) -> MarketDataProvider:
     normalized_mode = data_mode.strip().lower()
     if normalized_mode == "mock":
         return MockMarketDataProvider()
@@ -125,8 +136,19 @@ def get_market_data_provider(data_mode: str) -> MarketDataProvider:
         raise MarketDataConfigurationError(
             f"Unsupported market data provider: {provider_name}. Supported provider: yfinance."
         )
-    tickers = os.getenv("ATLAS_GREENROCK_REAL_TICKERS", "")
-    return YFinanceMarketDataProvider(tickers.split(","))
+    tickers = tuple(
+        ticker.strip()
+        for ticker in os.getenv("ATLAS_GREENROCK_REAL_TICKERS", "").split(",")
+        if ticker.strip()
+    )
+    if tickers:
+        return YFinanceMarketDataProvider(tickers)
+    if output_dir is None:
+        raise MarketDataConfigurationError(
+            "Real mode requires ATLAS_GREENROCK_REAL_TICKERS or an output directory for the Mega Rock universe."
+        )
+    universe = load_ticker_universe(output_dir, DEFAULT_UNIVERSE_NAME)
+    return YFinanceMarketDataProvider(universe.tickers, universe_name=universe.name)
 
 
 def _to_date(value) -> date:

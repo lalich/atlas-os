@@ -62,28 +62,33 @@ class GreenRockLifecycleTests(unittest.TestCase):
     def test_cleanup_preserves_latest_draft_final_pdfs_and_audit_logs(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            db_path = initialize_database(root / "atlas.db")
-            with connect(db_path) as connection:
-                first_run, _, first_approval = run_greenrock_screening_workflow(connection, root / "output")
-                approve_approval(connection, first_approval.id)
-                pdf_artifact = export_greenrock_pdf(first_approval.id)
-                second_run, _, _ = run_greenrock_screening_workflow(connection, root / "output")
-                audit_count_before = len(list_audit_logs(connection))
-                approval_count_before = len(list_approvals(connection))
-                first_draft_paths = [
-                    Path(artifact.path)
-                    for artifact in list_artifacts(connection)
-                    if artifact.run_id == first_run.run_id and artifact.artifact_type != "report_final_pdf"
-                ]
+            env = {
+                "ATLAS_DB_PATH": str(root / "atlas.db"),
+                "ATLAS_OUTPUT_DIR": str(root / "output"),
+            }
+            with patch.dict("os.environ", env, clear=False):
+                db_path = initialize_database(root / "atlas.db")
+                with connect(db_path) as connection:
+                    first_run, _, first_approval = run_greenrock_screening_workflow(connection, root / "output")
+                    approve_approval(connection, first_approval.id)
+                    pdf_artifact = export_greenrock_pdf(first_approval.id)
+                    second_run, _, _ = run_greenrock_screening_workflow(connection, root / "output")
+                    audit_count_before = len(list_audit_logs(connection))
+                    approval_count_before = len(list_approvals(connection))
+                    first_draft_paths = [
+                        Path(artifact.path)
+                        for artifact in list_artifacts(connection)
+                        if artifact.run_id == first_run.run_id and artifact.artifact_type != "report_final_pdf"
+                    ]
 
-                result = cleanup_greenrock_drafts(connection, dry_run=False)
-                active_artifacts = list_artifacts(connection)
-                archived_artifacts = [
-                    artifact for artifact in list_artifacts(connection, include_archived=True)
-                    if artifact.status == "archived_removed"
-                ]
-                audit_count_after = len(list_audit_logs(connection))
-                approval_count_after = len(list_approvals(connection))
+                    result = cleanup_greenrock_drafts(connection, dry_run=False)
+                    active_artifacts = list_artifacts(connection)
+                    archived_artifacts = [
+                        artifact for artifact in list_artifacts(connection, include_archived=True)
+                        if artifact.status == "archived_removed"
+                    ]
+                    audit_count_after = len(list_audit_logs(connection))
+                    approval_count_after = len(list_approvals(connection))
 
             latest_report = root / "output" / "greenrock" / second_run.run_id / "greenrock_report_draft.md"
             pdf_path = Path(pdf_artifact.path)

@@ -25,7 +25,7 @@ def run_greenrock_screening_workflow(
     data_mode: str = "mock",
     provider: MarketDataProvider | None = None,
 ) -> tuple[WorkflowRun, tuple[Artifact, ...], ApprovalRequest | None]:
-    market_data_provider = provider or get_market_data_provider(data_mode)
+    market_data_provider = provider or get_market_data_provider(data_mode, output_dir=output_dir)
     steps = [WorkflowStep("screen_candidates", _screen_candidates_step(market_data_provider))]
     if include_report_draft:
         steps.append(WorkflowStep("draft_report", _draft_report))

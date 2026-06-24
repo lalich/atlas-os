@@ -51,6 +51,8 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("Reject", response.body)
         self.assertIn("GreenRock Score", response.body)
         self.assertIn("Signal Label", response.body)
+        self.assertIn("Mega Rock Ticker Universe", response.body)
+        self.assertIn("AAPL", response.body)
 
     def test_task_board_route_returns_200_and_can_create_task(self) -> None:
         with _isolated_env():
@@ -126,6 +128,7 @@ class CommandCenterTests(unittest.TestCase):
         self.assertEqual(response.status, 200)
         self.assertIn("1</strong><h2>Pending Approvals", response.body)
         self.assertIn("Review GreenRock Report", response.body)
+        self.assertIn("Latest Data Source", response.body)
 
     def test_greenrock_browser_pdf_export_works_for_approved_report(self) -> None:
         with _isolated_env() as root:

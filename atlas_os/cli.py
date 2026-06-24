@@ -29,6 +29,7 @@ from atlas_os.greenrock.market_data import MarketDataConfigurationError
 from atlas_os.greenrock.pdf_export import render_markdown_report_to_pdf
 from atlas_os.greenrock.report import build_sample_report
 from atlas_os.greenrock.screener import run_screen
+from atlas_os.greenrock.universe import add_tickers, load_ticker_universe, remove_tickers, save_ticker_universe, MEGA_ROCK_TICKERS
 from atlas_os.greenrock.workflow import run_greenrock_screening_workflow
 from atlas_os.logging_config import configure_logging
 
@@ -170,6 +171,17 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Show what would be removed without deleting files or archiving artifacts.",
     )
+    universe = greenrock_subparsers.add_parser(
+        "universe",
+        help="Manage the local GreenRock ticker universe.",
+    )
+    universe_subparsers = universe.add_subparsers(dest="universe_command")
+    universe_subparsers.add_parser("list", help="List current GreenRock ticker universe.")
+    universe_add = universe_subparsers.add_parser("add", help="Add tickers to the local universe.")
+    universe_add.add_argument("tickers", nargs="+")
+    universe_remove = universe_subparsers.add_parser("remove", help="Remove tickers from the local universe.")
+    universe_remove.add_argument("tickers", nargs="+")
+    universe_subparsers.add_parser("reset-mega-rock", help="Reset local universe to the Mega Rock default.")
 
     return parser
 
@@ -493,6 +505,40 @@ def run_greenrock_cleanup_drafts(dry_run: bool = False) -> int:
         print(f"  {path}")
     print("Audit logs and approval records were preserved.")
     return 0
+
+
+def run_greenrock_universe(command: str | None, tickers: list[str] | None = None) -> int:
+    settings = get_settings()
+    if command in (None, "list"):
+        universe = load_ticker_universe(settings.output_dir)
+        print("GreenRock ticker universe")
+        print(f"name: {universe.name}")
+        print(f"path: {universe.path}")
+        print(f"ticker_count: {len(universe.tickers)}")
+        print("tickers:")
+        for ticker in universe.tickers:
+            print(f"  {ticker}")
+        return 0
+    if command == "add":
+        universe = add_tickers(settings.output_dir, tuple(tickers or ()))
+        print("GreenRock ticker universe updated")
+        print(f"ticker_count: {len(universe.tickers)}")
+        print(f"path: {universe.path}")
+        return 0
+    if command == "remove":
+        universe = remove_tickers(settings.output_dir, tuple(tickers or ()))
+        print("GreenRock ticker universe updated")
+        print(f"ticker_count: {len(universe.tickers)}")
+        print(f"path: {universe.path}")
+        return 0
+    if command == "reset-mega-rock":
+        universe = save_ticker_universe(settings.output_dir, MEGA_ROCK_TICKERS)
+        print("GreenRock ticker universe reset")
+        print(f"name: {universe.name}")
+        print(f"ticker_count: {len(universe.tickers)}")
+        print(f"path: {universe.path}")
+        return 0
+    raise ValueError(f"Unsupported universe command: {command}")
 
 
 def run_approvals_list() -> int:
@@ -883,6 +929,8 @@ def main(argv: list[str] | None = None) -> int:
             return run_greenrock_open_pdf(args.approval_id)
         if args.greenrock_command == "cleanup-drafts":
             return run_greenrock_cleanup_drafts(args.dry_run)
+        if args.greenrock_command == "universe":
+            return run_greenrock_universe(args.universe_command, getattr(args, "tickers", None))
         parser.error("greenrock requires a subcommand")
 
     if args.command == "approvals":
