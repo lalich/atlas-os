@@ -21,6 +21,7 @@ class GreenRockReportTests(unittest.TestCase):
             "**Date:**",
             "**Run ID:** greenrock-test-run",
             "**Data Mode:** MOCK",
+            "**Selection Mode:** STRICT",
             "## How to Read This Report",
             "## Executive Summary",
             "## Market Setup / Regime Placeholder",

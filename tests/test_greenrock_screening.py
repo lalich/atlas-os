@@ -13,9 +13,10 @@ class GreenRockScreeningTests(unittest.TestCase):
     def test_screen_selects_11_large_and_11_small_cap_candidates(self) -> None:
         result = run_screen()
 
+        self.assertEqual(len(result.mega_rock), 1)
         self.assertEqual(len(result.large_cap), 11)
         self.assertEqual(len(result.small_cap), 11)
-        self.assertEqual(len(result.selected), 22)
+        self.assertEqual(len(result.selected), 23)
 
     def test_selected_candidates_pass_all_core_rules(self) -> None:
         result = run_screen()
@@ -24,11 +25,11 @@ class GreenRockScreeningTests(unittest.TestCase):
             self.assertEqual(candidate.failed_rules, ())
             self.assertGreaterEqual(candidate.score, 80)
 
-    def test_market_cap_split_uses_5b_threshold(self) -> None:
+    def test_market_cap_split_uses_10b_and_1t_thresholds(self) -> None:
         result = run_screen()
 
-        self.assertTrue(all(candidate.market_cap >= 5_000_000_000 for candidate in result.large_cap))
-        self.assertTrue(all(candidate.market_cap < 5_000_000_000 for candidate in result.small_cap))
+        self.assertTrue(all(10_000_000_000 <= candidate.market_cap < 1_000_000_000_000 for candidate in result.large_cap))
+        self.assertTrue(all(candidate.market_cap < 10_000_000_000 for candidate in result.small_cap))
 
     def test_noise_stock_fails_screen(self) -> None:
         noise = next(stock for stock in load_mock_stocks() if stock.symbol == "NOISE")
@@ -40,4 +41,3 @@ class GreenRockScreeningTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

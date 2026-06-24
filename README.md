@@ -33,14 +33,18 @@ atlas status
 atlas greenrock sample-report
 atlas greenrock run-screen
 atlas greenrock run-screen --data mock
+atlas greenrock run-screen --data real --selection ranked
 atlas greenrock candidates
 atlas greenrock report-draft
 atlas greenrock report-draft --data mock
 atlas greenrock report-draft --data real
+atlas greenrock report-draft --data real --selection ranked
+atlas greenrock report-draft --data real --selection strict
 atlas greenrock latest-report
 atlas greenrock latest-report --print
 atlas greenrock latest-run
 atlas greenrock latest-candidates
+atlas greenrock picks-board
 atlas greenrock review
 atlas greenrock open-latest
 atlas greenrock export-pdf <approval_id>
@@ -54,6 +58,9 @@ atlas greenrock universe list
 atlas greenrock universe add TSLA PLTR
 atlas greenrock universe remove TSLA
 atlas greenrock universe reset-mega-rock
+atlas greenrock universe reset-large-cap
+atlas greenrock universe reset-small-mid
+atlas greenrock universe reset-all
 atlas approvals list
 atlas approvals pending
 atlas approvals latest
@@ -91,6 +98,7 @@ atlas greenrock report-draft --data mock
 The local screener writes:
 
 - `.atlas/output/greenrock/<run_id>/greenrock_candidates.csv`
+- `.atlas/output/greenrock/<run_id>/greenrock_mega_rock.csv`
 - `.atlas/output/greenrock/<run_id>/greenrock_large_cap.csv`
 - `.atlas/output/greenrock/<run_id>/greenrock_small_cap.csv`
 - `.atlas/output/greenrock/<run_id>/greenrock_report_draft.md`
@@ -103,9 +111,13 @@ Phase 4A/4C adds a production-shaped yfinance market data adapter and local tick
 
 ```bash
 atlas greenrock report-draft --data real
+atlas greenrock report-draft --data real --selection ranked
+atlas greenrock report-draft --data real --selection strict
 ```
 
 Real mode fails safely unless a provider is configured locally. A failed configuration attempt does not create a report, approval, artifact, email, publication, or external action.
+
+Selection mode defaults to `strict` for mock data and `ranked` for real data. Strict mode requires all GreenRock criteria. Ranked mode scores the available universe and fills the best available candidates when strict criteria would leave sections empty.
 
 Optional first provider:
 
@@ -121,7 +133,11 @@ ATLAS_MARKET_DATA_PROVIDER=yfinance
 ATLAS_GREENROCK_REAL_TICKERS=
 ```
 
-When `ATLAS_GREENROCK_REAL_TICKERS` is blank, real mode uses the local Mega Rock universe stored under `.atlas/output/greenrock/universes/mega_rock.csv`.
+When `ATLAS_GREENROCK_REAL_TICKERS` is blank, real mode uses the local GreenRock universe CSVs stored under `.atlas/output/greenrock/universes/`:
+
+- `mega_rock.csv`
+- `large_cap.csv`
+- `small_mid_cap.csv`
 
 Manage the universe locally:
 
@@ -130,9 +146,35 @@ atlas greenrock universe list
 atlas greenrock universe add TSLA PLTR
 atlas greenrock universe remove TSLA
 atlas greenrock universe reset-mega-rock
+atlas greenrock universe reset-large-cap
+atlas greenrock universe reset-small-mid
+atlas greenrock universe reset-all
 ```
 
-Reports clearly state `Data Mode: MOCK` or `Data Mode: REAL` and show the data source, such as `yfinance:mega_rock`. Real-data reports are still draft-only and blocked until human approval.
+## GreenRock Picks Board
+
+The Picks Board is a local dashboard view for the latest GreenRock report run:
+
+```bash
+atlas greenrock picks-board
+atlas serve
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8000/greenrock/picks
+```
+
+The board displays one featured Mega Rock pick, eleven large-cap picks, and eleven small/mid-cap picks when available. It includes ticker, company name, market cap, price, GreenRock Score, signal label, RSI, 52-week low distance, Bollinger Band status, volume acceleration, screening rationale, and Finviz links. The page is local-only, clearly labels MOCK or REAL data, and does not publish externally.
+
+Real-data market-cap sections are:
+
+- Mega Rock: market cap at or above $1T.
+- Large Cap: $10B to below $1T.
+- Small/Mid: below $10B.
+
+Reports clearly state `Data Mode: MOCK` or `Data Mode: REAL` and show the data source, such as `yfinance:greenrock_universes`. Real-data reports are still draft-only and blocked until human approval. If a section produces fewer than its target picks, the report and Picks Board show a data quality warning.
 
 ## Approval Queue
 
@@ -261,7 +303,8 @@ Command Center pages:
 
 - `/` Atlas Inbox with attention counters, actionable cards, recent workflow feed, and navigation.
 - `/projects` project directory for GreenRock Analysts, Variance Capital / The Bat Signal, GreenRock Insurance, and Atlas Core.
-- `/greenrock` report review console with a Run GreenRock Report button, latest run/report/PDF status, candidate summaries, approval actions, local artifact open links, and PDF export after approval.
+- `/greenrock` report review console with Run Mock Report and Run Real Report buttons, latest run/report/PDF status, candidate summaries, approval actions, local artifact open links, and PDF export after approval.
+- `/greenrock/picks` GreenRock Picks Board with the featured Mega Rock pick, 11 large-cap picks, 11 small/mid-cap picks, Finviz links, and explicit data-mode labeling.
 - `/greenrock/final-reports` final PDF archive for approved exported GreenRock PDFs.
 - `/tasks` local kanban-style manual task board with backlog, in progress, awaiting review, and completed columns.
 - `/agents` planned agent HUD with inactive/planned status labels.
@@ -277,7 +320,7 @@ The web app is local development mode only. It uses mock data, keeps the human a
 atlas serve
 ```
 
-Open `http://127.0.0.1:8000`, review the Atlas Inbox, then use the GreenRock page to inspect report status, approve/reject pending drafts, open local Markdown/PDF artifacts, or export an approved PDF. Use the task board for manual operator tasks only; it does not trigger autonomous execution.
+Open `http://127.0.0.1:8000`, review the Atlas Inbox, then use the GreenRock page to run a mock or real local draft, inspect report status, approve/reject pending drafts, open local Markdown/PDF artifacts, or export an approved PDF. Use `http://127.0.0.1:8000/greenrock/picks` for the GreenRock Picks Board. Use the task board for manual operator tasks only; it does not trigger autonomous execution.
 
 ## Operator Docs
 

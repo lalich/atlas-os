@@ -14,7 +14,8 @@ from atlas_os.greenrock.indicators import (
 from atlas_os.greenrock.models import IndicatorSnapshot, MockStock, StockCandidate
 from atlas_os.greenrock.scoring import greenrock_score
 
-LARGE_CAP_THRESHOLD = 5_000_000_000
+MEGA_ROCK_THRESHOLD = 1_000_000_000_000
+LARGE_CAP_THRESHOLD = 10_000_000_000
 
 
 def evaluate_stock(stock: MockStock) -> StockCandidate:
@@ -59,7 +60,7 @@ def evaluate_stock(stock: MockStock) -> StockCandidate:
     }
 
     score = greenrock_score(indicators, rule_results)
-    bucket = "large_cap" if stock.market_cap >= LARGE_CAP_THRESHOLD else "small_cap"
+    bucket = _market_cap_bucket(stock.market_cap)
     passed = tuple(name for name, passed_rule in rule_results.items() if passed_rule)
     failed = tuple(name for name, passed_rule in rule_results.items() if not passed_rule)
 
@@ -73,11 +74,25 @@ def evaluate_stock(stock: MockStock) -> StockCandidate:
         passed_rules=passed,
         failed_rules=failed,
         note=_candidate_note(indicators, failed),
+        has_price_history=stock.has_price_history,
+        has_market_cap=stock.has_market_cap,
+        has_volume_data=stock.has_volume_data,
+        has_52_week_low=stock.has_52_week_low,
+        skipped_reason=stock.skipped_reason,
+        selection_label="Strict Pass" if not failed else "Watchlist",
     )
 
 
 def passes_core_criteria(candidate: StockCandidate) -> bool:
     return not candidate.failed_rules
+
+
+def _market_cap_bucket(market_cap: float) -> str:
+    if market_cap >= MEGA_ROCK_THRESHOLD:
+        return "mega_rock"
+    if market_cap >= LARGE_CAP_THRESHOLD:
+        return "large_cap"
+    return "small_cap"
 
 
 def _near_low_region(closes: tuple[float, ...], week_52_low: float, days: int = 30) -> bool:

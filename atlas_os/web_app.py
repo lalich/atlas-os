@@ -35,7 +35,7 @@ from atlas_os.core.workflow_runs import get_workflow_run, list_workflow_runs
 from atlas_os.db.database import connect, initialize_database
 from atlas_os.greenrock.pdf_export import render_markdown_report_to_pdf
 from atlas_os.greenrock.market_data import MarketDataConfigurationError
-from atlas_os.greenrock.universe import load_ticker_universe
+from atlas_os.greenrock.universe import load_greenrock_universes
 from atlas_os.greenrock.workflow import run_greenrock_screening_workflow
 from atlas_os.greenrock.scoring import signal_label
 
@@ -111,9 +111,13 @@ def create_app():
     def greenrock() -> str:
         return render_greenrock()
 
+    @app.get("/greenrock/picks", response_class=HTMLResponse)
+    def greenrock_picks() -> str:
+        return render_greenrock_picks_board()
+
     @app.post("/greenrock/run-report")
-    def run_greenrock_report():
-        ok, message = run_greenrock_report_from_browser()
+    def run_greenrock_report(data_mode: str = Form("mock")):
+        ok, message = run_greenrock_report_from_browser(data_mode)
         return RedirectResponse(_with_status("/greenrock", message), status_code=303)
 
     @app.get("/greenrock/final-reports", response_class=HTMLResponse)
@@ -210,6 +214,8 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
         return WebResponse(200, render_projects(_first(query, "status")))
     if method == "GET" and route == "/greenrock":
         return WebResponse(200, render_greenrock(_first(query, "status")))
+    if method == "GET" and route == "/greenrock/picks":
+        return WebResponse(200, render_greenrock_picks_board(_first(query, "status")))
     if method == "GET" and route == "/greenrock/final-reports":
         return WebResponse(200, render_greenrock_final_reports(_first(query, "status")))
     if method == "GET" and route == "/tasks":
@@ -251,7 +257,7 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
         save_manual_task(form.get("name", ""), form.get("division", "general"), form.get("notes", ""))
         return WebResponse(303, "", location=_with_status("/tasks", "Manual task created."))
     if method == "POST" and route == "/greenrock/run-report":
-        ok, message = run_greenrock_report_from_browser()
+        ok, message = run_greenrock_report_from_browser(form.get("data_mode", "mock"))
         return WebResponse(303, "", location=_with_status("/greenrock", message))
     if method == "POST" and route.startswith("/tasks/") and route.endswith("/status"):
         task_id = _route_int_part(route, 2)
@@ -328,6 +334,7 @@ def render_dashboard(status_message: str | None = None) -> str:
     <section class="nav-grid">
       {_nav_card("Project Directory", "/projects", "GreenRock, Bat Signal, Insurance, Atlas Core")}
       {_nav_card("GreenRock Analysts", "/greenrock", "Run latest draft, approvals, candidates")}
+      {_nav_card("GreenRock Picks Board", "/greenrock/picks", "Mega Rock, large-cap, and small/mid-cap picks")}
       {_nav_card("Task Board", "/tasks", "Manual work queue by division")}
       {_nav_card("Agent Monitor", "/agents", "Planned local agent activity HUD")}
       {_nav_card("Approvals", "/greenrock", "Pending report approval actions")}
@@ -380,7 +387,7 @@ def render_greenrock(status_message: str | None = None) -> str:
     latest_run = context["latest_run"]
     latest_report = context["latest_report"]
     latest_pdf = context["latest_pdf"]
-    universe = context["ticker_universe"]
+    universes = context["ticker_universes"]
     latest_source = _latest_report_data_source(latest_report)
     approvals = [
         approval
@@ -416,9 +423,15 @@ def render_greenrock(status_message: str | None = None) -> str:
         <span class="subtle">Local review only. No publish or send controls.</span>
       </div>
       <div class="action-row">
-        <form method="post" action="/greenrock/run-report" onsubmit="return confirm('Run a new local GreenRock report draft?');">
-          <button type="submit">Run GreenRock Report</button>
+        <form method="post" action="/greenrock/run-report" onsubmit="return confirm('Run a new local MOCK GreenRock report draft?');">
+          <input type="hidden" name="data_mode" value="mock">
+          <button type="submit">Run Mock Report</button>
         </form>
+        <form method="post" action="/greenrock/run-report" onsubmit="return confirm('Run a new local REAL GreenRock report draft using the configured provider?');">
+          <input type="hidden" name="data_mode" value="real">
+          <button class="secondary" type="submit">Run Real Report</button>
+        </form>
+        <a class="button secondary" href="/greenrock/picks">GreenRock Picks Board</a>
         {_path_action(latest_report.content_path if latest_report else None, "View Markdown report")}
         {_path_action(latest_pdf.path if latest_pdf else None, "Open PDF")}
         {_approval_button(latest_approval, "approve", "/greenrock")}
@@ -440,11 +453,11 @@ def render_greenrock(status_message: str | None = None) -> str:
     </section>
     <section class="panel">
       <div class="section-head">
-        <h2>Mega Rock Ticker Universe</h2>
-        <span class="subtle">{len(universe.tickers)} tickers at {universe.path}</span>
+        <h2>GreenRock Ticker Universes</h2>
+        <span class="subtle">Mega Rock, large-cap, and small/mid-cap local CSVs</span>
       </div>
-      <p class="subtle">Real mode uses environment tickers first, then this local Mega Rock universe.</p>
-      <div class="ticker-cloud">{''.join(f'<span>{_safe(ticker)}</span>' for ticker in universe.tickers)}</div>
+      <p class="subtle">Real mode uses environment tickers first. When blank, Atlas uses these local universes.</p>
+      {_universe_panels(universes)}
     </section>
     <section class="panel">
       <div class="section-head">
@@ -459,6 +472,73 @@ def render_greenrock(status_message: str | None = None) -> str:
     </section>
     """
     return _page("GreenRock Command Center", content, active="/greenrock")
+
+
+def render_greenrock_picks_board(status_message: str | None = None) -> str:
+    context = _load_context()
+    latest_run = context["latest_run"]
+    latest_report = context["latest_report"]
+    latest_source = _latest_report_data_source(latest_report)
+    approvals = [approval for approval in context["approvals"] if latest_run and approval.run_id == latest_run.run_id]
+    approval_status = approvals[0].status.value if approvals else "none"
+    all_candidates = _candidate_rows(latest_run.output_paths.get("all") if latest_run else None, limit=None)
+    mega_candidates = _candidate_rows(latest_run.output_paths.get("mega_rock") if latest_run else None, limit=1)
+    large_candidates = _candidate_rows(latest_run.output_paths.get("large_cap") if latest_run else None, limit=11)
+    small_candidates = _candidate_rows(latest_run.output_paths.get("small_cap") if latest_run else None, limit=11)
+    mega_pick = _top_candidate(mega_candidates) or _top_candidate(all_candidates)
+    slot_count = (1 if mega_pick else 0) + len(large_candidates) + len(small_candidates)
+    warnings = _picks_board_warnings(mega_pick, large_candidates, small_candidates)
+    data_mode = latest_run.data_mode.upper() if latest_run else "NONE"
+
+    content = f"""
+    {_status_banner(status_message)}
+    <section class="hero picks-hero">
+      <div>
+        <p class="eyebrow">GreenRock Analysts</p>
+        <h1>Picks Board</h1>
+        <p>Local research dashboard for the latest approval-gated report run.</p>
+      </div>
+      <div class="picks-stamp">
+        <span class="badge data-mode">{_safe(data_mode)} DATA</span>
+        <strong>{slot_count}/23</strong>
+        <p>visible report slots</p>
+      </div>
+    </section>
+    <section class="board-meta">
+      {_attention_card("neutral", _safe(latest_run.run_id if latest_run else "none"), "Latest Run", _safe(latest_source or "No data source yet"))}
+      {_attention_card(_approval_color(approvals[0] if approvals else None), _safe(approval_status), "Approval Status", "Human gate remains mandatory")}
+      {_attention_card("green" if latest_report else "yellow", _safe(data_mode), "Data Mode", "Mock vs real is explicitly labeled")}
+      {_attention_card("neutral", f"{slot_count}/23", "Board Slots", "Mega 1, large 11, small/mid 11")}
+    </section>
+    {_picks_warning_panel(warnings)}
+    <section class="mega-pick">
+      <div class="section-head">
+        <h2>Mega Rock Pick</h2>
+        <span class="subtle">Mega Rock: {1 if mega_pick else 0}/1</span>
+      </div>
+      {_mega_pick_card(mega_pick)}
+    </section>
+    <section class="panel picks-panel">
+      <div class="section-head">
+        <h2>Large-Cap Picks</h2>
+        <span class="subtle">Large Cap: {len(large_candidates)}/11</span>
+      </div>
+      {_picks_table(large_candidates)}
+    </section>
+    <section class="panel picks-panel">
+      <div class="section-head">
+        <h2>Small/Mid-Cap Picks</h2>
+        <span class="subtle">Small/Mid: {len(small_candidates)}/11</span>
+      </div>
+      {_picks_table(small_candidates)}
+    </section>
+    <section class="panel disclosure-panel">
+      <h2>Research Controls</h2>
+      <p>This board is local-only, approval-gated, and not published externally. It is not a personalized recommendation or guarantee of future results.</p>
+      <p class="subtle">Powered by Atlas OS</p>
+    </section>
+    """
+    return _page("GreenRock Picks Board", content, active="/greenrock/picks")
 
 
 def render_tasks(status_message: str | None = None) -> str:
@@ -687,21 +767,24 @@ def export_greenrock_pdf(approval_id: int):
         return artifact
 
 
-def run_greenrock_report_from_browser() -> tuple[bool, str]:
+def run_greenrock_report_from_browser(data_mode: str | None = None) -> tuple[bool, str]:
     settings = get_settings()
     db_path = initialize_database(settings.db_path)
-    data_mode = _default_greenrock_data_mode()
+    selected_data_mode = _normalize_data_mode(data_mode or _default_greenrock_data_mode())
     try:
         with connect(db_path) as connection:
             workflow_run, _, approval = run_greenrock_screening_workflow(
                 connection,
                 settings.output_dir,
                 include_report_draft=True,
-                data_mode=data_mode,
+                data_mode=selected_data_mode,
             )
     except MarketDataConfigurationError as error:
-        return False, f"GreenRock report blocked: {error}"
-    return True, f"GreenRock report draft created for {workflow_run.run_id}; approval {approval.id if approval else 'none'} is pending."
+        return False, f"GreenRock {selected_data_mode.upper()} report blocked: {error}"
+    return True, (
+        f"GreenRock {workflow_run.data_mode.upper()} report draft created for {workflow_run.run_id}; "
+        f"approval {approval.id if approval else 'none'} is pending."
+    )
 
 
 def save_manual_task(name: str, division: str, notes: str | None = None) -> None:
@@ -735,7 +818,7 @@ def _load_context() -> dict:
     runs = list_workflow_runs(connection)
     reports = list_reports(connection)
     artifacts = list_artifacts(connection)
-    ticker_universe = load_ticker_universe(settings.output_dir)
+    ticker_universes = load_greenrock_universes(settings.output_dir)
     latest_run = next((run for run in runs if run.division == "greenrock"), None)
     latest_report = _latest_report_for_runs(reports, runs)
     latest_pdf = _latest_pdf_for_run(connection, latest_report.run_id if latest_report else None)
@@ -751,13 +834,18 @@ def _load_context() -> dict:
         "latest_run": latest_run,
         "latest_report": latest_report,
         "latest_pdf": latest_pdf,
-        "ticker_universe": ticker_universe,
+        "ticker_universes": ticker_universes,
     }
 
 
 def _default_greenrock_data_mode() -> str:
     configured = os.getenv("ATLAS_GREENROCK_DEFAULT_DATA_MODE", "mock").strip().lower()
     return configured if configured in {"mock", "real"} else "mock"
+
+
+def _normalize_data_mode(value: str) -> str:
+    selected = value.strip().lower()
+    return selected if selected in {"mock", "real"} else "mock"
 
 
 def _primary_workflow_runs(context) -> tuple:
@@ -907,14 +995,16 @@ def _latest_pdf_for_run(connection, run_id: str | None):
     return None
 
 
-def _candidate_rows(path: str | None, limit: int = 6) -> list[dict[str, str]]:
+def _candidate_rows(path: str | None, limit: int | None = 6) -> list[dict[str, str]]:
     if not path:
         return []
     candidate_path = Path(path)
     if not candidate_path.exists():
         return []
     with candidate_path.open(newline="", encoding="utf-8") as csv_file:
-        return list(csv.DictReader(csv_file))[:limit]
+        rows = list(csv.DictReader(csv_file))
+    rows.sort(key=_row_score, reverse=True)
+    return rows[:limit] if limit is not None else rows
 
 
 def _candidate_table(rows: list[dict[str, str]]) -> str:
@@ -930,6 +1020,193 @@ def _candidate_table(rows: list[dict[str, str]]) -> str:
         for row in rows
     )
     return f"<table><thead><tr><th>Symbol</th><th>Name</th><th>GreenRock Score</th><th>Signal Label</th></tr></thead><tbody>{body}</tbody></table>"
+
+
+def _universe_panels(universes: dict) -> str:
+    labels = {
+        "mega_rock": "Mega Rock Ticker Universe",
+        "large_cap": "Large-Cap Ticker Universe",
+        "small_mid_cap": "Small/Mid-Cap Ticker Universe",
+    }
+    panels = []
+    for name, universe in universes.items():
+        panels.append(
+            f"""
+            <div class="universe-panel">
+              <h3>{_safe(labels.get(name, name))}</h3>
+              <p class="subtle">{len(universe.tickers)} tickers at {_safe(universe.path)}</p>
+              <div class="ticker-cloud">{''.join(f'<span>{_safe(ticker)}</span>' for ticker in universe.tickers)}</div>
+            </div>
+            """
+        )
+    return "<div class='universe-grid'>" + "".join(panels) + "</div>"
+
+
+def _top_candidate(rows: list[dict[str, str]]) -> dict[str, str] | None:
+    return rows[0] if rows else None
+
+
+def _row_score(row: dict[str, str]) -> float:
+    try:
+        return float(row.get("score", "0"))
+    except ValueError:
+        return 0.0
+
+
+def _mega_pick_card(row: dict[str, str] | None) -> str:
+    if not row:
+        return "<p class='empty'>No Mega Rock pick available yet. Run a GreenRock report first.</p>"
+    return f"""
+    <article class="mega-card" data-pick-slot="mega">
+      <div>
+        <span class="badge signal">{_safe(_candidate_signal(row))}</span>
+        <h2>{_safe(row.get('symbol', ''))}</h2>
+        <p>{_safe(row.get('company_name', ''))}</p>
+      </div>
+      <dl>
+        <div><dt>GreenRock Score</dt><dd>{_safe(row.get('score', ''))}</dd></div>
+        <div><dt>Price</dt><dd>{_format_currency(row.get('latest_close', ''))}</dd></div>
+        <div><dt>Market Cap</dt><dd>{_format_market_cap(row.get('market_cap', ''))}</dd></div>
+        <div><dt>RSI</dt><dd>{_safe(row.get('rsi_14', ''))}</dd></div>
+        <div><dt>52-week Low Distance</dt><dd>{_format_percent(row.get('low_proximity', ''))}</dd></div>
+        <div><dt>Bollinger Status</dt><dd>{_safe(_bollinger_status(row))}</dd></div>
+        <div><dt>Volume Acceleration</dt><dd>{_safe(_volume_acceleration(row))}</dd></div>
+        <div><dt>Finviz</dt><dd>{_finviz_link(row.get('symbol', ''))}</dd></div>
+      </dl>
+      <div class="screened-in">
+        <h3>Why it screened in</h3>
+        {_why_screened_in(row)}
+      </div>
+    </article>
+    """
+
+
+def _picks_table(rows: list[dict[str, str]]) -> str:
+    if not rows:
+        return "<p class='empty'>No picks available yet.</p>"
+    body = "".join(
+        "<tr data-pick-slot='candidate'>"
+        f"<td><strong>{_safe(row.get('symbol', ''))}</strong><br>{_finviz_link(row.get('symbol', ''))}</td>"
+        f"<td>{_safe(row.get('company_name', ''))}</td>"
+        f"<td>{_format_market_cap(row.get('market_cap', ''))}</td>"
+        f"<td>{_format_currency(row.get('latest_close', ''))}</td>"
+        f"<td>{_safe(row.get('score', ''))}</td>"
+        f"<td><span class='badge signal'>{_safe(_candidate_signal(row))}</span></td>"
+        f"<td><span class='badge selection'>{_safe(row.get('selection_label', 'Strict Pass'))}</span></td>"
+        f"<td>{_safe(row.get('rsi_14', ''))}</td>"
+        f"<td>{_format_percent(row.get('low_proximity', ''))}</td>"
+        f"<td>{_safe(_bollinger_status(row))}</td>"
+        f"<td>{_safe(_volume_acceleration(row))}</td>"
+        f"<td>{_why_screened_in(row)}</td>"
+        "</tr>"
+        for row in rows
+    )
+    return (
+        "<table class='picks-table'><thead><tr><th>Ticker</th><th>Company</th><th>Market Cap</th>"
+        "<th>Price</th><th>GreenRock Score</th><th>Signal</th><th>Selection</th><th>RSI</th><th>52-week Low Distance</th>"
+        "<th>Bollinger Band Status</th><th>Volume Acceleration</th><th>Why It Screened In</th></tr></thead><tbody>"
+        + body
+        + "</tbody></table>"
+    )
+
+
+def _picks_board_warnings(
+    mega_pick: dict[str, str] | None,
+    large_candidates: list[dict[str, str]],
+    small_candidates: list[dict[str, str]],
+) -> list[str]:
+    warnings = []
+    if mega_pick is None:
+        warnings.append("Mega Rock section has 0/1 picks.")
+    if len(large_candidates) < 11:
+        warnings.append(f"Large-cap section has {len(large_candidates)}/11 picks.")
+    if len(small_candidates) < 11:
+        warnings.append(f"Small/mid-cap section has {len(small_candidates)}/11 picks.")
+    return warnings
+
+
+def _picks_warning_panel(warnings: list[str]) -> str:
+    if not warnings:
+        return ""
+    items = "".join(f"<li>{_safe(warning)}</li>" for warning in warnings)
+    return f"""
+    <section class="panel warning-panel">
+      <h2>Data Quality Warning</h2>
+      <p>Some Picks Board sections did not fill their target slots. Review universe coverage, provider availability, and screening criteria.</p>
+      <ul class="compact-list">{items}</ul>
+    </section>
+    """
+
+
+def _why_screened_in(row: dict[str, str]) -> str:
+    rules = [rule.replace("_", " ") for rule in row.get("passed_rules", "").split(";") if rule]
+    if not rules:
+        return "<span class='subtle'>Screening rationale unavailable.</span>"
+    return "<ul class='compact-list'>" + "".join(f"<li>{_safe(rule)}</li>" for rule in rules[:4]) + "</ul>"
+
+
+def _bollinger_status(row: dict[str, str]) -> str:
+    try:
+        price = float(row.get("latest_close", "0"))
+        lower = float(row.get("bollinger_lower", "0"))
+        upper = float(row.get("bollinger_upper", "0"))
+    except ValueError:
+        return "unavailable"
+    if price < lower:
+        return "Below lower 2.5σ band"
+    lower_distance = abs(price - lower)
+    upper_distance = abs(upper - price)
+    if lower_distance < upper_distance:
+        return "Closer to lower band"
+    return "Closer to upper band"
+
+
+def _volume_acceleration(row: dict[str, str]) -> str:
+    try:
+        current = float(row.get("volume_avg_10", "0"))
+        previous = float(row.get("previous_volume_avg_10", "0"))
+    except ValueError:
+        return "unavailable"
+    if previous <= 0:
+        return "unavailable"
+    change = (current - previous) / previous
+    return f"{change:.1%}"
+
+
+def _format_market_cap(value: str) -> str:
+    try:
+        amount = float(value)
+    except ValueError:
+        return _safe(value)
+    if amount >= 1_000_000_000:
+        return f"${amount / 1_000_000_000:.1f}B"
+    if amount >= 1_000_000:
+        return f"${amount / 1_000_000:.1f}M"
+    return f"${amount:,.0f}"
+
+
+def _format_currency(value: str) -> str:
+    try:
+        amount = float(value)
+    except ValueError:
+        return _safe(value)
+    return f"${amount:,.2f}"
+
+
+def _format_percent(value: str) -> str:
+    try:
+        amount = float(value)
+    except ValueError:
+        return _safe(value)
+    return f"{amount:.1%}"
+
+
+def _finviz_link(symbol: str) -> str:
+    clean_symbol = symbol.strip().replace(".", "-")
+    if not clean_symbol:
+        return ""
+    href = f"https://finviz.com/quote.ashx?t={quote(clean_symbol)}"
+    return f"<a href='{href}' target='_blank' rel='noopener noreferrer'>Finviz</a>"
 
 
 def _workflow_feed(runs, context) -> str:
@@ -1256,6 +1533,7 @@ def _page(title: str, content: str, active: str = "/") -> str:
         ("Inbox", "/"),
         ("Projects", "/projects"),
         ("GreenRock", "/greenrock"),
+        ("Picks", "/greenrock/picks"),
         ("Tasks", "/tasks"),
         ("Agents", "/agents"),
         ("Reports", "/reports"),
@@ -1347,6 +1625,9 @@ def _page(title: str, content: str, active: str = "/") -> str:
     .hero.compact {{ min-height: 145px; display: block; }}
     .hero p {{ color: var(--muted); margin-bottom: 0; }}
     .hive {{ background: linear-gradient(135deg, rgba(18,22,34,.92), rgba(23,34,39,.88)); }}
+    .picks-hero {{ background: linear-gradient(135deg, rgba(7,42,25,.95), rgba(31,24,55,.88) 58%, rgba(50,39,18,.86)); }}
+    .picks-stamp {{ border: 1px solid rgba(243,201,105,.42); border-radius: 8px; padding: 18px; min-width: 190px; background: rgba(0,0,0,.2); text-align: right; }}
+    .picks-stamp strong {{ display: block; font-size: 44px; color: var(--gold); margin-top: 12px; }}
     .orbital {{ width: 170px; aspect-ratio: 1; border: 1px solid rgba(55,214,122,.34); border-radius: 50%; position: relative; animation: spin 18s linear infinite; }}
     .orbital span {{ position: absolute; width: 12px; height: 12px; border-radius: 50%; background: var(--gold); box-shadow: 0 0 20px var(--gold); }}
     .orbital span:nth-child(1) {{ left: 28px; top: 18px; }}
@@ -1355,6 +1636,7 @@ def _page(title: str, content: str, active: str = "/") -> str:
     @keyframes spin {{ from {{ transform: rotate(0deg); }} to {{ transform: rotate(360deg); }} }}
     .attention-grid, .nav-grid, .project-grid, .candidate-grid, .detail-grid {{ display: grid; gap: 16px; }}
     .attention-grid {{ grid-template-columns: repeat(4, minmax(0, 1fr)); }}
+    .board-meta {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }}
     .nav-grid, .project-grid {{ grid-template-columns: repeat(3, minmax(0, 1fr)); }}
     .candidate-grid, .detail-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
     .attention-card, .nav-card, .project-card, .inbox-card, .agent-card, .task-card {{
@@ -1390,8 +1672,25 @@ def _page(title: str, content: str, active: str = "/") -> str:
     .badge.rejected, .badge.failed {{ background: rgba(243,201,105,.14); color: #ffe5a3; }}
     .badge.planned, .badge.inactive {{ background: rgba(140,108,255,.15); color: #ddd5ff; }}
     .badge.signal {{ background: rgba(243,201,105,.14); color: #ffe3a1; }}
+    .badge.selection {{ background: rgba(140,108,255,.15); color: #ddd5ff; }}
+    .badge.data-mode {{ background: rgba(55,214,122,.16); color: #c8ffda; border: 1px solid rgba(55,214,122,.3); }}
     .ticker-cloud {{ display: flex; flex-wrap: wrap; gap: 8px; }}
     .ticker-cloud span {{ border: 1px solid rgba(55,214,122,.28); background: rgba(55,214,122,.08); border-radius: 999px; padding: 5px 9px; color: #d6ffe4; font-size: 12px; }}
+    .universe-grid {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }}
+    .universe-panel {{ border: 1px solid rgba(255,255,255,.1); border-radius: 8px; padding: 12px; background: rgba(255,255,255,.04); }}
+    .warning-panel {{ border-color: rgba(243,201,105,.48); background: rgba(243,201,105,.08); }}
+    .mega-pick {{ border-color: rgba(243,201,105,.38); background: linear-gradient(135deg, rgba(27,32,41,.92), rgba(30,44,34,.84)); }}
+    .mega-card {{ display: grid; grid-template-columns: 260px 1fr 1.15fr; gap: 18px; align-items: start; }}
+    .mega-card h2 {{ font-size: 40px; margin-top: 12px; color: var(--gold); }}
+    .mega-card dl {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 0; }}
+    .mega-card dt {{ font-size: 12px; }}
+    .mega-card dd {{ font-weight: 700; }}
+    .screened-in {{ border: 1px solid rgba(55,214,122,.22); border-radius: 8px; padding: 12px; background: rgba(55,214,122,.06); }}
+    .compact-list {{ margin: 0; padding-left: 18px; color: #dfe9e3; }}
+    .compact-list li {{ margin: 0 0 4px; }}
+    .picks-panel {{ overflow-x: auto; }}
+    .picks-table {{ min-width: 1180px; }}
+    .picks-table th:nth-child(11), .picks-table td:nth-child(11) {{ min-width: 220px; }}
     .actions, .action-row, .confirm-form {{ display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }}
     .action-row form {{ margin: 0; }}
     .task-form {{ display: grid; grid-template-columns: minmax(220px, 1fr) 260px minmax(260px, 1fr) auto; gap: 10px; }}
@@ -1422,7 +1721,7 @@ def _page(title: str, content: str, active: str = "/") -> str:
     footer {{ border-top: 1px solid var(--line); padding: 18px 30px 28px; color: var(--muted); background: rgba(8,10,16,.7); }}
     footer div {{ display: flex; gap: 12px; flex-wrap: wrap; max-width: 1500px; margin: 0 auto; }}
     @media (max-width: 1000px) {{
-      .attention-grid, .nav-grid, .project-grid, .candidate-grid, .detail-grid, .kanban, .agent-grid, .task-form {{ grid-template-columns: 1fr; }}
+      .attention-grid, .board-meta, .nav-grid, .project-grid, .candidate-grid, .detail-grid, .kanban, .agent-grid, .task-form, .mega-card, .universe-grid {{ grid-template-columns: 1fr; }}
       main, header, footer {{ padding-left: 16px; padding-right: 16px; }}
       .hero {{ min-height: auto; }}
       .orbital {{ display: none; }}

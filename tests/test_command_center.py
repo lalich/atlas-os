@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from atlas_os.cli import build_parser, main
+from atlas_os.config import get_settings
+from atlas_os.core.approvals import list_approvals
+from atlas_os.core.artifacts import list_artifacts
+from atlas_os.core.workflow_runs import list_workflow_runs
+from atlas_os.db.database import connect, initialize_database
 from atlas_os.web_app import dispatch_request
 
 
@@ -28,6 +34,7 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("Pending Approvals", response.body)
         self.assertIn("Development Mode", response.body)
         self.assertIn("Last Refresh:", response.body)
+        self.assertIn("GreenRock Picks Board", response.body)
 
     def test_project_directory_route_returns_200(self) -> None:
         with _isolated_env():
@@ -53,6 +60,83 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("Signal Label", response.body)
         self.assertIn("Mega Rock Ticker Universe", response.body)
         self.assertIn("AAPL", response.body)
+        self.assertIn("Run Mock Report", response.body)
+        self.assertIn("Run Real Report", response.body)
+        self.assertIn("GreenRock Picks Board", response.body)
+
+    def test_greenrock_picks_route_returns_200_with_finviz_links_and_23_slots(self) -> None:
+        with _isolated_env():
+            main(["greenrock", "report-draft"])
+            response = dispatch_request("GET", "/greenrock/picks")
+            cli_exit = main(["greenrock", "picks-board"])
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(cli_exit, 0)
+        self.assertIn("Picks Board", response.body)
+        self.assertIn("Mega Rock Pick", response.body)
+        self.assertIn("Large-Cap Picks", response.body)
+        self.assertIn("Small/Mid-Cap Picks", response.body)
+        self.assertIn("https://finviz.com/quote.ashx?t=", response.body)
+        self.assertIn("Powered by Atlas OS", response.body)
+        self.assertIn("MOCK DATA", response.body)
+        self.assertIn("Mega Rock: 1/1", response.body)
+        self.assertIn("Large Cap: 11/11", response.body)
+        self.assertIn("Small/Mid: 11/11", response.body)
+        self.assertEqual(response.body.count("data-pick-slot="), 23)
+
+    def test_picks_route_shows_incomplete_section_warnings(self) -> None:
+        with _isolated_env():
+            main(["greenrock", "report-draft"])
+            settings = get_settings()
+            with connect(initialize_database(settings.db_path)) as connection:
+                run = list_workflow_runs(connection)[0]
+            small_csv = Path(run.output_paths["small_cap"])
+            header = small_csv.read_text(encoding="utf-8").splitlines()[0]
+            small_csv.write_text(header + "\n", encoding="utf-8")
+            response = dispatch_request("GET", "/greenrock/picks")
+
+        self.assertEqual(response.status, 200)
+        self.assertIn("Data Quality Warning", response.body)
+        self.assertIn("Small/mid-cap section has 0/11 picks", response.body)
+
+    def test_browser_run_buttons_pass_selected_data_mode(self) -> None:
+        fake_run = types.SimpleNamespace(run_id="greenrock-test", data_mode="real")
+        fake_approval = types.SimpleNamespace(id=42)
+        with _isolated_env():
+            with patch("atlas_os.web_app.run_greenrock_screening_workflow", return_value=(fake_run, (), fake_approval)) as workflow:
+                real_response = dispatch_request("POST", "/greenrock/run-report", "data_mode=real")
+                real_data_mode = workflow.call_args.kwargs["data_mode"]
+            fake_run.data_mode = "mock"
+            with patch("atlas_os.web_app.run_greenrock_screening_workflow", return_value=(fake_run, (), fake_approval)) as workflow:
+                mock_response = dispatch_request("POST", "/greenrock/run-report", "data_mode=mock")
+                mock_data_mode = workflow.call_args.kwargs["data_mode"]
+
+        self.assertEqual(real_response.status, 303)
+        self.assertEqual(mock_response.status, 303)
+        self.assertEqual(real_data_mode, "real")
+        self.assertEqual(mock_data_mode, "mock")
+
+    def test_failed_browser_real_provider_creates_no_approval_or_artifacts(self) -> None:
+        with _isolated_env() as root:
+            with patch.dict(
+                "os.environ",
+                {
+                    "ATLAS_MARKET_DATA_PROVIDER": "",
+                    "ATLAS_GREENROCK_REAL_TICKERS": "",
+                },
+                clear=False,
+            ):
+                response = dispatch_request("POST", "/greenrock/run-report", "data_mode=real")
+            with connect(initialize_database(root / "atlas.db")) as connection:
+                approvals = list_approvals(connection)
+                artifacts = list_artifacts(connection)
+                runs = list_workflow_runs(connection)
+
+        self.assertEqual(response.status, 303)
+        self.assertIn("REAL+report+blocked", response.location)
+        self.assertEqual(approvals, ())
+        self.assertEqual(artifacts, ())
+        self.assertEqual(runs, ())
 
     def test_task_board_route_returns_200_and_can_create_task(self) -> None:
         with _isolated_env():

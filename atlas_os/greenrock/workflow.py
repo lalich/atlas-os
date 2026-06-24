@@ -23,10 +23,12 @@ def run_greenrock_screening_workflow(
     output_dir: Path,
     include_report_draft: bool = True,
     data_mode: str = "mock",
+    selection_mode: str | None = None,
     provider: MarketDataProvider | None = None,
 ) -> tuple[WorkflowRun, tuple[Artifact, ...], ApprovalRequest | None]:
     market_data_provider = provider or get_market_data_provider(data_mode, output_dir=output_dir)
-    steps = [WorkflowStep("screen_candidates", _screen_candidates_step(market_data_provider))]
+    resolved_selection_mode = selection_mode or ("ranked" if market_data_provider.data_mode == "real" else "strict")
+    steps = [WorkflowStep("screen_candidates", _screen_candidates_step(market_data_provider, resolved_selection_mode))]
     if include_report_draft:
         steps.append(WorkflowStep("draft_report", _draft_report))
 
@@ -67,12 +69,13 @@ def run_greenrock_workflow(
     return runner.run()
 
 
-def _screen_candidates_step(provider: MarketDataProvider):
+def _screen_candidates_step(provider: MarketDataProvider, selection_mode: str = "strict"):
     def _screen_candidates(context: WorkflowContext) -> None:
-        result = run_screen(provider)
+        result = run_screen(provider, selection_mode=selection_mode)
         context.greenrock_screening_result = result
         paths = write_screen_outputs(result, context.output_dir)
         context.record_artifact("candidates_csv", paths["all"], output_key="all")
+        context.record_artifact("mega_rock_csv", paths["mega_rock"], output_key="mega_rock")
         context.record_artifact("large_cap_csv", paths["large_cap"], output_key="large_cap")
         context.record_artifact("small_cap_csv", paths["small_cap"], output_key="small_cap")
 

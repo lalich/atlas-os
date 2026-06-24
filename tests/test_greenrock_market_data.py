@@ -7,6 +7,7 @@ import tempfile
 import types
 import unittest
 from contextlib import redirect_stdout
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -14,8 +15,10 @@ from atlas_os.cli import main
 from atlas_os.db.database import connect, initialize_database
 from atlas_os.greenrock.market_data import MarketDataProvider
 from atlas_os.greenrock.market_data import get_market_data_provider
+from atlas_os.greenrock.models import MockStock
 from atlas_os.greenrock.sample_data import load_mock_stocks
 from atlas_os.greenrock.screener import run_screen
+from atlas_os.greenrock.universe import LARGE_CAP_TICKERS, SMALL_MID_CAP_TICKERS
 from atlas_os.greenrock.workflow import run_greenrock_screening_workflow
 from atlas_os.web_app import dispatch_request
 
@@ -26,6 +29,25 @@ class FakeMarketDataProvider(MarketDataProvider):
 
     def fetch_stocks(self):
         return load_mock_stocks()
+
+
+class FakeSectionedMarketDataProvider(MarketDataProvider):
+    data_mode = "real"
+    source_name = "fake_sectioned_provider"
+
+    def fetch_stocks(self):
+        return load_mock_stocks()
+
+    def fetch_grouped_stocks(self):
+        stocks = load_mock_stocks()
+        mega = tuple(replace(stock, market_cap=1_200_000_000_000) for stock in stocks[:5])
+        large = tuple(replace(stock, market_cap=25_000_000_000 + index * 1_000_000_000) for index, stock in enumerate(stocks[:14]))
+        small = tuple(replace(stock, market_cap=2_000_000_000 + index * 100_000_000) for index, stock in enumerate(stocks[14:28]))
+        return {
+            "mega_rock": mega,
+            "large_cap": large,
+            "small_mid_cap": small,
+        }
 
 
 class GreenRockMarketDataTests(unittest.TestCase):
@@ -108,7 +130,7 @@ class GreenRockMarketDataTests(unittest.TestCase):
         self.assertIn("REAL", response.body)
         self.assertIn(workflow_run.run_id, response.body)
 
-    def test_real_provider_uses_mega_rock_universe_when_env_tickers_absent(self) -> None:
+    def test_real_provider_uses_greenrock_universes_when_env_tickers_absent(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             fake_yfinance = types.SimpleNamespace()
@@ -126,9 +148,65 @@ class GreenRockMarketDataTests(unittest.TestCase):
                 provider = get_market_data_provider("real", output_dir=root / "output")
 
         self.assertEqual(provider.data_mode, "real")
-        self.assertEqual(provider.source_name, "yfinance:mega_rock")
-        self.assertIn("AAPL", provider.tickers)
-        self.assertIn("NVDA", provider.tickers)
+        self.assertEqual(provider.source_name, "yfinance:greenrock_universes")
+        self.assertEqual(tuple(provider.providers), ("mega_rock", "large_cap", "small_mid_cap"))
+        self.assertIn("AAPL", provider.providers["mega_rock"].tickers)
+        self.assertIn("NVDA", provider.providers["large_cap"].tickers)
+        self.assertIn("SOFI", provider.providers["small_mid_cap"].tickers)
+
+    def test_fake_sectioned_real_provider_can_produce_23_picks(self) -> None:
+        result = run_screen(FakeSectionedMarketDataProvider())
+
+        self.assertEqual(result.data_mode, "real")
+        self.assertEqual(result.selection_mode, "ranked")
+        self.assertEqual(len(result.mega_rock), 1)
+        self.assertEqual(len(result.large_cap), 11)
+        self.assertEqual(len(result.small_cap), 11)
+        self.assertEqual(len(result.selected), 23)
+        self.assertEqual(result.data_quality_warnings, ())
+        symbols = [candidate.symbol for candidate in result.selected]
+        self.assertEqual(len(symbols), len(set(symbols)))
+
+    def test_adbe_cannot_be_mega_rock_below_one_trillion_market_cap(self) -> None:
+        class AdobeProvider(FakeSectionedMarketDataProvider):
+            def fetch_grouped_stocks(self):
+                stock = replace(load_mock_stocks()[0], symbol="ADBE", company_name="Adobe Inc.", market_cap=250_000_000_000)
+                return {"mega_rock": (stock,), "large_cap": (), "small_mid_cap": ()}
+
+        result = run_screen(AdobeProvider(), selection_mode="ranked")
+
+        self.assertEqual(result.mega_rock, ())
+        self.assertTrue(result.data_quality_warnings)
+
+    def test_ranked_real_mode_fills_available_candidates_when_strict_fails(self) -> None:
+        provider = FailingSectionedProvider()
+        ranked = run_screen(provider, selection_mode="ranked")
+        strict = run_screen(provider, selection_mode="strict")
+
+        self.assertEqual(len(ranked.mega_rock), 1)
+        self.assertEqual(len(ranked.large_cap), 11)
+        self.assertEqual(len(ranked.small_cap), 11)
+        self.assertEqual(len(ranked.selected), 23)
+        self.assertTrue(all(candidate.selection_label in {"Ranked Candidate", "Watchlist"} for candidate in ranked.selected))
+        self.assertLess(len(strict.selected), len(ranked.selected))
+
+    def test_incomplete_sectioned_provider_shows_warnings(self) -> None:
+        class IncompleteProvider(FakeSectionedMarketDataProvider):
+            def fetch_grouped_stocks(self):
+                stocks = load_mock_stocks()
+                mega = tuple(replace(stock, market_cap=1_200_000_000_000) for stock in stocks[:1])
+                large = tuple(replace(stock, market_cap=25_000_000_000) for stock in stocks[:3])
+                small = tuple(replace(stock, market_cap=2_000_000_000) for stock in stocks[14:18])
+                return {
+                    "mega_rock": mega,
+                    "large_cap": large,
+                    "small_mid_cap": small,
+                }
+
+        result = run_screen(IncompleteProvider())
+
+        self.assertTrue(result.data_quality_warnings)
+        self.assertIn("Large-cap section has", result.data_quality_warnings[0])
 
     def test_universe_cli_add_remove_and_reset(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -143,13 +221,22 @@ class GreenRockMarketDataTests(unittest.TestCase):
                 remove_output = _run_cli(["greenrock", "universe", "remove", "TSLA"])
                 final_output = _run_cli(["greenrock", "universe", "list"])
                 reset_output = _run_cli(["greenrock", "universe", "reset-mega-rock"])
+                large_reset = _run_cli(["greenrock", "universe", "reset-large-cap"])
+                small_reset = _run_cli(["greenrock", "universe", "reset-small-mid"])
+                all_reset = _run_cli(["greenrock", "universe", "reset-all"])
 
         self.assertIn("name: mega_rock", list_output)
+        self.assertIn("name: large_cap", list_output)
+        self.assertIn("name: small_mid_cap", list_output)
         self.assertIn("ticker_count:", add_output)
         self.assertIn("ticker_count:", remove_output)
         self.assertIn("PLTR", final_output)
-        self.assertNotIn("  TSLA", final_output)
+        mega_section = final_output.split("name: large_cap", maxsplit=1)[0]
+        self.assertNotIn("  TSLA", mega_section)
         self.assertIn("GreenRock ticker universe reset", reset_output)
+        self.assertIn(str(len(LARGE_CAP_TICKERS)), large_reset)
+        self.assertIn(str(len(SMALL_MID_CAP_TICKERS)), small_reset)
+        self.assertIn("GreenRock ticker universes reset", all_reset)
 
 
 def _run_cli_raw(args: list[str]) -> tuple[str, int]:
@@ -164,6 +251,34 @@ def _run_cli(args: list[str]) -> str:
     if exit_code != 0:
         raise AssertionError(f"CLI exited with {exit_code}: {args}\n{output}")
     return output
+
+
+class FailingSectionedProvider(MarketDataProvider):
+    data_mode = "real"
+    source_name = "failing_sectioned_provider"
+
+    def fetch_stocks(self):
+        return ()
+
+    def fetch_grouped_stocks(self):
+        noise = next(stock for stock in load_mock_stocks() if stock.symbol == "NOISE")
+        return {
+            "mega_rock": _clones(noise, "MEGA", 1, 1_200_000_000_000),
+            "large_cap": _clones(noise, "LARGE", 11, 25_000_000_000),
+            "small_mid_cap": _clones(noise, "SMALL", 11, 2_000_000_000),
+        }
+
+
+def _clones(stock: MockStock, prefix: str, count: int, market_cap: float) -> tuple[MockStock, ...]:
+    return tuple(
+        replace(
+            stock,
+            symbol=f"{prefix}{index:02d}",
+            company_name=f"{prefix} Failing {index:02d}",
+            market_cap=market_cap + index,
+        )
+        for index in range(count)
+    )
 
 
 if __name__ == "__main__":

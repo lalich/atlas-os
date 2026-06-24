@@ -8,6 +8,14 @@ from pathlib import Path
 
 
 DEFAULT_UNIVERSE_NAME = "mega_rock"
+MEGA_ROCK_UNIVERSE = "mega_rock"
+LARGE_CAP_UNIVERSE = "large_cap"
+SMALL_MID_CAP_UNIVERSE = "small_mid_cap"
+GREENROCK_UNIVERSE_NAMES = (
+    MEGA_ROCK_UNIVERSE,
+    LARGE_CAP_UNIVERSE,
+    SMALL_MID_CAP_UNIVERSE,
+)
 
 MEGA_ROCK_TICKERS: tuple[str, ...] = (
     "AAPL",
@@ -37,6 +45,55 @@ MEGA_ROCK_TICKERS: tuple[str, ...] = (
     "KO",
 )
 
+LARGE_CAP_TICKERS: tuple[str, ...] = (
+    "AAPL",
+    "MSFT",
+    "NVDA",
+    "AMZN",
+    "GOOGL",
+    "META",
+    "TSLA",
+    "AVGO",
+    "JPM",
+    "LLY",
+    "COST",
+    "WMT",
+    "XOM",
+    "UNH",
+    "HD",
+    "MA",
+    "PG",
+    "NFLX",
+    "CRM",
+    "AMD",
+)
+
+SMALL_MID_CAP_TICKERS: tuple[str, ...] = (
+    "SOFI",
+    "RKT",
+    "PLTR",
+    "AFRM",
+    "OPEN",
+    "FUBO",
+    "CHPT",
+    "MARA",
+    "RIOT",
+    "HOOD",
+    "UPST",
+    "DKNG",
+    "LC",
+    "LMND",
+    "RUN",
+    "STEM",
+    "ENVX",
+)
+
+DEFAULT_UNIVERSE_TICKERS = {
+    MEGA_ROCK_UNIVERSE: MEGA_ROCK_TICKERS,
+    LARGE_CAP_UNIVERSE: LARGE_CAP_TICKERS,
+    SMALL_MID_CAP_UNIVERSE: SMALL_MID_CAP_TICKERS,
+}
+
 
 @dataclass(frozen=True)
 class TickerUniverse:
@@ -52,7 +109,7 @@ def universe_path(output_dir: Path, name: str = DEFAULT_UNIVERSE_NAME) -> Path:
 def load_ticker_universe(output_dir: Path, name: str = DEFAULT_UNIVERSE_NAME) -> TickerUniverse:
     path = universe_path(output_dir, name)
     if not path.exists():
-        save_ticker_universe(output_dir, MEGA_ROCK_TICKERS, name=name)
+        save_ticker_universe(output_dir, DEFAULT_UNIVERSE_TICKERS.get(name, MEGA_ROCK_TICKERS), name=name)
     tickers: list[str] = []
     with path.open(newline="", encoding="utf-8") as csv_file:
         reader = csv.DictReader(csv_file)
@@ -94,3 +151,15 @@ def remove_tickers(output_dir: Path, tickers: tuple[str, ...], name: str = DEFAU
 
 def normalize_ticker(ticker: str) -> str:
     return ticker.strip().upper()
+
+
+def load_greenrock_universes(output_dir: Path) -> dict[str, TickerUniverse]:
+    return {name: load_ticker_universe(output_dir, name) for name in GREENROCK_UNIVERSE_NAMES}
+
+
+def reset_universe(output_dir: Path, name: str) -> TickerUniverse:
+    return save_ticker_universe(output_dir, DEFAULT_UNIVERSE_TICKERS[name], name=name)
+
+
+def reset_all_universes(output_dir: Path) -> dict[str, TickerUniverse]:
+    return {name: reset_universe(output_dir, name) for name in GREENROCK_UNIVERSE_NAMES}

@@ -13,6 +13,7 @@ from atlas_os.core.workflow_runs import list_workflow_runs
 
 DRAFT_ARTIFACT_TYPES = {
     "candidates_csv",
+    "mega_rock_csv",
     "large_cap_csv",
     "small_cap_csv",
     "report_draft_md",

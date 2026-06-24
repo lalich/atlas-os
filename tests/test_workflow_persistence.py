@@ -36,8 +36,8 @@ class WorkflowPersistenceTests(unittest.TestCase):
             self.assertIsNotNone(stored_run.started_at)
             self.assertIsNotNone(stored_run.completed_at)
             self.assertTrue(stored_run.mock_data_used)
-            self.assertEqual(len(artifacts), 4)
-            self.assertEqual(len(stored_artifacts), 4)
+            self.assertEqual(len(artifacts), 5)
+            self.assertEqual(len(stored_artifacts), 5)
             self.assertEqual(approval.status.value, "pending")
             self.assertIn("report_draft", stored_run.output_paths)
 
@@ -60,7 +60,7 @@ class WorkflowPersistenceTests(unittest.TestCase):
             output_paths = json.loads(row["output_paths"])
             self.assertEqual(
                 set(output_paths),
-                {"all", "large_cap", "small_cap", "report_draft"},
+                {"all", "mega_rock", "large_cap", "small_cap", "report_draft"},
             )
             for path in output_paths.values():
                 self.assertIn(f"greenrock/{workflow_run.run_id}", path)

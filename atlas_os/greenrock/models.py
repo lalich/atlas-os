@@ -19,6 +19,11 @@ class MockStock:
     company_name: str
     market_cap: float
     prices: tuple[PriceBar, ...]
+    has_price_history: bool = True
+    has_market_cap: bool = True
+    has_volume_data: bool = True
+    has_52_week_low: bool = True
+    skipped_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -52,6 +57,12 @@ class StockCandidate:
     passed_rules: tuple[str, ...]
     failed_rules: tuple[str, ...]
     note: str
+    has_price_history: bool = True
+    has_market_cap: bool = True
+    has_volume_data: bool = True
+    has_52_week_low: bool = True
+    skipped_reason: str = ""
+    selection_label: str = "Strict Pass"
 
     @property
     def mock_score(self) -> float:
@@ -62,10 +73,13 @@ class StockCandidate:
 class ScreeningResult:
     selected: tuple[StockCandidate, ...]
     all_candidates: tuple[StockCandidate, ...] = ()
+    mega_rock: tuple[StockCandidate, ...] = ()
     large_cap: tuple[StockCandidate, ...] = ()
     small_cap: tuple[StockCandidate, ...] = ()
     data_mode: str = "mock"
     data_source: str = "mock_sample_data"
+    selection_mode: str = "strict"
+    data_quality_warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

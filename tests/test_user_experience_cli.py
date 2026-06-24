@@ -38,7 +38,7 @@ class UserExperienceCliTests(unittest.TestCase):
                 latest_run = _run_cli(["greenrock", "latest-run"])
                 self.assertIn(second_run_id, latest_run)
                 self.assertIn("approval_status: pending", latest_run)
-                self.assertIn("artifact_count: 4", latest_run)
+                self.assertIn("artifact_count: 5", latest_run)
 
                 latest_candidates = _run_cli(["greenrock", "latest-candidates"])
                 self.assertIn(second_run_id, latest_candidates)
@@ -59,7 +59,7 @@ class UserExperienceCliTests(unittest.TestCase):
                 self.assertIn("Atlas OS Dashboard", dashboard)
                 self.assertIn("Recent runs", dashboard)
                 self.assertIn("Pending approvals", dashboard)
-                self.assertIn("artifact_count: 8", dashboard)
+                self.assertIn("artifact_count: 10", dashboard)
                 self.assertIn(second_run_id, dashboard)
 
                 review = _run_cli(["greenrock", "review"])

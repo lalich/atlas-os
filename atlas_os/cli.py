@@ -29,7 +29,16 @@ from atlas_os.greenrock.market_data import MarketDataConfigurationError
 from atlas_os.greenrock.pdf_export import render_markdown_report_to_pdf
 from atlas_os.greenrock.report import build_sample_report
 from atlas_os.greenrock.screener import run_screen
-from atlas_os.greenrock.universe import add_tickers, load_ticker_universe, remove_tickers, save_ticker_universe, MEGA_ROCK_TICKERS
+from atlas_os.greenrock.universe import (
+    LARGE_CAP_UNIVERSE,
+    MEGA_ROCK_UNIVERSE,
+    SMALL_MID_CAP_UNIVERSE,
+    add_tickers,
+    load_greenrock_universes,
+    remove_tickers,
+    reset_all_universes,
+    reset_universe,
+)
 from atlas_os.greenrock.workflow import run_greenrock_screening_workflow
 from atlas_os.logging_config import configure_logging
 
@@ -95,6 +104,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="mock",
         help="Market data mode. Defaults to mock.",
     )
+    run_screen_parser.add_argument(
+        "--selection",
+        choices=("strict", "ranked"),
+        default=None,
+        help="Selection mode. Defaults to strict for mock and ranked for real.",
+    )
     greenrock_subparsers.add_parser(
         "candidates",
         help="Print the current local GreenRock selected candidates.",
@@ -108,6 +123,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("mock", "real"),
         default="mock",
         help="Market data mode. Defaults to mock.",
+    )
+    report_draft.add_argument(
+        "--selection",
+        choices=("strict", "ranked"),
+        default=None,
+        help="Selection mode. Defaults to strict for mock and ranked for real.",
     )
     latest_report = greenrock_subparsers.add_parser(
         "latest-report",
@@ -126,6 +147,10 @@ def build_parser() -> argparse.ArgumentParser:
     greenrock_subparsers.add_parser(
         "latest-candidates",
         help="Show candidate summaries from the latest GreenRock run.",
+    )
+    greenrock_subparsers.add_parser(
+        "picks-board",
+        help="Show latest GreenRock Picks Board summary and local URL guidance.",
     )
     greenrock_subparsers.add_parser(
         "review",
@@ -182,6 +207,9 @@ def build_parser() -> argparse.ArgumentParser:
     universe_remove = universe_subparsers.add_parser("remove", help="Remove tickers from the local universe.")
     universe_remove.add_argument("tickers", nargs="+")
     universe_subparsers.add_parser("reset-mega-rock", help="Reset local universe to the Mega Rock default.")
+    universe_subparsers.add_parser("reset-large-cap", help="Reset local universe to the large-cap default.")
+    universe_subparsers.add_parser("reset-small-mid", help="Reset local universe to the small/mid-cap default.")
+    universe_subparsers.add_parser("reset-all", help="Reset all local GreenRock universes.")
 
     return parser
 
@@ -209,7 +237,7 @@ def run_greenrock_sample_report() -> int:
     return 0
 
 
-def run_greenrock_screen(data_mode: str = "mock") -> int:
+def run_greenrock_screen(data_mode: str = "mock", selection_mode: str | None = None) -> int:
     settings = get_settings()
     db_path = initialize_database(settings.db_path)
     try:
@@ -219,6 +247,7 @@ def run_greenrock_screen(data_mode: str = "mock") -> int:
                 settings.output_dir,
                 include_report_draft=True,
                 data_mode=data_mode,
+                selection_mode=selection_mode,
             )
     except MarketDataConfigurationError as error:
         print("GreenRock screen blocked")
@@ -230,6 +259,7 @@ def run_greenrock_screen(data_mode: str = "mock") -> int:
     print(f"run_id: {workflow_run.run_id}")
     print(f"status: {workflow_run.status}")
     print(f"data_mode: {workflow_run.data_mode.upper()}")
+    print(f"selection_mode: {selection_mode or _default_selection_mode(data_mode)}")
     print(f"artifacts: {len(artifacts)}")
     print(f"approval_id: {approval.id if approval else 'none'}")
     print("Draft remains blocked until approved by a human.")
@@ -250,7 +280,7 @@ def run_greenrock_candidates() -> int:
     return 0
 
 
-def run_greenrock_report_draft(data_mode: str = "mock") -> int:
+def run_greenrock_report_draft(data_mode: str = "mock", selection_mode: str | None = None) -> int:
     settings = get_settings()
     db_path = initialize_database(settings.db_path)
     try:
@@ -260,6 +290,7 @@ def run_greenrock_report_draft(data_mode: str = "mock") -> int:
                 settings.output_dir,
                 include_report_draft=True,
                 data_mode=data_mode,
+                selection_mode=selection_mode,
             )
     except MarketDataConfigurationError as error:
         print("GreenRock report draft blocked")
@@ -271,6 +302,7 @@ def run_greenrock_report_draft(data_mode: str = "mock") -> int:
     print(f"run_id: {workflow_run.run_id}")
     print(f"status: {workflow_run.status}")
     print(f"data_mode: {workflow_run.data_mode.upper()}")
+    print(f"selection_mode: {selection_mode or _default_selection_mode(data_mode)}")
     print(f"artifacts: {len(artifacts)}")
     print(f"approval_id: {approval.id if approval else 'none'}")
     print("Draft is blocked until approved by a human.")
@@ -355,6 +387,44 @@ def run_greenrock_review() -> int:
     print(f"pending_approval_id: {pending_approval.id if pending_approval else 'none'}")
     _print_candidate_file("Top large-cap names", latest_run.output_paths.get("large_cap"), limit=5)
     _print_candidate_file("Top small/mid-cap names", latest_run.output_paths.get("small_cap"), limit=5)
+    return 0
+
+
+def run_greenrock_picks_board() -> int:
+    settings = get_settings()
+    db_path = initialize_database(settings.db_path)
+    with connect(db_path) as connection:
+        latest_run = _latest_greenrock_run(connection)
+        latest_report = _latest_greenrock_report(connection)
+        approvals = _approvals_for_run(connection, latest_run.run_id) if latest_run else ()
+
+    if latest_run is None:
+        print("No GreenRock runs found. Run atlas greenrock report-draft first.")
+        print("Picks Board URL: http://127.0.0.1:8000/greenrock/picks")
+        return 0
+
+    mega_rows = _read_candidate_rows(latest_run.output_paths.get("mega_rock"), limit=1)
+    large_rows = _read_candidate_rows(latest_run.output_paths.get("large_cap"), limit=11)
+    small_rows = _read_candidate_rows(latest_run.output_paths.get("small_cap"), limit=11)
+    all_rows = _read_candidate_rows(latest_run.output_paths.get("all"), limit=None)
+    mega = mega_rows[0] if mega_rows else (all_rows[0] if all_rows else None)
+    approval_status = approvals[0].status.value if approvals else "none"
+    slot_count = (1 if mega else 0) + len(large_rows) + len(small_rows)
+
+    print("GreenRock Picks Board")
+    print(f"url: http://127.0.0.1:8000/greenrock/picks")
+    print(f"latest_run: {latest_run.run_id}")
+    print(f"data_mode: {latest_run.data_mode.upper()}")
+    print(f"approval_status: {approval_status}")
+    print(f"report_path: {latest_report.content_path if latest_report else 'none'}")
+    print(f"visible_slots: {slot_count}/23")
+    print(f"mega_rock_count: {1 if mega else 0}/1")
+    print(f"large_cap_count: {len(large_rows)}/11")
+    print(f"small_mid_count: {len(small_rows)}/11")
+    print(f"mega_rock_pick: {_candidate_summary(mega) if mega else 'none'}")
+    _print_candidate_rows("Large-cap picks", large_rows)
+    _print_candidate_rows("Small/mid-cap picks", small_rows)
+    print("Start the local Command Center with: atlas serve")
     return 0
 
 
@@ -510,14 +580,15 @@ def run_greenrock_cleanup_drafts(dry_run: bool = False) -> int:
 def run_greenrock_universe(command: str | None, tickers: list[str] | None = None) -> int:
     settings = get_settings()
     if command in (None, "list"):
-        universe = load_ticker_universe(settings.output_dir)
-        print("GreenRock ticker universe")
-        print(f"name: {universe.name}")
-        print(f"path: {universe.path}")
-        print(f"ticker_count: {len(universe.tickers)}")
-        print("tickers:")
-        for ticker in universe.tickers:
-            print(f"  {ticker}")
+        universes = load_greenrock_universes(settings.output_dir)
+        print("GreenRock ticker universes")
+        for universe in universes.values():
+            print(f"name: {universe.name}")
+            print(f"path: {universe.path}")
+            print(f"ticker_count: {len(universe.tickers)}")
+            print("tickers:")
+            for ticker in universe.tickers:
+                print(f"  {ticker}")
         return 0
     if command == "add":
         universe = add_tickers(settings.output_dir, tuple(tickers or ()))
@@ -532,11 +603,19 @@ def run_greenrock_universe(command: str | None, tickers: list[str] | None = None
         print(f"path: {universe.path}")
         return 0
     if command == "reset-mega-rock":
-        universe = save_ticker_universe(settings.output_dir, MEGA_ROCK_TICKERS)
-        print("GreenRock ticker universe reset")
-        print(f"name: {universe.name}")
-        print(f"ticker_count: {len(universe.tickers)}")
-        print(f"path: {universe.path}")
+        _print_reset_universe(reset_universe(settings.output_dir, MEGA_ROCK_UNIVERSE))
+        return 0
+    if command == "reset-large-cap":
+        _print_reset_universe(reset_universe(settings.output_dir, LARGE_CAP_UNIVERSE))
+        return 0
+    if command == "reset-small-mid":
+        _print_reset_universe(reset_universe(settings.output_dir, SMALL_MID_CAP_UNIVERSE))
+        return 0
+    if command == "reset-all":
+        universes = reset_all_universes(settings.output_dir)
+        print("GreenRock ticker universes reset")
+        for universe in universes.values():
+            print(f"{universe.name}: {len(universe.tickers)} tickers at {universe.path}")
         return 0
     raise ValueError(f"Unsupported universe command: {command}")
 
@@ -807,6 +886,13 @@ def _print_approval_rows(approvals: tuple[ApprovalRequest, ...]) -> None:
         )
 
 
+def _print_reset_universe(universe) -> None:
+    print("GreenRock ticker universe reset")
+    print(f"name: {universe.name}")
+    print(f"ticker_count: {len(universe.tickers)}")
+    print(f"path: {universe.path}")
+
+
 def _print_approval_detail(approval: ApprovalRequest) -> None:
     print(f"Approval {approval.id}")
     print(f"status: {approval.status.value}")
@@ -865,6 +951,10 @@ def _open_path_or_print(path: Path, opened_label: str, fallback_label: str) -> N
         print(f"{fallback_label}: {path}")
 
 
+def _default_selection_mode(data_mode: str) -> str:
+    return "ranked" if data_mode == "real" else "strict"
+
+
 def _approvals_for_run(connection, run_id: str) -> tuple[ApprovalRequest, ...]:
     return tuple(approval for approval in list_approvals(connection) if approval.run_id == run_id)
 
@@ -884,6 +974,40 @@ def _print_candidate_file(title: str, path: str | None, limit: int | None = None
         rows = list(csv.DictReader(csv_file))
         for row in rows[:limit]:
             print(f"{row['symbol']} {row['score']} {row['market_cap']} {row['company_name']}")
+
+
+def _read_candidate_rows(path: str | None, limit: int | None = None) -> list[dict[str, str]]:
+    if not path:
+        return []
+    candidate_path = Path(path)
+    if not candidate_path.exists():
+        return []
+    with candidate_path.open(newline="", encoding="utf-8") as csv_file:
+        rows = list(csv.DictReader(csv_file))
+    rows.sort(key=_candidate_row_score, reverse=True)
+    return rows[:limit] if limit is not None else rows
+
+
+def _candidate_row_score(row: dict[str, str]) -> float:
+    try:
+        return float(row.get("score", "0"))
+    except ValueError:
+        return 0.0
+
+
+def _candidate_summary(row: dict[str, str]) -> str:
+    return f"{row.get('symbol', '')} score={row.get('score', '')} {row.get('company_name', '')}"
+
+
+def _print_candidate_rows(title: str, rows: list[dict[str, str]]) -> None:
+    print("")
+    print(title)
+    if not rows:
+        print("No candidate rows found.")
+        return
+    print("symbol score market_cap company")
+    for row in rows:
+        print(f"{row.get('symbol', '')} {row.get('score', '')} {row.get('market_cap', '')} {row.get('company_name', '')}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -906,17 +1030,19 @@ def main(argv: list[str] | None = None) -> int:
         if args.greenrock_command == "sample-report":
             return run_greenrock_sample_report()
         if args.greenrock_command == "run-screen":
-            return run_greenrock_screen(args.data)
+            return run_greenrock_screen(args.data, args.selection)
         if args.greenrock_command == "candidates":
             return run_greenrock_candidates()
         if args.greenrock_command == "report-draft":
-            return run_greenrock_report_draft(args.data)
+            return run_greenrock_report_draft(args.data, args.selection)
         if args.greenrock_command == "latest-report":
             return run_greenrock_latest_report(args.print_contents)
         if args.greenrock_command == "latest-run":
             return run_greenrock_latest_run()
         if args.greenrock_command == "latest-candidates":
             return run_greenrock_latest_candidates()
+        if args.greenrock_command == "picks-board":
+            return run_greenrock_picks_board()
         if args.greenrock_command == "review":
             return run_greenrock_review()
         if args.greenrock_command == "open-latest":

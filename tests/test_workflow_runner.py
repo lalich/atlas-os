@@ -49,10 +49,9 @@ class WorkflowRunnerTests(unittest.TestCase):
             artifact_types = {artifact.artifact_type for artifact in execution.artifacts}
             self.assertEqual(
                 artifact_types,
-                {"candidates_csv", "large_cap_csv", "small_cap_csv", "report_draft_md"},
+                {"candidates_csv", "mega_rock_csv", "large_cap_csv", "small_cap_csv", "report_draft_md"},
             )
 
 
 if __name__ == "__main__":
     unittest.main()
-

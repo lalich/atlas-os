@@ -28,6 +28,8 @@ Real mode is optional and fail-closed.
 
 ```bash
 atlas greenrock report-draft --data real
+atlas greenrock report-draft --data real --selection ranked
+atlas greenrock report-draft --data real --selection strict
 ```
 
 If no provider is configured, Atlas prints a blocked message and does not create a report, approval, artifact, email, publication, or external action.
@@ -41,29 +43,55 @@ export ATLAS_GREENROCK_REAL_TICKERS=
 atlas greenrock report-draft --data real
 ```
 
-With `ATLAS_GREENROCK_REAL_TICKERS` blank, Atlas uses the local Mega Rock universe.
+With `ATLAS_GREENROCK_REAL_TICKERS` blank, Atlas uses the local Mega Rock, large-cap, and small/mid-cap universes.
+
+Real mode defaults to ranked selection, which scores available names and fills the best available candidates when strict criteria leave sections short. Strict mode remains available for comparison and may return fewer picks.
 
 Real-data reports still remain draft-only and blocked for human approval.
 
-## Manage Mega Rock Universe
+## Manage GreenRock Universes
 
 ```bash
 atlas greenrock universe list
 atlas greenrock universe add TSLA PLTR
 atlas greenrock universe remove TSLA
 atlas greenrock universe reset-mega-rock
+atlas greenrock universe reset-large-cap
+atlas greenrock universe reset-small-mid
+atlas greenrock universe reset-all
 ```
 
-The Mega Rock universe is local only and stored at `.atlas/output/greenrock/universes/mega_rock.csv`.
+The universes are local only and stored at:
+
+- `.atlas/output/greenrock/universes/mega_rock.csv`
+- `.atlas/output/greenrock/universes/large_cap.csv`
+- `.atlas/output/greenrock/universes/small_mid_cap.csv`
 
 ## Inspect Candidates
 
 ```bash
 atlas greenrock latest-candidates
+atlas greenrock picks-board
 atlas greenrock review
 ```
 
-Use `latest-candidates` for a quick large-cap and small/mid-cap summary. Use `review` for latest run status, report path, approval status, and top candidate names.
+Use `latest-candidates` for a quick large-cap and small/mid-cap summary. Use `picks-board` for the latest 23-slot Picks Board summary and browser URL. Use `review` for latest run status, report path, approval status, and top candidate names.
+
+## Open GreenRock Picks Board
+
+```bash
+atlas serve
+```
+
+Open:
+
+```text
+http://127.0.0.1:8000/greenrock/picks
+```
+
+The Picks Board shows one featured Mega Rock pick, eleven large-cap picks, and eleven small/mid-cap picks when available. It includes section counts, Finviz links, GreenRock Scores, signal labels, technical fields, and a clear mock/real data badge. If a section is incomplete, Atlas shows a data quality warning. It is local-only and not a publishing surface.
+
+Real-data buckets are Mega Rock at $1T+, large cap from $10B to below $1T, and small/mid below $10B.
 
 ## Open Latest Report
 
@@ -181,7 +209,18 @@ Use the navigation cards for:
 - Approvals.
 - Artifacts / Reports.
 
-On the GreenRock page, use **Run GreenRock Report** to generate a new local draft through the normal workflow. The button creates a pending approval and does not bypass human review.
+On the GreenRock page, use **Run Mock Report** to generate a default mock-data draft or **Run Real Report** to attempt the configured real-data provider. Both buttons create a pending approval only after the workflow succeeds and neither button bypasses human review.
+
+For browser real mode:
+
+```bash
+python3 -m pip install -e ".[market-data]"
+export ATLAS_MARKET_DATA_PROVIDER=yfinance
+export ATLAS_GREENROCK_REAL_TICKERS=
+atlas serve
+```
+
+Open `http://127.0.0.1:8000/greenrock`, then click **Run Real Report**. With `ATLAS_GREENROCK_REAL_TICKERS` blank, Atlas uses the local GreenRock universes. If the provider is not configured, the browser shows a blocked message and no run, artifact, report, or approval is created.
 
 Open `http://127.0.0.1:8000/greenrock/final-reports` to review the final PDF archive.
 

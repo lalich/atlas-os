@@ -69,6 +69,7 @@ def build_report_draft(
         f"**Run ID:** {run_id or 'local-preview'}",
         f"**Data Mode:** {resolved_data_mode}",
         f"**Data Source:** {resolved_data_source}",
+        f"**Selection Mode:** {screening.selection_mode.upper()}",
         "",
         (
             "> Draft only. This report requires human approval before any client-facing use. "
@@ -105,6 +106,12 @@ def build_report_draft(
         "## Mega Rock Universe",
         "",
         _mega_rock_section(resolved_data_mode, resolved_data_source, len(screening.all_candidates)),
+        "",
+        "## Mega Rock Pick",
+        "",
+        _candidate_table(screening.mega_rock),
+        "",
+        _data_quality_note(screening.data_quality_warnings, screening.selection_mode, resolved_data_mode),
         "",
         "## Top Large-Cap Candidates",
         "",
@@ -172,8 +179,8 @@ def build_report_draft(
 
 def _candidate_table(candidates: tuple[StockCandidate, ...]) -> str:
     lines = [
-        "| Symbol | Company | Market Cap | GreenRock Score | Signal | RSI | 52w Low Proximity |",
-        "|---|---|---:|---:|---|---:|---:|",
+        "| Symbol | Company | Market Cap | GreenRock Score | Signal | Selection | RSI | 52w Low Proximity |",
+        "|---|---|---:|---:|---|---|---:|---:|",
     ]
     for candidate in candidates:
         indicators = candidate.indicators
@@ -184,9 +191,12 @@ def _candidate_table(candidates: tuple[StockCandidate, ...]) -> str:
             f"${candidate.market_cap / 1_000_000_000:.2f}B | "
             f"{candidate.score:.2f} | "
             f"{signal_label(candidate.score)} | "
+            f"{candidate.selection_label} | "
             f"{indicators.rsi_14:.1f} | "
             f"{indicators.low_proximity:.1%} |"
         )
+    if not candidates:
+        lines.append("| No candidates available | - | - | - | - | - | - | - |")
     return "\n".join(lines)
 
 
@@ -249,13 +259,39 @@ def _data_mode_disclaimer(is_mock: bool, data_source: str) -> str:
 
 
 def _mega_rock_section(data_mode: str, data_source: str, candidate_count: int) -> str:
-    if data_source == "yfinance:mega_rock":
+    if data_source in {"yfinance:mega_rock", "yfinance:greenrock_universes"}:
         return (
-            f"This {data_mode} run screened {candidate_count} securities from the local Mega Rock "
-            "ticker universe using the configured yfinance provider. The universe is an operator-managed "
-            "starting point and does not imply that any security is suitable for any person or portfolio."
+            f"This {data_mode} run screened {candidate_count} securities from local GreenRock ticker "
+            "universes using the configured yfinance provider. The Mega Rock, large-cap, and small/mid-cap "
+            "universes are operator-managed starting points and do not imply that any security is suitable "
+            "for any person or portfolio."
         )
     return (
         f"This {data_mode} run screened {candidate_count} securities from data source `{data_source}`. "
         "Ticker universe composition is an operator input and remains subject to review."
     )
+
+
+def _data_quality_note(warnings: tuple[str, ...], selection_mode: str, data_mode: str) -> str:
+    selection_note = ""
+    if data_mode == "REAL" and selection_mode == "ranked":
+        selection_note = (
+            "\n\nReal-data mode uses ranked selection when strict criteria produce fewer than "
+            "the target number of candidates."
+        )
+    if not warnings:
+        return (
+            "## Data Quality Note\n\n"
+            "All GreenRock Picks Board sections filled their target slot counts for this run."
+            f"{selection_note}"
+        )
+    lines = [
+        "## Data Quality Note",
+        "",
+        "This run did not fill every Picks Board section target. Review the underlying universe, "
+        "market data availability, and screening criteria before relying on the draft.",
+        selection_note.strip(),
+        "",
+    ]
+    lines.extend(f"- {warning}" for warning in warnings)
+    return "\n".join(lines)

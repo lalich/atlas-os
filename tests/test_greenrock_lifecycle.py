@@ -56,7 +56,7 @@ class GreenRockLifecycleTests(unittest.TestCase):
         self.assertEqual(result.latest_draft_run_id, second_run.run_id)
         self.assertTrue(result.removed_files)
         self.assertTrue(artifact_paths_still_exist)
-        self.assertEqual(len(active_artifacts), 8)
+        self.assertEqual(len(active_artifacts), 10)
         self.assertNotEqual(first_run.run_id, second_run.run_id)
 
     def test_cleanup_preserves_latest_draft_final_pdfs_and_audit_logs(self) -> None:

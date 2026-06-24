@@ -10,7 +10,7 @@ from typing import Iterable
 
 from atlas_os.greenrock.models import MockStock, PriceBar
 from atlas_os.greenrock.sample_data import load_mock_stocks
-from atlas_os.greenrock.universe import DEFAULT_UNIVERSE_NAME, load_ticker_universe
+from atlas_os.greenrock.universe import load_greenrock_universes
 
 
 class MarketDataConfigurationError(RuntimeError):
@@ -24,6 +24,10 @@ class MarketDataProvider(ABC):
     @abstractmethod
     def fetch_stocks(self) -> tuple[MockStock, ...]:
         """Return stock bars shaped for the GreenRock indicator engine."""
+
+    def fetch_grouped_stocks(self) -> dict[str, tuple[MockStock, ...]] | None:
+        """Return optional section-specific stock bars for GreenRock report sections."""
+        return None
 
 
 class MockMarketDataProvider(MarketDataProvider):
@@ -101,7 +105,8 @@ class YFinanceMarketDataProvider(RealMarketDataProvider):
                 info = getattr(instrument, "info", {}) or {}
             except Exception:
                 info = {}
-            market_cap = float(info.get("marketCap") or 0)
+            raw_market_cap = info.get("marketCap")
+            market_cap = float(raw_market_cap or 0)
             company_name = str(info.get("shortName") or info.get("longName") or ticker)
             stocks.append(
                 MockStock(
@@ -109,6 +114,11 @@ class YFinanceMarketDataProvider(RealMarketDataProvider):
                     company_name=company_name,
                     market_cap=market_cap,
                     prices=tuple(bars[-252:]),
+                    has_price_history=True,
+                    has_market_cap=raw_market_cap is not None and market_cap > 0,
+                    has_volume_data=any(bar.volume > 0 for bar in bars[-252:]),
+                    has_52_week_low=True,
+                    skipped_reason="" if raw_market_cap else "missing_market_cap",
                 )
             )
 
@@ -117,6 +127,30 @@ class YFinanceMarketDataProvider(RealMarketDataProvider):
                 "Real market data request returned no usable 252-day price histories."
             )
         return tuple(stocks)
+
+
+class SectionedMarketDataProvider(MarketDataProvider):
+    """Market data provider wrapper for section-specific GreenRock universes."""
+
+    data_mode = "real"
+
+    def __init__(self, providers: dict[str, MarketDataProvider], source_name: str) -> None:
+        self.providers = providers
+        self.source_name = source_name
+
+    def fetch_stocks(self) -> tuple[MockStock, ...]:
+        grouped = self.fetch_grouped_stocks() or {}
+        seen = set()
+        stocks: list[MockStock] = []
+        for group_stocks in grouped.values():
+            for stock in group_stocks:
+                if stock.symbol not in seen:
+                    stocks.append(stock)
+                    seen.add(stock.symbol)
+        return tuple(stocks)
+
+    def fetch_grouped_stocks(self) -> dict[str, tuple[MockStock, ...]]:
+        return {name: provider.fetch_stocks() for name, provider in self.providers.items()}
 
 
 def get_market_data_provider(data_mode: str, output_dir: Path | None = None) -> MarketDataProvider:
@@ -145,10 +179,14 @@ def get_market_data_provider(data_mode: str, output_dir: Path | None = None) -> 
         return YFinanceMarketDataProvider(tickers)
     if output_dir is None:
         raise MarketDataConfigurationError(
-            "Real mode requires ATLAS_GREENROCK_REAL_TICKERS or an output directory for the Mega Rock universe."
+            "Real mode requires ATLAS_GREENROCK_REAL_TICKERS or an output directory for GreenRock universes."
         )
-    universe = load_ticker_universe(output_dir, DEFAULT_UNIVERSE_NAME)
-    return YFinanceMarketDataProvider(universe.tickers, universe_name=universe.name)
+    universes = load_greenrock_universes(output_dir)
+    providers = {
+        name: YFinanceMarketDataProvider(universe.tickers, universe_name=universe.name)
+        for name, universe in universes.items()
+    }
+    return SectionedMarketDataProvider(providers, source_name="yfinance:greenrock_universes")
 
 
 def _to_date(value) -> date:
