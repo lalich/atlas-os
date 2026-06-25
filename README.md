@@ -63,6 +63,7 @@ atlas greenrock universe reset-mega-rock
 atlas greenrock universe reset-large-cap
 atlas greenrock universe reset-small-mid
 atlas greenrock universe reset-all
+atlas greenrock universe validate
 atlas approvals list
 atlas approvals pending
 atlas approvals latest
@@ -109,7 +110,7 @@ Draft reports remain local, approval-gated, and blocked from client-facing use. 
 
 ## GreenRock Real Data Mode
 
-Phase 4A/4C adds a production-shaped yfinance market data adapter and local ticker universe management while keeping mock mode as the default.
+Phase 4A/4C adds a production-shaped yfinance market data adapter and local ticker watchlist management while keeping mock mode as the default.
 
 ```bash
 atlas greenrock report-draft --data real
@@ -119,7 +120,7 @@ atlas greenrock report-draft --data real --selection strict
 
 Real mode fails safely unless a provider is configured locally. A failed configuration attempt does not create a report, approval, artifact, email, publication, or external action.
 
-Selection mode defaults to `strict` for mock data and `ranked` for real data. Strict mode requires all GreenRock criteria. Ranked mode scores the available universe and fills the best available candidates when strict criteria would leave sections empty.
+Selection mode defaults to `strict` for mock data and `ranked` for real data. Strict mode requires all GreenRock criteria. Ranked mode scores the available watchlists and fills the best available candidates when strict criteria would leave sections empty.
 
 Optional first provider:
 
@@ -135,13 +136,13 @@ ATLAS_MARKET_DATA_PROVIDER=yfinance
 ATLAS_GREENROCK_REAL_TICKERS=
 ```
 
-When `ATLAS_GREENROCK_REAL_TICKERS` is blank, real mode uses the local GreenRock universe CSVs stored under `.atlas/output/greenrock/universes/`:
+When `ATLAS_GREENROCK_REAL_TICKERS` is blank, real mode uses the local GreenRock watchlist CSVs stored under `.atlas/output/greenrock/universes/`:
 
 - `mega_rock.csv`
 - `large_cap.csv`
 - `small_mid_cap.csv`
 
-Manage the universe locally:
+Manage the watchlists locally:
 
 ```bash
 atlas greenrock universe list
@@ -151,6 +152,7 @@ atlas greenrock universe reset-mega-rock
 atlas greenrock universe reset-large-cap
 atlas greenrock universe reset-small-mid
 atlas greenrock universe reset-all
+atlas greenrock universe validate
 ```
 
 ## GreenRock Picks Board
@@ -168,7 +170,7 @@ Then open:
 http://127.0.0.1:8000/greenrock/picks
 ```
 
-The board displays one featured Mega Rock pick, eleven large-cap picks, and eleven small/mid-cap picks when available. It includes ticker, company name, market cap, price, GreenRock Score, signal label, RSI, 52-week low distance, Bollinger Band status, volume acceleration, screening rationale, and Finviz links. The page is local-only, clearly labels MOCK or REAL data, and does not publish externally.
+The board displays one featured Mega Rock pick, eleven large-cap picks, and eleven small/mid-cap picks when available. Current real mode ranks configured watchlists, not the entire U.S. public market; a full-market scanner is planned. It includes ticker, company name, market cap, price, GreenRock Score, signal label, RSI, 52-week low distance, Bollinger Band status, volume acceleration, screening rationale, and Finviz links. The page is local-only, clearly labels MOCK or REAL data, and does not publish externally.
 
 ## GreenRock Score Calculator
 
@@ -185,7 +187,7 @@ In the Command Center, open:
 http://127.0.0.1:8000/greenrock/score
 ```
 
-The calculator shows GreenRock Score, signal label, selection label, RSI, Bollinger Band position, 52-week low distance, volume acceleration, moving average structure, data quality warnings, Finviz link, and a component-score explanation. Real mode requires the configured market data provider and fails safely if unavailable.
+The calculator shows GreenRock Score, signal label, selection label, RSI, Bollinger Band position, 52-week low distance, volume acceleration, moving average structure, data quality warnings, Finviz link, and a component-score explanation. The methodology is documented in [GreenRock Score Methodology](docs/GREENROCK_SCORE_METHODOLOGY.md). Real mode requires the configured market data provider and fails safely if unavailable.
 
 Real-data market-cap sections are:
 
@@ -193,7 +195,7 @@ Real-data market-cap sections are:
 - Large Cap: $10B to below $1T.
 - Small/Mid: below $10B.
 
-Reports clearly state `Data Mode: MOCK` or `Data Mode: REAL` and show the data source, such as `yfinance:greenrock_universes`. Real-data reports are still draft-only and blocked until human approval. If a section produces fewer than its target picks, the report and Picks Board show a data quality warning.
+Reports clearly state `Data Mode: MOCK` or `Data Mode: REAL` and show the data source, such as `yfinance:greenrock_watchlists`. Real-data reports are still draft-only and blocked until human approval. If a section produces fewer than its target picks, the report and Picks Board show a data quality warning.
 
 ## Approval Queue
 
@@ -324,6 +326,7 @@ Command Center pages:
 - `/projects` project directory for GreenRock Analysts, Variance Capital / The Bat Signal, GreenRock Insurance, and Atlas Core.
 - `/greenrock` report review console with Run Mock Report and Run Real Report buttons, latest run/report/PDF status, candidate summaries, approval actions, local artifact open links, and PDF export after approval.
 - `/greenrock/picks` GreenRock Picks Board with the featured Mega Rock pick, 11 large-cap picks, 11 small/mid-cap picks, Finviz links, and explicit data-mode labeling.
+- `/greenrock/score` GreenRock Score Calculator with methodology explanation and preview-only score breakdown.
 - `/greenrock/final-reports` final PDF archive for approved exported GreenRock PDFs.
 - `/tasks` local kanban-style manual task board with backlog, in progress, awaiting review, and completed columns.
 - `/agents` planned agent HUD with inactive/planned status labels.
@@ -345,6 +348,7 @@ Open `http://127.0.0.1:8000`, review the Atlas Inbox, then use the GreenRock pag
 
 - [Operator Runbook](docs/OPERATOR_RUNBOOK.md)
 - [GreenRock Product Notes](docs/GREENROCK_PRODUCT_NOTES.md)
+- [GreenRock Score Methodology](docs/GREENROCK_SCORE_METHODOLOGY.md)
 - [Monthly Report Release Checklist](docs/MONTHLY_REPORT_RELEASE_CHECKLIST.md)
 - [Data Sources](docs/DATA_SOURCES.md)
 

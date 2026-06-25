@@ -19,7 +19,7 @@ from atlas_os.greenrock.models import MockStock
 from atlas_os.greenrock.sample_data import load_mock_stocks
 from atlas_os.greenrock.score import calculate_score_preview
 from atlas_os.greenrock.screener import run_screen
-from atlas_os.greenrock.universe import LARGE_CAP_TICKERS, SMALL_MID_CAP_TICKERS
+from atlas_os.greenrock.universe import LARGE_CAP_TICKERS, MEGA_ROCK_TICKERS, SMALL_MID_CAP_TICKERS, save_ticker_universe
 from atlas_os.greenrock.workflow import run_greenrock_screening_workflow
 from atlas_os.web_app import dispatch_request
 
@@ -155,7 +155,7 @@ class GreenRockMarketDataTests(unittest.TestCase):
         self.assertIn("REAL", response.body)
         self.assertIn(workflow_run.run_id, response.body)
 
-    def test_real_provider_uses_greenrock_universes_when_env_tickers_absent(self) -> None:
+    def test_real_provider_uses_greenrock_watchlists_when_env_tickers_absent(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             fake_yfinance = types.SimpleNamespace()
@@ -173,10 +173,11 @@ class GreenRockMarketDataTests(unittest.TestCase):
                 provider = get_market_data_provider("real", output_dir=root / "output")
 
         self.assertEqual(provider.data_mode, "real")
-        self.assertEqual(provider.source_name, "yfinance:greenrock_universes")
+        self.assertEqual(provider.source_name, "yfinance:greenrock_watchlists")
         self.assertEqual(tuple(provider.providers), ("mega_rock", "large_cap", "small_mid_cap"))
         self.assertIn("AAPL", provider.providers["mega_rock"].tickers)
-        self.assertIn("NVDA", provider.providers["large_cap"].tickers)
+        self.assertIn("NVDA", provider.providers["mega_rock"].tickers)
+        self.assertIn("ADBE", provider.providers["large_cap"].tickers)
         self.assertIn("SOFI", provider.providers["small_mid_cap"].tickers)
 
     def test_fake_sectioned_real_provider_can_produce_23_picks(self) -> None:
@@ -202,6 +203,10 @@ class GreenRockMarketDataTests(unittest.TestCase):
 
         self.assertEqual(result.mega_rock, ())
         self.assertTrue(result.data_quality_warnings)
+
+    def test_default_watchlist_taxonomy_places_adbe_in_large_cap_not_mega_rock(self) -> None:
+        self.assertNotIn("ADBE", MEGA_ROCK_TICKERS)
+        self.assertIn("ADBE", LARGE_CAP_TICKERS)
 
     def test_ranked_real_mode_fills_available_candidates_when_strict_fails(self) -> None:
         provider = FailingSectionedProvider()
@@ -258,10 +263,27 @@ class GreenRockMarketDataTests(unittest.TestCase):
         self.assertIn("PLTR", final_output)
         mega_section = final_output.split("name: large_cap", maxsplit=1)[0]
         self.assertNotIn("  TSLA", mega_section)
-        self.assertIn("GreenRock ticker universe reset", reset_output)
+        self.assertIn("GreenRock ticker watchlist reset", reset_output)
         self.assertIn(str(len(LARGE_CAP_TICKERS)), large_reset)
         self.assertIn(str(len(SMALL_MID_CAP_TICKERS)), small_reset)
-        self.assertIn("GreenRock ticker universes reset", all_reset)
+        self.assertIn("GreenRock ticker watchlists reset", all_reset)
+
+    def test_watchlist_validation_command_warns_for_duplicates_and_spce(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {
+                "ATLAS_DB_PATH": str(root / "atlas.db"),
+                "ATLAS_OUTPUT_DIR": str(root / "output"),
+            }
+            with patch.dict("os.environ", env, clear=False):
+                save_ticker_universe(root / "output", ("AAPL", "SPCE"), name="mega_rock")
+                save_ticker_universe(root / "output", ("AAPL", "ADBE"), name="large_cap")
+                save_ticker_universe(root / "output", SMALL_MID_CAP_TICKERS, name="small_mid_cap")
+                output = _run_cli(["greenrock", "universe", "validate"])
+
+        self.assertIn("GreenRock watchlist validation", output)
+        self.assertIn("SPCE is Virgin Galactic, not SpaceX.", output)
+        self.assertIn("AAPL appears in multiple watchlists", output)
 
 
 def _run_cli_raw(args: list[str]) -> tuple[str, int]:

@@ -39,6 +39,7 @@ from atlas_os.greenrock.universe import (
     remove_tickers,
     reset_all_universes,
     reset_universe,
+    validate_watchlists,
 )
 from atlas_os.greenrock.workflow import run_greenrock_screening_workflow
 from atlas_os.logging_config import configure_logging
@@ -216,18 +217,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     universe = greenrock_subparsers.add_parser(
         "universe",
-        help="Manage the local GreenRock ticker universe.",
+        help="Manage local GreenRock ticker watchlists.",
     )
     universe_subparsers = universe.add_subparsers(dest="universe_command")
-    universe_subparsers.add_parser("list", help="List current GreenRock ticker universe.")
-    universe_add = universe_subparsers.add_parser("add", help="Add tickers to the local universe.")
+    universe_subparsers.add_parser("list", help="List current GreenRock ticker watchlists.")
+    universe_add = universe_subparsers.add_parser("add", help="Add tickers to the local Mega Rock candidate pool.")
     universe_add.add_argument("tickers", nargs="+")
-    universe_remove = universe_subparsers.add_parser("remove", help="Remove tickers from the local universe.")
+    universe_remove = universe_subparsers.add_parser("remove", help="Remove tickers from the local Mega Rock candidate pool.")
     universe_remove.add_argument("tickers", nargs="+")
     universe_subparsers.add_parser("reset-mega-rock", help="Reset local universe to the Mega Rock default.")
     universe_subparsers.add_parser("reset-large-cap", help="Reset local universe to the large-cap default.")
     universe_subparsers.add_parser("reset-small-mid", help="Reset local universe to the small/mid-cap default.")
     universe_subparsers.add_parser("reset-all", help="Reset all local GreenRock universes.")
+    universe_subparsers.add_parser("validate", help="Validate local GreenRock watchlists.")
 
     return parser
 
@@ -647,7 +649,7 @@ def run_greenrock_universe(command: str | None, tickers: list[str] | None = None
     settings = get_settings()
     if command in (None, "list"):
         universes = load_greenrock_universes(settings.output_dir)
-        print("GreenRock ticker universes")
+        print("GreenRock ticker watchlists")
         for universe in universes.values():
             print(f"name: {universe.name}")
             print(f"path: {universe.path}")
@@ -658,13 +660,13 @@ def run_greenrock_universe(command: str | None, tickers: list[str] | None = None
         return 0
     if command == "add":
         universe = add_tickers(settings.output_dir, tuple(tickers or ()))
-        print("GreenRock ticker universe updated")
+        print("GreenRock ticker watchlist updated")
         print(f"ticker_count: {len(universe.tickers)}")
         print(f"path: {universe.path}")
         return 0
     if command == "remove":
         universe = remove_tickers(settings.output_dir, tuple(tickers or ()))
-        print("GreenRock ticker universe updated")
+        print("GreenRock ticker watchlist updated")
         print(f"ticker_count: {len(universe.tickers)}")
         print(f"path: {universe.path}")
         return 0
@@ -679,9 +681,31 @@ def run_greenrock_universe(command: str | None, tickers: list[str] | None = None
         return 0
     if command == "reset-all":
         universes = reset_all_universes(settings.output_dir)
-        print("GreenRock ticker universes reset")
+        print("GreenRock ticker watchlists reset")
         for universe in universes.values():
             print(f"{universe.name}: {len(universe.tickers)} tickers at {universe.path}")
+        return 0
+    if command == "validate":
+        validation = validate_watchlists(settings.output_dir)
+        print("GreenRock watchlist validation")
+        print("duplicate_tickers:")
+        if validation.duplicate_tickers:
+            for ticker in validation.duplicate_tickers:
+                print(f"  {ticker}")
+        else:
+            print("  none")
+        print("probable_bucket_mismatches:")
+        if validation.probable_bucket_mismatches:
+            for mismatch in validation.probable_bucket_mismatches:
+                print(f"  {mismatch}")
+        else:
+            print("  none")
+        print("warnings:")
+        if validation.warnings:
+            for warning in validation.warnings:
+                print(f"  {warning}")
+        else:
+            print("  none")
         return 0
     raise ValueError(f"Unsupported universe command: {command}")
 
@@ -953,7 +977,7 @@ def _print_approval_rows(approvals: tuple[ApprovalRequest, ...]) -> None:
 
 
 def _print_reset_universe(universe) -> None:
-    print("GreenRock ticker universe reset")
+    print("GreenRock ticker watchlist reset")
     print(f"name: {universe.name}")
     print(f"ticker_count: {len(universe.tickers)}")
     print(f"path: {universe.path}")

@@ -475,10 +475,10 @@ def render_greenrock(status_message: str | None = None) -> str:
     </section>
     <section class="panel">
       <div class="section-head">
-        <h2>GreenRock Ticker Universes</h2>
-        <span class="subtle">Mega Rock, large-cap, and small/mid-cap local CSVs</span>
+        <h2>GreenRock Watchlists</h2>
+        <span class="subtle">Mega Rock candidate pool, large-cap watchlist, and small/mid-cap watchlist</span>
       </div>
-      <p class="subtle">Real mode uses environment tickers first. When blank, Atlas uses these local universes.</p>
+      <p class="subtle">Real mode uses environment tickers first. When blank, Atlas ranks these configured local watchlists. Full-market scanner planned.</p>
       {_universe_panels(universes)}
     </section>
     <section class="panel">
@@ -538,7 +538,13 @@ def render_greenrock_picks_board(status_message: str | None = None) -> str:
       {_attention_card("neutral", _safe(latest_run.run_id if latest_run else "none"), "Latest Run", _safe(latest_source or "No data source yet"))}
       {_attention_card(_approval_color(approvals[0] if approvals else None), _safe(approval_status), "Approval Status", "Human gate remains mandatory")}
       {_attention_card("green" if latest_report else "yellow", _safe(data_mode), "Data Mode", "Mock vs real is explicitly labeled")}
-      {_attention_card("neutral", f"{slot_count}/23", "Board Slots", "Mega 1, large 11, small/mid 11")}
+      {_attention_card("neutral", f"{slot_count}/23", "Selected Pick Count", "Mega 1, large 11, small/mid 11")}
+    </section>
+    <section class="board-meta">
+      {_attention_card("neutral", "Configured", "Source Universe / Watchlist", "Mega Rock pool, large-cap watchlist, small/mid watchlist")}
+      {_attention_card("green", "$1T+", "Mega Rock Eligibility", "Market cap must be at least $1T")}
+      {_attention_card("neutral", "Planned", "Full-Market Scanner", "Current real mode ranks configured watchlists")}
+      {_attention_card("neutral", _safe(latest_source or "none"), "Data Source", "Provider label from latest report")}
     </section>
     {_picks_warning_panel(warnings)}
     <section class="mega-pick">
@@ -622,15 +628,20 @@ def render_greenrock_score(
     </section>
     {result_html}
     <section class="panel">
-      <h2>How GreenRock Score is calculated</h2>
-      <div class="score-explainer">
-        <div><strong>52-week low proximity</strong><p>Up to 20 points for trading near the 52-week low.</p></div>
-        <div><strong>Bollinger Band setup</strong><p>Up to 20 points for price location closer to the lower 2.5σ band.</p></div>
-        <div><strong>RSI</strong><p>Up to 15 points for weaker momentum below the neutral threshold.</p></div>
-        <div><strong>Volume acceleration</strong><p>Up to 15 points for improving 10-day average volume.</p></div>
-        <div><strong>Moving average structure</strong><p>Up to 20 points for EMA/SMA and 50/150 DMA dislocation.</p></div>
-        <div><strong>Bonus / penalty factors</strong><p>Up to 10 bonus points when price trades below the lower 2.5σ Bollinger Band.</p></div>
+      <div class="section-head">
+        <h2>How the Score Works</h2>
+        <span class="subtle">Current methodology weights total 100 points</span>
       </div>
+      <p class="subtle">GreenRock Score is a technical dislocation ranking aid. It prioritizes review candidates; it is not a recommendation, guarantee, or publication approval.</p>
+      <div class="score-explainer">
+        <div><strong>52-week low proximity</strong><span>20 pts</span><p>Rewards names trading close to the 52-week low.</p></div>
+        <div><strong>Bollinger Band setup</strong><span>20 pts</span><p>Rewards price location nearer the lower 2.5σ band.</p></div>
+        <div><strong>RSI</strong><span>15 pts</span><p>Rewards weaker momentum below the neutral threshold.</p></div>
+        <div><strong>Volume acceleration</strong><span>15 pts</span><p>Rewards improving 10-day average volume.</p></div>
+        <div><strong>Moving average structure</strong><span>20 pts</span><p>Rewards EMA/SMA and 50/150 DMA dislocation with early repair.</p></div>
+        <div><strong>Bonus / penalty factors</strong><span>10 pts</span><p>Adds a bonus below the lower 2.5σ Bollinger Band.</p></div>
+      </div>
+      <p><a href="/open-local?path={quote(str(Path('docs/GREENROCK_SCORE_METHODOLOGY.md').resolve()))}">Open methodology notes</a></p>
     </section>
     """
     return _page("GreenRock Score Calculator", content, active="/greenrock/score")
@@ -1119,9 +1130,9 @@ def _candidate_table(rows: list[dict[str, str]]) -> str:
 
 def _universe_panels(universes: dict) -> str:
     labels = {
-        "mega_rock": "Mega Rock Ticker Universe",
-        "large_cap": "Large-Cap Ticker Universe",
-        "small_mid_cap": "Small/Mid-Cap Ticker Universe",
+        "mega_rock": "Mega Rock Candidate Pool",
+        "large_cap": "Large-Cap Watchlist",
+        "small_mid_cap": "Small/Mid-Cap Watchlist",
     }
     panels = []
     for name, universe in universes.items():
@@ -1242,8 +1253,9 @@ def _score_preview_panel(preview) -> str:
         {_detail_panel("Data Source", preview.data_source)}
         {_detail_panel("Selection Mode", preview.selection_mode)}
       </div>
-      <section class="panel inner-panel">
-        <h2>Component Scores</h2>
+      <section class="panel inner-panel score-breakdown-card">
+        <h2>Score Breakdown</h2>
+        <p class="subtle">Component points before the final 100-point cap.</p>
         <dl class="detail-list">{component_rows}</dl>
       </section>
       <section class="panel inner-panel">
@@ -1868,6 +1880,8 @@ def _page(title: str, content: str, active: str = "/") -> str:
     .score-hero-line strong {{ display: block; font-size: 44px; color: var(--gold); line-height: 1; }}
     .score-explainer {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }}
     .score-explainer div {{ border: 1px solid rgba(255,255,255,.1); border-radius: 8px; padding: 12px; background: rgba(255,255,255,.04); }}
+    .score-explainer span {{ display: inline-block; margin: 7px 0; color: var(--gold); font-weight: 700; }}
+    .score-breakdown-card {{ border-color: rgba(243,201,105,.3); }}
     .inner-panel {{ margin-top: 12px; box-shadow: none; }}
     .actions, .action-row, .confirm-form {{ display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }}
     .action-row form {{ margin: 0; }}

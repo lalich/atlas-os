@@ -103,7 +103,7 @@ def build_report_draft(
             "recommendation and remains subject to human review before any client-facing use."
         ),
         "",
-        "## Mega Rock Universe",
+        "## Source Watchlists",
         "",
         _mega_rock_section(resolved_data_mode, resolved_data_source, len(screening.all_candidates)),
         "",
@@ -259,16 +259,17 @@ def _data_mode_disclaimer(is_mock: bool, data_source: str) -> str:
 
 
 def _mega_rock_section(data_mode: str, data_source: str, candidate_count: int) -> str:
-    if data_source in {"yfinance:mega_rock", "yfinance:greenrock_universes"}:
+    if data_source in {"yfinance:mega_rock", "yfinance:greenrock_universes", "yfinance:greenrock_watchlists"}:
         return (
-            f"This {data_mode} run screened {candidate_count} securities from local GreenRock ticker "
-            "universes using the configured yfinance provider. The Mega Rock, large-cap, and small/mid-cap "
-            "universes are operator-managed starting points and do not imply that any security is suitable "
-            "for any person or portfolio."
+            f"This {data_mode} run ranked {candidate_count} securities from configured local GreenRock "
+            "watchlists using the configured yfinance provider. Current real mode ranks configured "
+            "watchlists, not the entire U.S. public market. The Mega Rock candidate pool, large-cap "
+            "watchlist, and small/mid-cap watchlist are operator-managed starting points and do not imply "
+            "that any security is suitable for any person or portfolio. Full-market scanner planned."
         )
     return (
         f"This {data_mode} run screened {candidate_count} securities from data source `{data_source}`. "
-        "Ticker universe composition is an operator input and remains subject to review."
+        "Ticker watchlist composition is an operator input and remains subject to review. Full-market scanner planned."
     )
 
 

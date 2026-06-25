@@ -43,13 +43,13 @@ export ATLAS_GREENROCK_REAL_TICKERS=
 atlas greenrock report-draft --data real
 ```
 
-With `ATLAS_GREENROCK_REAL_TICKERS` blank, Atlas uses the local Mega Rock, large-cap, and small/mid-cap universes.
+With `ATLAS_GREENROCK_REAL_TICKERS` blank, Atlas uses the local Mega Rock candidate pool, large-cap watchlist, and small/mid-cap watchlist.
 
 Real mode defaults to ranked selection, which scores available names and fills the best available candidates when strict criteria leave sections short. Strict mode remains available for comparison and may return fewer picks.
 
 Real-data reports still remain draft-only and blocked for human approval.
 
-## Manage GreenRock Universes
+## Manage GreenRock Watchlists
 
 ```bash
 atlas greenrock universe list
@@ -59,9 +59,10 @@ atlas greenrock universe reset-mega-rock
 atlas greenrock universe reset-large-cap
 atlas greenrock universe reset-small-mid
 atlas greenrock universe reset-all
+atlas greenrock universe validate
 ```
 
-The universes are local only and stored at:
+The watchlists are local only and stored at:
 
 - `.atlas/output/greenrock/universes/mega_rock.csv`
 - `.atlas/output/greenrock/universes/large_cap.csv`
@@ -90,7 +91,7 @@ Open:
 http://127.0.0.1:8000/greenrock/picks
 ```
 
-The Picks Board shows one featured Mega Rock pick, eleven large-cap picks, and eleven small/mid-cap picks when available. It includes section counts, Finviz links, GreenRock Scores, signal labels, technical fields, and a clear mock/real data badge. If a section is incomplete, Atlas shows a data quality warning. It is local-only and not a publishing surface.
+The Picks Board shows one featured Mega Rock pick, eleven large-cap picks, and eleven small/mid-cap picks when available. It includes section counts, Finviz links, GreenRock Scores, signal labels, technical fields, and a clear mock/real data badge. Current real mode ranks configured watchlists, not the entire U.S. public market; a full-market scanner is planned. If a section is incomplete, Atlas shows a data quality warning. It is local-only and not a publishing surface.
 
 Real-data buckets are Mega Rock at $1T+, large cap from $10B to below $1T, and small/mid below $10B.
 
@@ -109,7 +110,7 @@ Browser:
 http://127.0.0.1:8000/greenrock/score
 ```
 
-The score calculator is preview-only. It shows GreenRock Score, signal label, selection label, RSI, Bollinger Band position, 52-week low distance, volume acceleration, moving average structure, data quality warnings, component scores, and a Finviz link. It does not create a report, approval, artifact, email, publication, or external distribution action.
+The score calculator is preview-only. It shows GreenRock Score, signal label, selection label, RSI, Bollinger Band position, 52-week low distance, volume acceleration, moving average structure, data quality warnings, component scores, and a Finviz link. The methodology is documented in `docs/GREENROCK_SCORE_METHODOLOGY.md`. It does not create a report, approval, artifact, email, publication, or external distribution action.
 
 Real mode requires the configured provider. If the provider is missing, Atlas shows a blocked message and leaves workflow state unchanged.
 
@@ -240,7 +241,7 @@ export ATLAS_GREENROCK_REAL_TICKERS=
 atlas serve
 ```
 
-Open `http://127.0.0.1:8000/greenrock`, then click **Run Real Report**. With `ATLAS_GREENROCK_REAL_TICKERS` blank, Atlas uses the local GreenRock universes. If the provider is not configured, the browser shows a blocked message and no run, artifact, report, or approval is created.
+Open `http://127.0.0.1:8000/greenrock`, then click **Run Real Report**. With `ATLAS_GREENROCK_REAL_TICKERS` blank, Atlas uses the local GreenRock watchlists. If the provider is not configured, the browser shows a blocked message and no run, artifact, report, or approval is created.
 
 Open `http://127.0.0.1:8000/greenrock/final-reports` to review the final PDF archive.
 

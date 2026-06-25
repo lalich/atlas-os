@@ -25,7 +25,7 @@ class GreenRockReportTests(unittest.TestCase):
             "## How to Read This Report",
             "## Executive Summary",
             "## Market Setup / Regime Placeholder",
-            "## Mega Rock Universe",
+            "## Source Watchlists",
             "## Top Large-Cap Candidates",
             "## Top Small/Mid-Cap Candidates",
             "GreenRock Score",

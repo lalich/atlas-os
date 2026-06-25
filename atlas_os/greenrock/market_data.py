@@ -186,7 +186,7 @@ def get_market_data_provider(data_mode: str, output_dir: Path | None = None) -> 
         name: YFinanceMarketDataProvider(universe.tickers, universe_name=universe.name)
         for name, universe in universes.items()
     }
-    return SectionedMarketDataProvider(providers, source_name="yfinance:greenrock_universes")
+    return SectionedMarketDataProvider(providers, source_name="yfinance:greenrock_watchlists")
 
 
 def _to_date(value) -> date:

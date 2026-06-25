@@ -58,7 +58,7 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("Reject", response.body)
         self.assertIn("GreenRock Score", response.body)
         self.assertIn("Signal Label", response.body)
-        self.assertIn("Mega Rock Ticker Universe", response.body)
+        self.assertIn("Mega Rock Candidate Pool", response.body)
         self.assertIn("AAPL", response.body)
         self.assertIn("Run Mock Report", response.body)
         self.assertIn("Run Real Report", response.body)
@@ -111,7 +111,9 @@ class CommandCenterTests(unittest.TestCase):
         self.assertEqual(result.status, 200)
         self.assertIn("LC01 Score Preview", result.body)
         self.assertIn("GreenRock Score", result.body)
-        self.assertIn("How GreenRock Score is calculated", result.body)
+        self.assertIn("How the Score Works", result.body)
+        self.assertIn("Score Breakdown", result.body)
+        self.assertIn("Current methodology weights total 100 points", result.body)
         self.assertIn("https://finviz.com/quote.ashx?t=LC01", result.body)
 
     def test_score_page_invalid_ticker_shows_clean_warning(self) -> None:

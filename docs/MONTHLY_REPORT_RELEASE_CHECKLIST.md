@@ -21,7 +21,7 @@ atlas greenrock latest-report --print
 
 - Review executive summary, methodology, tables, rationale, risks, and disclaimers.
 - Confirm data mode and data source are clearly labeled.
-- If using real mode, confirm the Mega Rock Universe section is present.
+- If using real mode, confirm the Source Watchlists section is present and notes that full-market scanner is planned.
 - Confirm data-mode and human-approval disclaimers are present.
 - Confirm no personalized recommendations, guarantees, or promissory language are present.
 

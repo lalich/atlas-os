@@ -1,4 +1,4 @@
-"""Local GreenRock ticker universe management."""
+"""Local GreenRock ticker watchlist management."""
 
 from __future__ import annotations
 
@@ -24,36 +24,10 @@ MEGA_ROCK_TICKERS: tuple[str, ...] = (
     "AMZN",
     "GOOGL",
     "META",
-    "BRK-B",
-    "LLY",
     "AVGO",
-    "JPM",
-    "XOM",
-    "UNH",
-    "V",
-    "PG",
-    "MA",
-    "COST",
-    "HD",
-    "MRK",
-    "ABBV",
-    "CRM",
-    "NFLX",
-    "AMD",
-    "ADBE",
-    "BAC",
-    "KO",
 )
 
 LARGE_CAP_TICKERS: tuple[str, ...] = (
-    "AAPL",
-    "MSFT",
-    "NVDA",
-    "AMZN",
-    "GOOGL",
-    "META",
-    "TSLA",
-    "AVGO",
     "JPM",
     "LLY",
     "COST",
@@ -66,12 +40,19 @@ LARGE_CAP_TICKERS: tuple[str, ...] = (
     "NFLX",
     "CRM",
     "AMD",
+    "ADBE",
+    "ORCL",
+    "CSCO",
+    "BAC",
+    "KO",
+    "PEP",
+    "MCD",
+    "DIS",
 )
 
 SMALL_MID_CAP_TICKERS: tuple[str, ...] = (
     "SOFI",
     "RKT",
-    "PLTR",
     "AFRM",
     "OPEN",
     "FUBO",
@@ -100,6 +81,13 @@ class TickerUniverse:
     name: str
     tickers: tuple[str, ...]
     path: Path
+
+
+@dataclass(frozen=True)
+class WatchlistValidation:
+    duplicate_tickers: tuple[str, ...]
+    probable_bucket_mismatches: tuple[str, ...]
+    warnings: tuple[str, ...]
 
 
 def universe_path(output_dir: Path, name: str = DEFAULT_UNIVERSE_NAME) -> Path:
@@ -163,3 +151,38 @@ def reset_universe(output_dir: Path, name: str) -> TickerUniverse:
 
 def reset_all_universes(output_dir: Path) -> dict[str, TickerUniverse]:
     return {name: reset_universe(output_dir, name) for name in GREENROCK_UNIVERSE_NAMES}
+
+
+def validate_watchlists(output_dir: Path) -> WatchlistValidation:
+    watchlists = load_greenrock_universes(output_dir)
+    ticker_locations: dict[str, list[str]] = {}
+    warnings: list[str] = []
+    mismatches: list[str] = []
+    for name, universe in watchlists.items():
+        for ticker in universe.tickers:
+            ticker_locations.setdefault(ticker, []).append(name)
+            if ticker == "SPCE":
+                warnings.append("SPCE is Virgin Galactic, not SpaceX.")
+
+    duplicate_tickers = tuple(
+        ticker for ticker, locations in sorted(ticker_locations.items())
+        if len(locations) > 1
+    )
+    for ticker in duplicate_tickers:
+        warnings.append(f"{ticker} appears in multiple watchlists: {', '.join(ticker_locations[ticker])}.")
+
+    for ticker in watchlists[MEGA_ROCK_UNIVERSE].tickers:
+        if ticker not in MEGA_ROCK_TICKERS:
+            mismatches.append(f"{ticker} is in Mega Rock candidate pool but is not in the default $1T+ candidate seed list.")
+    for ticker in watchlists[LARGE_CAP_UNIVERSE].tickers:
+        if ticker in MEGA_ROCK_TICKERS:
+            mismatches.append(f"{ticker} is in Large Cap watchlist but is also a default Mega Rock candidate.")
+    for ticker in watchlists[SMALL_MID_CAP_UNIVERSE].tickers:
+        if ticker in MEGA_ROCK_TICKERS or ticker in LARGE_CAP_TICKERS:
+            mismatches.append(f"{ticker} is in Small/Mid watchlist but appears in a larger-cap default seed list.")
+
+    return WatchlistValidation(
+        duplicate_tickers=duplicate_tickers,
+        probable_bucket_mismatches=tuple(mismatches),
+        warnings=tuple(dict.fromkeys(warnings)),
+    )

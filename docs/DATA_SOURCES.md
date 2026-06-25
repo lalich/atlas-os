@@ -39,11 +39,11 @@ ATLAS_MARKET_DATA_PROVIDER=yfinance
 ATLAS_GREENROCK_REAL_TICKERS=
 ```
 
-When `ATLAS_GREENROCK_REAL_TICKERS` is blank, Atlas uses the local GreenRock universe CSVs.
+When `ATLAS_GREENROCK_REAL_TICKERS` is blank, Atlas uses the local GreenRock watchlist CSVs.
 
-## GreenRock Universes
+## GreenRock Watchlists
 
-GreenRock universes are operator-managed local ticker lists used as the default real-mode universe set for the Picks Board and report.
+GreenRock watchlists are operator-managed local ticker lists used as the default real-mode source set for the Picks Board and report.
 
 ```bash
 atlas greenrock universe list
@@ -53,9 +53,10 @@ atlas greenrock universe reset-mega-rock
 atlas greenrock universe reset-large-cap
 atlas greenrock universe reset-small-mid
 atlas greenrock universe reset-all
+atlas greenrock universe validate
 ```
 
-Universes are stored locally at:
+Watchlists are stored locally at:
 
 ```text
 .atlas/output/greenrock/universes/mega_rock.csv
@@ -63,7 +64,7 @@ Universes are stored locally at:
 .atlas/output/greenrock/universes/small_mid_cap.csv
 ```
 
-The default lists contain real U.S.-listed tickers intended as starting universes only. Universe inclusion does not imply suitability, recommendation, or expected performance.
+The Mega Rock candidate pool starts from likely $1T+ public companies only. Large-cap and small/mid-cap watchlists are configured review lists. Inclusion does not imply suitability, recommendation, or expected performance.
 
 Optional dependency:
 
@@ -73,7 +74,7 @@ python3 -m pip install -e ".[market-data]"
 
 ## Picks Board Data Source
 
-The GreenRock Picks Board at `/greenrock/picks` reads the latest run-specific CSV artifacts and inherits that run's data mode and report data source. A mock run displays a MOCK data badge. A real yfinance run displays REAL data and the report source, such as `yfinance:greenrock_universes`.
+The GreenRock Picks Board at `/greenrock/picks` reads the latest run-specific CSV artifacts and inherits that run's data mode and report data source. A mock run displays a MOCK data badge. A real yfinance run displays REAL data and the report source, such as `yfinance:greenrock_watchlists`.
 
 The board targets:
 
@@ -88,6 +89,8 @@ Real-data market-cap buckets:
 - Small/Mid: below $10B.
 
 If any section is incomplete, the board and report show a data quality warning.
+
+Current real mode ranks configured watchlists, not the entire U.S. public market. Full-market scanner planned.
 
 Finviz links are plain outbound reference links in the format:
 
