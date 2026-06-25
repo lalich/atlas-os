@@ -63,6 +63,7 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("Run Mock Report", response.body)
         self.assertIn("Run Real Report", response.body)
         self.assertIn("GreenRock Picks Board", response.body)
+        self.assertIn("Score Any Ticker", response.body)
 
     def test_greenrock_picks_route_returns_200_with_finviz_links_and_23_slots(self) -> None:
         with _isolated_env():
@@ -79,6 +80,7 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("https://finviz.com/quote.ashx?t=", response.body)
         self.assertIn("Powered by Atlas OS", response.body)
         self.assertIn("MOCK DATA", response.body)
+        self.assertIn("GreenRock Score Calculator", response.body)
         self.assertIn("Mega Rock: 1/1", response.body)
         self.assertIn("Large Cap: 11/11", response.body)
         self.assertIn("Small/Mid: 11/11", response.body)
@@ -98,6 +100,27 @@ class CommandCenterTests(unittest.TestCase):
         self.assertEqual(response.status, 200)
         self.assertIn("Data Quality Warning", response.body)
         self.assertIn("Small/mid-cap section has 0/11 picks", response.body)
+
+    def test_score_page_route_returns_200_and_form_returns_result(self) -> None:
+        with _isolated_env():
+            page = dispatch_request("GET", "/greenrock/score")
+            result = dispatch_request("POST", "/greenrock/score", "ticker=LC01&data_mode=mock&selection_mode=strict")
+
+        self.assertEqual(page.status, 200)
+        self.assertIn("GreenRock Score Calculator", page.body)
+        self.assertEqual(result.status, 200)
+        self.assertIn("LC01 Score Preview", result.body)
+        self.assertIn("GreenRock Score", result.body)
+        self.assertIn("How GreenRock Score is calculated", result.body)
+        self.assertIn("https://finviz.com/quote.ashx?t=LC01", result.body)
+
+    def test_score_page_invalid_ticker_shows_clean_warning(self) -> None:
+        with _isolated_env():
+            result = dispatch_request("POST", "/greenrock/score", "ticker=NOTREAL&data_mode=mock")
+
+        self.assertEqual(result.status, 200)
+        self.assertIn("Score Preview Blocked", result.body)
+        self.assertIn("No report, approval, artifact", result.body)
 
     def test_browser_run_buttons_pass_selected_data_mode(self) -> None:
         fake_run = types.SimpleNamespace(run_id="greenrock-test", data_mode="real")

@@ -97,6 +97,21 @@ https://finviz.com/quote.ashx?t=<TICKER>
 
 The Picks Board does not publish, email, distribute, or bypass approval.
 
+## Score Calculator Data Source
+
+The GreenRock Score Calculator at `/greenrock/score` and `atlas greenrock score <ticker>` is preview-only. Mock mode scores local generated sample tickers. Real mode fetches only the requested ticker through the configured provider and fails closed if the provider is unavailable.
+
+The calculator does not create workflow runs, reports, approvals, artifacts, emails, publications, or distribution actions.
+
+Score components:
+
+- 52-week low proximity.
+- Bollinger Band setup.
+- RSI.
+- Volume acceleration.
+- Moving average structure.
+- Bonus factor for trading below the lower 2.5 standard deviation Bollinger Band.
+
 Do not commit real credentials or private data. The yfinance scaffold does not require an API key, but any future paid provider settings must stay local.
 
 ## Safety Rules

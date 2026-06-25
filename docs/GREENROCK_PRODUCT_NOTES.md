@@ -14,9 +14,11 @@
 
 ## Scoring Improvements
 
+- Make the GreenRock Score Calculator the primary operator surface for explaining why a name qualifies before it appears in a report.
 - Calibrate GreenRock Score against historical mock fixtures first, then approved historical data later.
 - Add sub-scores for trend, dislocation, participation, volatility, and liquidity.
 - Track score stability across multiple lookback windows.
+- Add chart overlays for score components so subscribers can visually compare dislocation, momentum, volume, and moving-average structure.
 
 ## Future Options Analysis
 
@@ -36,4 +38,3 @@
 - Avoid guarantees, promissory language, and personalized recommendations.
 - Clearly label mock data and internal workflow testing until production data sources are approved.
 - Preserve audit logs, run IDs, artifacts, and approval records for every report draft.
-

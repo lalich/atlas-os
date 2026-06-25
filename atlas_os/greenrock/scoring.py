@@ -7,18 +7,21 @@ from atlas_os.greenrock.models import IndicatorSnapshot
 
 def greenrock_score(indicators: IndicatorSnapshot, rule_results: dict[str, bool]) -> float:
     """Calculate a 0-100 GreenRock technical dislocation score."""
-    score = 0.0
+    components = greenrock_score_breakdown(indicators, rule_results)
+    return round(min(sum(components.values()), 100.0), 2)
 
-    score += _bounded((0.10 - indicators.low_proximity) / 0.10, 0, 1) * 20
-    score += _bollinger_location_score(indicators) * 20
-    score += _bounded((50 - indicators.rsi_14) / 50, 0, 1) * 15
-    score += _volume_acceleration_score(indicators) * 15
-    score += _moving_average_structure_score(rule_results, indicators) * 20
 
-    if indicators.latest_close < indicators.bollinger_lower:
-        score += 10
-
-    return round(min(score, 100.0), 2)
+def greenrock_score_breakdown(indicators: IndicatorSnapshot, rule_results: dict[str, bool]) -> dict[str, float]:
+    """Return GreenRock Score component points before the 100-point cap."""
+    bonus = 10.0 if indicators.latest_close < indicators.bollinger_lower else 0.0
+    return {
+        "52_week_low_proximity": round(_bounded((0.10 - indicators.low_proximity) / 0.10, 0, 1) * 20, 2),
+        "bollinger_band_setup": round(_bollinger_location_score(indicators) * 20, 2),
+        "rsi": round(_bounded((50 - indicators.rsi_14) / 50, 0, 1) * 15, 2),
+        "volume_acceleration": round(_volume_acceleration_score(indicators) * 15, 2),
+        "moving_average_structure": round(_moving_average_structure_score(rule_results, indicators) * 20, 2),
+        "bonus_penalty_factors": bonus,
+    }
 
 
 def signal_label(score: float) -> str:
@@ -62,4 +65,3 @@ def _moving_average_structure_score(
 
 def _bounded(value: float, minimum: float, maximum: float) -> float:
     return max(minimum, min(value, maximum))
-

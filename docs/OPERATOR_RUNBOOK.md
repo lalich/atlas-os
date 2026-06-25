@@ -72,6 +72,7 @@ The universes are local only and stored at:
 ```bash
 atlas greenrock latest-candidates
 atlas greenrock picks-board
+atlas greenrock score LC01 --data mock
 atlas greenrock review
 ```
 
@@ -92,6 +93,25 @@ http://127.0.0.1:8000/greenrock/picks
 The Picks Board shows one featured Mega Rock pick, eleven large-cap picks, and eleven small/mid-cap picks when available. It includes section counts, Finviz links, GreenRock Scores, signal labels, technical fields, and a clear mock/real data badge. If a section is incomplete, Atlas shows a data quality warning. It is local-only and not a publishing surface.
 
 Real-data buckets are Mega Rock at $1T+, large cap from $10B to below $1T, and small/mid below $10B.
+
+## Score Any Ticker
+
+CLI:
+
+```bash
+atlas greenrock score LC01 --data mock
+atlas greenrock score AAPL --data real
+```
+
+Browser:
+
+```text
+http://127.0.0.1:8000/greenrock/score
+```
+
+The score calculator is preview-only. It shows GreenRock Score, signal label, selection label, RSI, Bollinger Band position, 52-week low distance, volume acceleration, moving average structure, data quality warnings, component scores, and a Finviz link. It does not create a report, approval, artifact, email, publication, or external distribution action.
+
+Real mode requires the configured provider. If the provider is missing, Atlas shows a blocked message and leaves workflow state unchanged.
 
 ## Open Latest Report
 

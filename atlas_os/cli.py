@@ -28,6 +28,7 @@ from atlas_os.greenrock.lifecycle import cleanup_greenrock_drafts
 from atlas_os.greenrock.market_data import MarketDataConfigurationError
 from atlas_os.greenrock.pdf_export import render_markdown_report_to_pdf
 from atlas_os.greenrock.report import build_sample_report
+from atlas_os.greenrock.score import calculate_score_preview, score_signal
 from atlas_os.greenrock.screener import run_screen
 from atlas_os.greenrock.universe import (
     LARGE_CAP_UNIVERSE,
@@ -151,6 +152,23 @@ def build_parser() -> argparse.ArgumentParser:
     greenrock_subparsers.add_parser(
         "picks-board",
         help="Show latest GreenRock Picks Board summary and local URL guidance.",
+    )
+    score = greenrock_subparsers.add_parser(
+        "score",
+        help="Preview the GreenRock Score for one ticker without creating a report.",
+    )
+    score.add_argument("ticker")
+    score.add_argument(
+        "--data",
+        choices=("mock", "real"),
+        default="mock",
+        help="Market data mode. Defaults to mock.",
+    )
+    score.add_argument(
+        "--selection",
+        choices=("strict", "ranked"),
+        default=None,
+        help="Selection mode. Defaults to strict for mock and ranked for real.",
     )
     greenrock_subparsers.add_parser(
         "review",
@@ -425,6 +443,54 @@ def run_greenrock_picks_board() -> int:
     _print_candidate_rows("Large-cap picks", large_rows)
     _print_candidate_rows("Small/mid-cap picks", small_rows)
     print("Start the local Command Center with: atlas serve")
+    return 0
+
+
+def run_greenrock_score(ticker: str, data_mode: str = "mock", selection_mode: str | None = None) -> int:
+    settings = get_settings()
+    try:
+        preview = calculate_score_preview(
+            ticker,
+            data_mode=data_mode,
+            selection_mode=selection_mode,
+            output_dir=settings.output_dir,
+        )
+    except (MarketDataConfigurationError, ValueError) as error:
+        print("GreenRock score preview blocked")
+        print(f"ticker: {ticker.upper()}")
+        print(f"data_mode: {data_mode.upper()}")
+        print(f"reason: {error}")
+        print("No report, approval, artifact, email, publication, or external action was created.")
+        return 1
+
+    candidate = preview.candidate
+    indicators = candidate.indicators
+    print("GreenRock Score Preview")
+    print(f"ticker: {candidate.symbol}")
+    print(f"company: {candidate.company_name}")
+    print(f"data_mode: {preview.data_mode.upper()}")
+    print(f"data_source: {preview.data_source}")
+    print(f"selection_mode: {preview.selection_mode}")
+    print(f"market_cap: {candidate.market_cap:.2f}")
+    print(f"price: {indicators.latest_close:.2f}")
+    print(f"greenrock_score: {candidate.score:.2f}")
+    print(f"signal_label: {score_signal(candidate)}")
+    print(f"selection_label: {candidate.selection_label}")
+    print(f"rsi: {indicators.rsi_14:.2f}")
+    print(f"bollinger_position: {_score_bollinger_position(candidate)}")
+    print(f"52_week_low_distance: {indicators.low_proximity:.2%}")
+    print(f"volume_acceleration: {_score_volume_acceleration(candidate)}")
+    print(f"moving_average_structure: {_score_moving_average_structure(candidate)}")
+    print(f"finviz: https://finviz.com/quote.ashx?t={candidate.symbol}")
+    print("component_scores:")
+    for name, value in preview.component_scores.items():
+        print(f"  {name}: {value:.2f}")
+    print("data_quality_warnings:")
+    if preview.data_quality_warnings:
+        for warning in preview.data_quality_warnings:
+            print(f"  {warning}")
+    else:
+        print("  none")
     return 0
 
 
@@ -955,6 +1021,30 @@ def _default_selection_mode(data_mode: str) -> str:
     return "ranked" if data_mode == "real" else "strict"
 
 
+def _score_bollinger_position(candidate) -> str:
+    indicators = candidate.indicators
+    if indicators.latest_close < indicators.bollinger_lower:
+        return "Below lower 2.5σ band"
+    lower_distance = abs(indicators.latest_close - indicators.bollinger_lower)
+    upper_distance = abs(indicators.bollinger_upper - indicators.latest_close)
+    return "Closer to lower band" if lower_distance < upper_distance else "Closer to upper band"
+
+
+def _score_volume_acceleration(candidate) -> str:
+    indicators = candidate.indicators
+    if indicators.previous_volume_avg_10 <= 0:
+        return "unavailable"
+    return f"{(indicators.volume_avg_10 - indicators.previous_volume_avg_10) / indicators.previous_volume_avg_10:.2%}"
+
+
+def _score_moving_average_structure(candidate) -> str:
+    return (
+        f"8 EMA {'below' if 'ema8_below_sma10' in candidate.passed_rules else 'not below'} 10 SMA; "
+        f"50 DMA {'below' if 'dma50_below_dma150' in candidate.passed_rules else 'not below'} 150 DMA; "
+        f"50 DMA ROC {'improving' if 'dma50_roc_improving_vs_dma150' in candidate.passed_rules else 'not improving'} vs 150 DMA"
+    )
+
+
 def _approvals_for_run(connection, run_id: str) -> tuple[ApprovalRequest, ...]:
     return tuple(approval for approval in list_approvals(connection) if approval.run_id == run_id)
 
@@ -1043,6 +1133,8 @@ def main(argv: list[str] | None = None) -> int:
             return run_greenrock_latest_candidates()
         if args.greenrock_command == "picks-board":
             return run_greenrock_picks_board()
+        if args.greenrock_command == "score":
+            return run_greenrock_score(args.ticker, args.data, args.selection)
         if args.greenrock_command == "review":
             return run_greenrock_review()
         if args.greenrock_command == "open-latest":

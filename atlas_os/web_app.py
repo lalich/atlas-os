@@ -35,6 +35,7 @@ from atlas_os.core.workflow_runs import get_workflow_run, list_workflow_runs
 from atlas_os.db.database import connect, initialize_database
 from atlas_os.greenrock.pdf_export import render_markdown_report_to_pdf
 from atlas_os.greenrock.market_data import MarketDataConfigurationError
+from atlas_os.greenrock.score import calculate_score_preview, score_signal
 from atlas_os.greenrock.universe import load_greenrock_universes
 from atlas_os.greenrock.workflow import run_greenrock_screening_workflow
 from atlas_os.greenrock.scoring import signal_label
@@ -114,6 +115,14 @@ def create_app():
     @app.get("/greenrock/picks", response_class=HTMLResponse)
     def greenrock_picks() -> str:
         return render_greenrock_picks_board()
+
+    @app.get("/greenrock/score", response_class=HTMLResponse)
+    def greenrock_score() -> str:
+        return render_greenrock_score()
+
+    @app.post("/greenrock/score", response_class=HTMLResponse)
+    def greenrock_score_post(ticker: str = Form(""), data_mode: str = Form("mock"), selection_mode: str = Form("")) -> str:
+        return render_greenrock_score(ticker=ticker, data_mode=data_mode, selection_mode=selection_mode)
 
     @app.post("/greenrock/run-report")
     def run_greenrock_report(data_mode: str = Form("mock")):
@@ -216,6 +225,8 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
         return WebResponse(200, render_greenrock(_first(query, "status")))
     if method == "GET" and route == "/greenrock/picks":
         return WebResponse(200, render_greenrock_picks_board(_first(query, "status")))
+    if method == "GET" and route == "/greenrock/score":
+        return WebResponse(200, render_greenrock_score())
     if method == "GET" and route == "/greenrock/final-reports":
         return WebResponse(200, render_greenrock_final_reports(_first(query, "status")))
     if method == "GET" and route == "/tasks":
@@ -259,6 +270,15 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
     if method == "POST" and route == "/greenrock/run-report":
         ok, message = run_greenrock_report_from_browser(form.get("data_mode", "mock"))
         return WebResponse(303, "", location=_with_status("/greenrock", message))
+    if method == "POST" and route == "/greenrock/score":
+        return WebResponse(
+            200,
+            render_greenrock_score(
+                ticker=form.get("ticker", ""),
+                data_mode=form.get("data_mode", "mock"),
+                selection_mode=form.get("selection_mode", ""),
+            ),
+        )
     if method == "POST" and route.startswith("/tasks/") and route.endswith("/status"):
         task_id = _route_int_part(route, 2)
         if task_id is None:
@@ -335,6 +355,7 @@ def render_dashboard(status_message: str | None = None) -> str:
       {_nav_card("Project Directory", "/projects", "GreenRock, Bat Signal, Insurance, Atlas Core")}
       {_nav_card("GreenRock Analysts", "/greenrock", "Run latest draft, approvals, candidates")}
       {_nav_card("GreenRock Picks Board", "/greenrock/picks", "Mega Rock, large-cap, and small/mid-cap picks")}
+      {_nav_card("Score Any Ticker", "/greenrock/score", "Preview GreenRock Score without report artifacts")}
       {_nav_card("Task Board", "/tasks", "Manual work queue by division")}
       {_nav_card("Agent Monitor", "/agents", "Planned local agent activity HUD")}
       {_nav_card("Approvals", "/greenrock", "Pending report approval actions")}
@@ -432,6 +453,7 @@ def render_greenrock(status_message: str | None = None) -> str:
           <button class="secondary" type="submit">Run Real Report</button>
         </form>
         <a class="button secondary" href="/greenrock/picks">GreenRock Picks Board</a>
+        <a class="button secondary" href="/greenrock/score">Score Any Ticker</a>
         {_path_action(latest_report.content_path if latest_report else None, "View Markdown report")}
         {_path_action(latest_pdf.path if latest_pdf else None, "Open PDF")}
         {_approval_button(latest_approval, "approve", "/greenrock")}
@@ -504,6 +526,14 @@ def render_greenrock_picks_board(status_message: str | None = None) -> str:
         <p>visible report slots</p>
       </div>
     </section>
+    <section class="panel calculator-card">
+      <div>
+        <p class="eyebrow">Score Preview</p>
+        <h2>GreenRock Score Calculator</h2>
+        <p class="subtle">Score any ticker locally without creating a report, approval, or artifact.</p>
+      </div>
+      <a class="button" href="/greenrock/score">GreenRock Score Calculator</a>
+    </section>
     <section class="board-meta">
       {_attention_card("neutral", _safe(latest_run.run_id if latest_run else "none"), "Latest Run", _safe(latest_source or "No data source yet"))}
       {_attention_card(_approval_color(approvals[0] if approvals else None), _safe(approval_status), "Approval Status", "Human gate remains mandatory")}
@@ -539,6 +569,71 @@ def render_greenrock_picks_board(status_message: str | None = None) -> str:
     </section>
     """
     return _page("GreenRock Picks Board", content, active="/greenrock/picks")
+
+
+def render_greenrock_score(
+    ticker: str = "",
+    data_mode: str = "mock",
+    selection_mode: str = "",
+    status_message: str | None = None,
+) -> str:
+    settings = get_settings()
+    result_html = ""
+    cleaned_ticker = ticker.strip().upper()
+    if cleaned_ticker:
+        try:
+            preview = calculate_score_preview(
+                cleaned_ticker,
+                data_mode=data_mode,
+                selection_mode=selection_mode or None,
+                output_dir=settings.output_dir,
+            )
+            result_html = _score_preview_panel(preview)
+        except (MarketDataConfigurationError, ValueError) as error:
+            result_html = f"""
+            <section class="panel warning-panel">
+              <h2>Score Preview Blocked</h2>
+              <p>{_safe(error)}</p>
+              <p class="subtle">No report, approval, artifact, email, publication, or external action was created.</p>
+            </section>
+            """
+
+    content = f"""
+    {_status_banner(status_message)}
+    <section class="hero compact greenrock-hero">
+      <p class="eyebrow">GreenRock Analysts</p>
+      <h1>GreenRock Score Calculator</h1>
+      <p>Preview a ticker's GreenRock Score locally without creating workflow records.</p>
+    </section>
+    <section class="panel">
+      <form method="post" action="/greenrock/score" class="score-form">
+        <input name="ticker" value="{_safe(cleaned_ticker)}" placeholder="Ticker" required>
+        <select name="data_mode">
+          <option value="mock" {'selected' if data_mode == 'mock' else ''}>Mock</option>
+          <option value="real" {'selected' if data_mode == 'real' else ''}>Real</option>
+        </select>
+        <select name="selection_mode">
+          <option value="" {'selected' if not selection_mode else ''}>Default Selection</option>
+          <option value="strict" {'selected' if selection_mode == 'strict' else ''}>Strict</option>
+          <option value="ranked" {'selected' if selection_mode == 'ranked' else ''}>Ranked</option>
+        </select>
+        <button type="submit">Calculate Score</button>
+      </form>
+    </section>
+    {result_html}
+    <section class="panel">
+      <h2>How GreenRock Score is calculated</h2>
+      <div class="score-explainer">
+        <div><strong>52-week low proximity</strong><p>Up to 20 points for trading near the 52-week low.</p></div>
+        <div><strong>Bollinger Band setup</strong><p>Up to 20 points for price location closer to the lower 2.5σ band.</p></div>
+        <div><strong>RSI</strong><p>Up to 15 points for weaker momentum below the neutral threshold.</p></div>
+        <div><strong>Volume acceleration</strong><p>Up to 15 points for improving 10-day average volume.</p></div>
+        <div><strong>Moving average structure</strong><p>Up to 20 points for EMA/SMA and 50/150 DMA dislocation.</p></div>
+        <div><strong>Bonus / penalty factors</strong><p>Up to 10 bonus points when price trades below the lower 2.5σ Bollinger Band.</p></div>
+      </div>
+    </section>
+    """
+    return _page("GreenRock Score Calculator", content, active="/greenrock/score")
 
 
 def render_tasks(status_message: str | None = None) -> str:
@@ -1110,6 +1205,56 @@ def _picks_table(rows: list[dict[str, str]]) -> str:
     )
 
 
+def _score_preview_panel(preview) -> str:
+    candidate = preview.candidate
+    indicators = candidate.indicators
+    warnings = preview.data_quality_warnings or ("none",)
+    component_rows = "".join(
+        f"<div><dt>{_safe(name.replace('_', ' ').title())}</dt><dd>{value:.2f}</dd></div>"
+        for name, value in preview.component_scores.items()
+    )
+    warning_items = "".join(f"<li>{_safe(warning)}</li>" for warning in warnings)
+    return f"""
+    <section class="panel score-result">
+      <div class="section-head">
+        <h2>{_safe(candidate.symbol)} Score Preview</h2>
+        <span class="badge data-mode">{_safe(preview.data_mode.upper())} DATA</span>
+      </div>
+      <div class="score-hero-line">
+        <div>
+          <strong>{candidate.score:.2f}</strong>
+          <p>GreenRock Score</p>
+        </div>
+        <div>
+          <span class="badge signal">{_safe(score_signal(candidate))}</span>
+          <span class="badge selection">{_safe(candidate.selection_label)}</span>
+        </div>
+      </div>
+      <div class="detail-grid">
+        {_detail_panel("Company", candidate.company_name)}
+        {_detail_panel("Market Cap", _format_market_cap(str(candidate.market_cap)))}
+        {_detail_panel("Price", _format_currency(str(indicators.latest_close)))}
+        {_detail_panel("RSI", f"{indicators.rsi_14:.2f}")}
+        {_detail_panel("Bollinger Band Position", _score_bollinger_position(candidate))}
+        {_detail_panel("52-week Low Distance", f"{indicators.low_proximity:.1%}")}
+        {_detail_panel("Volume Acceleration", _score_volume_acceleration(candidate))}
+        {_detail_panel("Moving Average Structure", _score_moving_average_structure(candidate))}
+        {_detail_panel("Data Source", preview.data_source)}
+        {_detail_panel("Selection Mode", preview.selection_mode)}
+      </div>
+      <section class="panel inner-panel">
+        <h2>Component Scores</h2>
+        <dl class="detail-list">{component_rows}</dl>
+      </section>
+      <section class="panel inner-panel">
+        <h2>Data Quality Warnings</h2>
+        <ul class="compact-list">{warning_items}</ul>
+      </section>
+      <p>{_finviz_link(candidate.symbol)}</p>
+    </section>
+    """
+
+
 def _picks_board_warnings(
     mega_pick: dict[str, str] | None,
     large_candidates: list[dict[str, str]],
@@ -1171,6 +1316,30 @@ def _volume_acceleration(row: dict[str, str]) -> str:
         return "unavailable"
     change = (current - previous) / previous
     return f"{change:.1%}"
+
+
+def _score_bollinger_position(candidate) -> str:
+    indicators = candidate.indicators
+    if indicators.latest_close < indicators.bollinger_lower:
+        return "Below lower 2.5σ band"
+    lower_distance = abs(indicators.latest_close - indicators.bollinger_lower)
+    upper_distance = abs(indicators.bollinger_upper - indicators.latest_close)
+    return "Closer to lower band" if lower_distance < upper_distance else "Closer to upper band"
+
+
+def _score_volume_acceleration(candidate) -> str:
+    indicators = candidate.indicators
+    if indicators.previous_volume_avg_10 <= 0:
+        return "unavailable"
+    return f"{(indicators.volume_avg_10 - indicators.previous_volume_avg_10) / indicators.previous_volume_avg_10:.1%}"
+
+
+def _score_moving_average_structure(candidate) -> str:
+    return (
+        f"8 EMA {'below' if 'ema8_below_sma10' in candidate.passed_rules else 'not below'} 10 SMA; "
+        f"50 DMA {'below' if 'dma50_below_dma150' in candidate.passed_rules else 'not below'} 150 DMA; "
+        f"50 DMA ROC {'improving' if 'dma50_roc_improving_vs_dma150' in candidate.passed_rules else 'not improving'} vs 150 DMA"
+    )
 
 
 def _format_market_cap(value: str) -> str:
@@ -1534,6 +1703,7 @@ def _page(title: str, content: str, active: str = "/") -> str:
         ("Projects", "/projects"),
         ("GreenRock", "/greenrock"),
         ("Picks", "/greenrock/picks"),
+        ("Score", "/greenrock/score"),
         ("Tasks", "/tasks"),
         ("Agents", "/agents"),
         ("Reports", "/reports"),
@@ -1691,6 +1861,14 @@ def _page(title: str, content: str, active: str = "/") -> str:
     .picks-panel {{ overflow-x: auto; }}
     .picks-table {{ min-width: 1180px; }}
     .picks-table th:nth-child(11), .picks-table td:nth-child(11) {{ min-width: 220px; }}
+    .calculator-card {{ display: flex; align-items: center; justify-content: space-between; gap: 16px; border-color: rgba(55,214,122,.38); }}
+    .score-form {{ display: grid; grid-template-columns: minmax(160px, 1fr) 160px 190px auto; gap: 10px; }}
+    .score-result {{ border-color: rgba(55,214,122,.42); }}
+    .score-hero-line {{ display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 14px 0 18px; padding: 14px; border: 1px solid rgba(243,201,105,.28); border-radius: 8px; background: rgba(243,201,105,.07); }}
+    .score-hero-line strong {{ display: block; font-size: 44px; color: var(--gold); line-height: 1; }}
+    .score-explainer {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }}
+    .score-explainer div {{ border: 1px solid rgba(255,255,255,.1); border-radius: 8px; padding: 12px; background: rgba(255,255,255,.04); }}
+    .inner-panel {{ margin-top: 12px; box-shadow: none; }}
     .actions, .action-row, .confirm-form {{ display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }}
     .action-row form {{ margin: 0; }}
     .task-form {{ display: grid; grid-template-columns: minmax(220px, 1fr) 260px minmax(260px, 1fr) auto; gap: 10px; }}
@@ -1721,7 +1899,8 @@ def _page(title: str, content: str, active: str = "/") -> str:
     footer {{ border-top: 1px solid var(--line); padding: 18px 30px 28px; color: var(--muted); background: rgba(8,10,16,.7); }}
     footer div {{ display: flex; gap: 12px; flex-wrap: wrap; max-width: 1500px; margin: 0 auto; }}
     @media (max-width: 1000px) {{
-      .attention-grid, .board-meta, .nav-grid, .project-grid, .candidate-grid, .detail-grid, .kanban, .agent-grid, .task-form, .mega-card, .universe-grid {{ grid-template-columns: 1fr; }}
+      .attention-grid, .board-meta, .nav-grid, .project-grid, .candidate-grid, .detail-grid, .kanban, .agent-grid, .task-form, .mega-card, .universe-grid, .score-form, .score-explainer {{ grid-template-columns: 1fr; }}
+      .calculator-card, .score-hero-line {{ align-items: flex-start; flex-direction: column; }}
       main, header, footer {{ padding-left: 16px; padding-right: 16px; }}
       .hero {{ min-height: auto; }}
       .orbital {{ display: none; }}

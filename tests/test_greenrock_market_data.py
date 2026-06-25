@@ -17,6 +17,7 @@ from atlas_os.greenrock.market_data import MarketDataProvider
 from atlas_os.greenrock.market_data import get_market_data_provider
 from atlas_os.greenrock.models import MockStock
 from atlas_os.greenrock.sample_data import load_mock_stocks
+from atlas_os.greenrock.score import calculate_score_preview
 from atlas_os.greenrock.screener import run_screen
 from atlas_os.greenrock.universe import LARGE_CAP_TICKERS, SMALL_MID_CAP_TICKERS
 from atlas_os.greenrock.workflow import run_greenrock_screening_workflow
@@ -82,6 +83,30 @@ class GreenRockMarketDataTests(unittest.TestCase):
             self.assertIn("data_mode: REAL", output)
             self.assertIn("not configured", output)
             self.assertEqual(list(root.glob("output/greenrock/*")), [])
+
+    def test_cli_score_command_works_with_mock_data(self) -> None:
+        output = _run_cli(["greenrock", "score", "LC01", "--data", "mock"])
+
+        self.assertIn("GreenRock Score Preview", output)
+        self.assertIn("ticker: LC01", output)
+        self.assertIn("greenrock_score:", output)
+        self.assertIn("finviz: https://finviz.com/quote.ashx?t=LC01", output)
+
+    def test_score_preview_works_with_fake_provider(self) -> None:
+        preview = calculate_score_preview("LC01", data_mode="real", provider=FakeMarketDataProvider())
+
+        self.assertEqual(preview.candidate.symbol, "LC01")
+        self.assertEqual(preview.data_mode, "real")
+        self.assertEqual(preview.data_source, "fake_provider")
+        self.assertIn("rsi", preview.component_scores)
+
+    def test_real_score_without_provider_fails_safely(self) -> None:
+        with patch.dict("os.environ", {"ATLAS_MARKET_DATA_PROVIDER": ""}, clear=False):
+            output, exit_code = _run_cli_raw(["greenrock", "score", "AAPL", "--data", "real"])
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("GreenRock score preview blocked", output)
+        self.assertIn("No report, approval, artifact", output)
 
     def test_workflow_with_fake_real_provider_labels_report_and_run(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

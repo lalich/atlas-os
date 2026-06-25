@@ -45,6 +45,8 @@ atlas greenrock latest-report --print
 atlas greenrock latest-run
 atlas greenrock latest-candidates
 atlas greenrock picks-board
+atlas greenrock score LC01 --data mock
+atlas greenrock score AAPL --data real
 atlas greenrock review
 atlas greenrock open-latest
 atlas greenrock export-pdf <approval_id>
@@ -167,6 +169,23 @@ http://127.0.0.1:8000/greenrock/picks
 ```
 
 The board displays one featured Mega Rock pick, eleven large-cap picks, and eleven small/mid-cap picks when available. It includes ticker, company name, market cap, price, GreenRock Score, signal label, RSI, 52-week low distance, Bollinger Band status, volume acceleration, screening rationale, and Finviz links. The page is local-only, clearly labels MOCK or REAL data, and does not publish externally.
+
+## GreenRock Score Calculator
+
+Preview a single ticker score without creating a workflow run, report, approval, artifact, email, or publication:
+
+```bash
+atlas greenrock score LC01 --data mock
+atlas greenrock score AAPL --data real
+```
+
+In the Command Center, open:
+
+```text
+http://127.0.0.1:8000/greenrock/score
+```
+
+The calculator shows GreenRock Score, signal label, selection label, RSI, Bollinger Band position, 52-week low distance, volume acceleration, moving average structure, data quality warnings, Finviz link, and a component-score explanation. Real mode requires the configured market data provider and fails safely if unavailable.
 
 Real-data market-cap sections are:
 
