@@ -110,9 +110,11 @@ Browser:
 http://127.0.0.1:8000/greenrock/score
 ```
 
-The score calculator is preview-only. It shows GreenRock Score, signal label, selection label, RSI, Bollinger Band position, 52-week low distance, volume acceleration, moving average structure, data quality warnings, component scores, and a Finviz link. The methodology is documented in `docs/GREENROCK_SCORE_METHODOLOGY.md`. It does not create a report, approval, artifact, email, publication, or external distribution action.
+The score calculator is preview-only. It shows GreenRock Score, signal label, rank band, selection label, RSI, Bollinger Band position, 52-week low distance, volume acceleration, moving average structure, data quality warnings, explained component scores, bonus/penalty factor explanations, all-time high, +2/+3/+5/+7 standard deviation price targets, and a Finviz link. The methodology is documented in `docs/GREENROCK_SCORE_METHODOLOGY.md`. It does not create a report, approval, artifact, email, publication, or external distribution action.
 
 Real mode requires the configured provider. If the provider is missing, Atlas shows a blocked message and leaves workflow state unchanged.
+
+In the browser, the applicable rank band displays the current ticker score in parentheses. Standard deviation targets below the all-time high are styled pink, while targets above the all-time high are styled GreenRock green. If all-time high or standard deviation data cannot be calculated cleanly, Atlas shows a data-quality warning instead of a target table.
 
 ## Open Latest Report
 

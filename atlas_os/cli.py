@@ -477,16 +477,36 @@ def run_greenrock_score(ticker: str, data_mode: str = "mock", selection_mode: st
     print(f"price: {indicators.latest_close:.2f}")
     print(f"greenrock_score: {candidate.score:.2f}")
     print(f"signal_label: {score_signal(candidate)}")
+    print(f"rank_band: {_score_rank_band(candidate.score)}")
     print(f"selection_label: {candidate.selection_label}")
     print(f"rsi: {indicators.rsi_14:.2f}")
     print(f"bollinger_position: {_score_bollinger_position(candidate)}")
     print(f"52_week_low_distance: {indicators.low_proximity:.2%}")
     print(f"volume_acceleration: {_score_volume_acceleration(candidate)}")
     print(f"moving_average_structure: {_score_moving_average_structure(candidate)}")
+    print(f"all_time_high: {_format_cli_price(preview.all_time_high)}")
+    print("price_targets:")
+    for target in preview.price_targets:
+        relation = target.relation_to_ath.replace("-", "_")
+        print(f"  {target.label}: {_format_cli_price(target.price)} ({relation})")
+    if preview.price_target_warnings:
+        print("price_target_warnings:")
+        for warning in preview.price_target_warnings:
+            print(f"  {warning}")
+    print("bonus_penalty_explanations:")
+    for explanation in preview.bonus_penalty_explanations:
+        print(f"  {explanation}")
     print(f"finviz: https://finviz.com/quote.ashx?t={candidate.symbol}")
     print("component_scores:")
     for name, value in preview.component_scores.items():
         print(f"  {name}: {value:.2f}")
+    print("component_explanations:")
+    for component in preview.component_explanations:
+        print(f"  {component.name}:")
+        print(f"    raw_metric: {component.raw_metric}")
+        print(f"    component_score: {component.component_score:.2f}")
+        print(f"    weight: {component.weight}")
+        print(f"    explanation: {component.explanation}")
     print("data_quality_warnings:")
     if preview.data_quality_warnings:
         for warning in preview.data_quality_warnings:
@@ -494,6 +514,22 @@ def run_greenrock_score(ticker: str, data_mode: str = "mock", selection_mode: st
     else:
         print("  none")
     return 0
+
+
+def _score_rank_band(score: float) -> str:
+    if score >= 85:
+        return "Exceptional"
+    if score >= 70:
+        return "Strong"
+    if score >= 55:
+        return "Watchlist"
+    return "Low Priority"
+
+
+def _format_cli_price(value: float | None) -> str:
+    if value is None:
+        return "unavailable"
+    return f"{value:.2f}"
 
 
 def run_greenrock_open_latest() -> int:

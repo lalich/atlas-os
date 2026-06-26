@@ -585,6 +585,7 @@ def render_greenrock_score(
 ) -> str:
     settings = get_settings()
     result_html = ""
+    preview = None
     cleaned_ticker = ticker.strip().upper()
     if cleaned_ticker:
         try:
@@ -606,12 +607,12 @@ def render_greenrock_score(
 
     content = f"""
     {_status_banner(status_message)}
-    <section class="hero compact greenrock-hero">
-      <p class="eyebrow">GreenRock Analysts</p>
-      <h1>GreenRock Score Calculator</h1>
-      <p>Preview a ticker's GreenRock Score locally without creating workflow records.</p>
-    </section>
-    <section class="panel">
+    <section class="hero compact greenrock-hero score-tool-hero">
+      <div>
+        <p class="eyebrow">GreenRock Analysts</p>
+        <h1>GreenRock Score Calculator</h1>
+        <p>Preview a ticker's GreenRock Score, rank band, component logic, and price targets locally without creating workflow records.</p>
+      </div>
       <form method="post" action="/greenrock/score" class="score-form">
         <input name="ticker" value="{_safe(cleaned_ticker)}" placeholder="Ticker" required>
         <select name="data_mode">
@@ -627,6 +628,13 @@ def render_greenrock_score(
       </form>
     </section>
     {result_html}
+    <section class="panel">
+      <div class="section-head">
+        <h2>How the Score Ranks</h2>
+        <span class="subtle">Rank bands are review aids, not recommendations</span>
+      </div>
+      {_score_rank_explainer(preview)}
+    </section>
     <section class="panel">
       <div class="section-head">
         <h2>How the Score Works</h2>
@@ -1220,10 +1228,8 @@ def _score_preview_panel(preview) -> str:
     candidate = preview.candidate
     indicators = candidate.indicators
     warnings = preview.data_quality_warnings or ("none",)
-    component_rows = "".join(
-        f"<div><dt>{_safe(name.replace('_', ' ').title())}</dt><dd>{value:.2f}</dd></div>"
-        for name, value in preview.component_scores.items()
-    )
+    component_cards = "".join(_score_component_card(component) for component in preview.component_explanations)
+    bonus_items = "".join(f"<li>{_safe(item)}</li>" for item in preview.bonus_penalty_explanations)
     warning_items = "".join(f"<li>{_safe(warning)}</li>" for warning in warnings)
     return f"""
     <section class="panel score-result">
@@ -1232,7 +1238,7 @@ def _score_preview_panel(preview) -> str:
         <span class="badge data-mode">{_safe(preview.data_mode.upper())} DATA</span>
       </div>
       <div class="score-hero-line">
-        <div>
+        <div class="score-gauge">
           <strong>{candidate.score:.2f}</strong>
           <p>GreenRock Score</p>
         </div>
@@ -1255,8 +1261,19 @@ def _score_preview_panel(preview) -> str:
       </div>
       <section class="panel inner-panel score-breakdown-card">
         <h2>Score Breakdown</h2>
-        <p class="subtle">Component points before the final 100-point cap.</p>
-        <dl class="detail-list">{component_rows}</dl>
+        <p class="subtle">Each card shows the raw metric, component score, weight, and plain-English rationale before the final 100-point cap.</p>
+        <div class="score-breakdown-grid">{component_cards}</div>
+      </section>
+      <section class="panel inner-panel">
+        <h2>Bonus / Penalty Factors</h2>
+        <ul class="compact-list">{bonus_items}</ul>
+      </section>
+      <section class="panel inner-panel price-target-panel">
+        <div class="section-head">
+          <h2>Standard Deviation Price Targets</h2>
+          <span class="subtle">Based on available local price history</span>
+        </div>
+        {_price_target_table(preview)}
       </section>
       <section class="panel inner-panel">
         <h2>Data Quality Warnings</h2>
@@ -1264,6 +1281,87 @@ def _score_preview_panel(preview) -> str:
       </section>
       <p>{_finviz_link(candidate.symbol)}</p>
     </section>
+    """
+
+
+def _score_rank_explainer(preview) -> str:
+    rows = (
+        ("Exceptional", "85-100", 85.0, 100.0),
+        ("Strong", "70-84", 70.0, 84.999),
+        ("Watchlist", "55-69", 55.0, 69.999),
+        ("Low Priority", "below 55", 0.0, 54.999),
+    )
+    score = preview.candidate.score if preview else None
+    ticker = preview.candidate.symbol if preview else ""
+    cards = []
+    for label, score_range, lower, upper in rows:
+        placement = ""
+        active_class = ""
+        if score is not None and lower <= score <= upper:
+            placement = f" ({_safe(ticker)}: {score:.1f})"
+            active_class = " active-rank"
+        cards.append(
+            f"""
+            <div class="rank-band{active_class}">
+              <strong>{_safe(label)}: {_safe(score_range)}{placement}</strong>
+              <p>{_safe(_rank_band_description(label))}</p>
+            </div>
+            """
+        )
+    return f"<div class='rank-grid'>{''.join(cards)}</div>"
+
+
+def _rank_band_description(label: str) -> str:
+    return {
+        "Exceptional": "Highest-priority technical dislocation setups for deeper review.",
+        "Strong": "Compelling setups with meaningful GreenRock criteria support.",
+        "Watchlist": "Visible but less complete setups that may need more confirmation.",
+        "Low Priority": "Weak or incomplete setups under current GreenRock criteria.",
+    }[label]
+
+
+def _score_component_card(component) -> str:
+    return f"""
+    <article class="component-card">
+      <div class="component-topline">
+        <h3>{_safe(component.name)}</h3>
+        <span>{component.component_score:.2f} / {component.weight}</span>
+      </div>
+      <dl>
+        <div><dt>Raw metric</dt><dd>{_safe(component.raw_metric)}</dd></div>
+        <div><dt>Component score</dt><dd>{component.component_score:.2f}</dd></div>
+        <div><dt>Weight</dt><dd>{component.weight} pts</dd></div>
+      </dl>
+      <p>{_safe(component.explanation)}</p>
+    </article>
+    """
+
+
+def _price_target_table(preview) -> str:
+    candidate = preview.candidate
+    if preview.price_target_warnings or preview.all_time_high is None:
+        warning_items = "".join(f"<li>{_safe(warning)}</li>" for warning in preview.price_target_warnings)
+        return f"""
+        <div class="warning-panel target-warning">
+          <p>Price targets cannot be calculated cleanly for this ticker.</p>
+          <ul class="compact-list">{warning_items or '<li>All-time high or standard deviation data is unavailable.</li>'}</ul>
+        </div>
+        """
+
+    rows = [
+        ("Current Price", candidate.indicators.latest_close, ""),
+        ("All-Time High", preview.all_time_high, "ath-row"),
+    ]
+    rows.extend((target.label, target.price, f"target-{target.relation_to_ath}") for target in preview.price_targets)
+    body = "".join(
+        f"<tr class='{_safe(css_class)}'><td>{_safe(label)}</td><td>{_format_currency(str(price)) if price is not None else 'unavailable'}</td></tr>"
+        for label, price, css_class in rows
+    )
+    return f"""
+    <table class="price-target-table">
+      <thead><tr><th>Target</th><th>Price</th></tr></thead>
+      <tbody>{body}</tbody>
+    </table>
     """
 
 
@@ -1874,14 +1972,34 @@ def _page(title: str, content: str, active: str = "/") -> str:
     .picks-table {{ min-width: 1180px; }}
     .picks-table th:nth-child(11), .picks-table td:nth-child(11) {{ min-width: 220px; }}
     .calculator-card {{ display: flex; align-items: center; justify-content: space-between; gap: 16px; border-color: rgba(55,214,122,.38); }}
-    .score-form {{ display: grid; grid-template-columns: minmax(160px, 1fr) 160px 190px auto; gap: 10px; }}
-    .score-result {{ border-color: rgba(55,214,122,.42); }}
-    .score-hero-line {{ display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 14px 0 18px; padding: 14px; border: 1px solid rgba(243,201,105,.28); border-radius: 8px; background: rgba(243,201,105,.07); }}
+    .score-tool-hero {{ display: grid; grid-template-columns: minmax(0, 1fr) minmax(420px, .72fr); gap: 22px; align-items: end; }}
+    .score-tool-hero .score-form {{ margin: 0; }}
+    .score-form {{ display: grid; grid-template-columns: minmax(150px, 1fr) 130px 170px auto; gap: 10px; }}
+    .score-result {{ border-color: rgba(55,214,122,.42); background: linear-gradient(135deg, rgba(27,32,41,.96), rgba(22,39,31,.9)); }}
+    .score-hero-line {{ display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 14px 0 18px; padding: 16px; border: 1px solid rgba(243,201,105,.28); border-radius: 8px; background: rgba(243,201,105,.07); }}
+    .score-gauge {{ min-width: 180px; }}
     .score-hero-line strong {{ display: block; font-size: 44px; color: var(--gold); line-height: 1; }}
+    .rank-grid {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }}
+    .rank-band {{ border: 1px solid rgba(255,255,255,.1); border-radius: 8px; padding: 12px; background: rgba(255,255,255,.04); min-height: 112px; }}
+    .rank-band strong {{ color: #f4f8f0; }}
+    .rank-band.active-rank {{ border-color: rgba(55,214,122,.58); background: rgba(55,214,122,.12); box-shadow: inset 0 0 0 1px rgba(55,214,122,.18); }}
     .score-explainer {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }}
     .score-explainer div {{ border: 1px solid rgba(255,255,255,.1); border-radius: 8px; padding: 12px; background: rgba(255,255,255,.04); }}
     .score-explainer span {{ display: inline-block; margin: 7px 0; color: var(--gold); font-weight: 700; }}
     .score-breakdown-card {{ border-color: rgba(243,201,105,.3); }}
+    .score-breakdown-grid {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }}
+    .component-card {{ border: 1px solid rgba(255,255,255,.1); border-radius: 8px; padding: 13px; background: rgba(255,255,255,.04); }}
+    .component-card h3 {{ margin: 0; font-size: 16px; color: #f4f8f0; }}
+    .component-card p {{ margin-bottom: 0; color: var(--muted); }}
+    .component-card dl {{ display: grid; gap: 8px; margin: 12px 0 0; }}
+    .component-card dl div {{ display: grid; grid-template-columns: 122px minmax(0, 1fr); gap: 10px; }}
+    .component-topline {{ display: flex; justify-content: space-between; gap: 12px; align-items: start; }}
+    .component-topline span {{ color: var(--gold); font-weight: 800; white-space: nowrap; }}
+    .price-target-panel {{ overflow-x: auto; }}
+    .price-target-table tr.target-below-ath td:last-child {{ color: #ffc4d3; font-weight: 800; }}
+    .price-target-table tr.target-above-ath td:last-child {{ color: #b9ffd3; font-weight: 800; }}
+    .price-target-table tr.ath-row td:last-child {{ color: var(--gold); font-weight: 800; }}
+    .target-warning {{ padding: 12px; border-radius: 8px; }}
     .inner-panel {{ margin-top: 12px; box-shadow: none; }}
     .actions, .action-row, .confirm-form {{ display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }}
     .action-row form {{ margin: 0; }}
@@ -1913,7 +2031,7 @@ def _page(title: str, content: str, active: str = "/") -> str:
     footer {{ border-top: 1px solid var(--line); padding: 18px 30px 28px; color: var(--muted); background: rgba(8,10,16,.7); }}
     footer div {{ display: flex; gap: 12px; flex-wrap: wrap; max-width: 1500px; margin: 0 auto; }}
     @media (max-width: 1000px) {{
-      .attention-grid, .board-meta, .nav-grid, .project-grid, .candidate-grid, .detail-grid, .kanban, .agent-grid, .task-form, .mega-card, .universe-grid, .score-form, .score-explainer {{ grid-template-columns: 1fr; }}
+      .attention-grid, .board-meta, .nav-grid, .project-grid, .candidate-grid, .detail-grid, .kanban, .agent-grid, .task-form, .mega-card, .universe-grid, .score-form, .score-explainer, .score-tool-hero, .rank-grid, .score-breakdown-grid {{ grid-template-columns: 1fr; }}
       .calculator-card, .score-hero-line {{ align-items: flex-start; flex-direction: column; }}
       main, header, footer {{ padding-left: 16px; padding-right: 16px; }}
       .hero {{ min-height: auto; }}

@@ -15,10 +15,13 @@
 ## Scoring Improvements
 
 - Make the GreenRock Score Calculator the primary operator surface for explaining why a name qualifies before it appears in a report.
+- Keep `/greenrock/score` structured as a reusable product surface: hero score card, ticker input, rank bands, score breakdown cards, price targets, Finviz link, mock/real data badge, and data-quality warnings.
+- Preserve preview-only behavior for the calculator. It must not create reports, approvals, artifacts, emails, publications, or client-facing files.
 - Calibrate GreenRock Score against historical mock fixtures first, then approved historical data later.
 - Add sub-scores for trend, dislocation, participation, volatility, and liquidity.
 - Track score stability across multiple lookback windows.
 - Add chart overlays for score components so subscribers can visually compare dislocation, momentum, volume, and moving-average structure.
+- Prepare future `www.greenrockam.com` adaptation by keeping calculator HTML sections semantic and CSS classes product-oriented, without adding external publishing from Atlas OS.
 
 ## Future Options Analysis
 

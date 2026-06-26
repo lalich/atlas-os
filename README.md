@@ -108,6 +108,19 @@ The local screener writes:
 
 Draft reports remain local, approval-gated, and blocked from client-facing use. Mock mode is the default.
 
+## GreenRock Score Calculator
+
+The GreenRock Score Calculator is available in the browser at `/greenrock/score` and from the CLI:
+
+```bash
+atlas greenrock score LC01 --data mock
+atlas greenrock score AAPL --data real
+```
+
+It is preview-only. It does not create reports, approval records, artifacts, emails, publications, or external distribution actions.
+
+The calculator shows the ticker score, signal label, rank band, component breakdown with raw metrics and explanations, bonus/penalty factor definitions, Finviz link, data-quality warnings, all-time high, and +2/+3/+5/+7 standard deviation price targets calculated from available price history. Mock mode remains available by default. Real mode requires the configured local market data provider.
+
 ## GreenRock Real Data Mode
 
 Phase 4A/4C adds a production-shaped yfinance market data adapter and local ticker watchlist management while keeping mock mode as the default.

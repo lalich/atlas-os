@@ -5,6 +5,7 @@ from __future__ import annotations
 import tempfile
 import types
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -14,6 +15,9 @@ from atlas_os.core.approvals import list_approvals
 from atlas_os.core.artifacts import list_artifacts
 from atlas_os.core.workflow_runs import list_workflow_runs
 from atlas_os.db.database import connect, initialize_database
+from atlas_os.greenrock.market_data import MarketDataProvider
+from atlas_os.greenrock.sample_data import load_mock_stocks
+from atlas_os.greenrock.score import calculate_score_preview
 from atlas_os.web_app import dispatch_request
 
 
@@ -112,9 +116,49 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("LC01 Score Preview", result.body)
         self.assertIn("GreenRock Score", result.body)
         self.assertIn("How the Score Works", result.body)
+        self.assertIn("How the Score Ranks", result.body)
+        self.assertIn("Strong: 70-84 (LC01: 83.1)", result.body)
         self.assertIn("Score Breakdown", result.body)
         self.assertIn("Current methodology weights total 100 points", result.body)
         self.assertIn("https://finviz.com/quote.ashx?t=LC01", result.body)
+
+    def test_score_page_renders_explainability_and_price_targets(self) -> None:
+        with _isolated_env():
+            result = dispatch_request("POST", "/greenrock/score", "ticker=LC01&data_mode=mock&selection_mode=strict")
+
+        self.assertEqual(result.status, 200)
+        for component in (
+            "52-week low proximity",
+            "Bollinger Band setup",
+            "RSI",
+            "Volume acceleration",
+            "Moving average structure",
+            "Bonus / penalty factors",
+        ):
+            self.assertIn(component, result.body)
+        self.assertIn("Raw metric", result.body)
+        self.assertIn("Component score", result.body)
+        self.assertIn("Weight", result.body)
+        self.assertIn("plain-English rationale", result.body)
+        self.assertIn("Bonus: unusually deep dislocation near the 52-week low.", result.body)
+        self.assertIn("Standard Deviation Price Targets", result.body)
+        self.assertIn("All-Time High", result.body)
+        self.assertIn("+2 SD", result.body)
+        self.assertIn("+3 SD", result.body)
+        self.assertIn("+5 SD", result.body)
+        self.assertIn("+7 SD", result.body)
+        self.assertIn("target-below-ath", result.body)
+        self.assertIn("target-above-ath", result.body)
+
+    def test_score_page_shows_clean_price_target_warning(self) -> None:
+        preview = calculate_score_preview("LC01", provider=FlatHistoryProvider())
+        with _isolated_env():
+            with patch("atlas_os.web_app.calculate_score_preview", return_value=preview):
+                result = dispatch_request("POST", "/greenrock/score", "ticker=LC01&data_mode=mock")
+
+        self.assertEqual(result.status, 200)
+        self.assertIn("Price targets cannot be calculated cleanly", result.body)
+        self.assertIn("Standard deviation price targets unavailable", result.body)
 
     def test_score_page_invalid_ticker_shows_clean_warning(self) -> None:
         with _isolated_env():
@@ -276,6 +320,16 @@ class CommandCenterTests(unittest.TestCase):
 
         self.assertEqual(response.status, 404)
         self.assertIn("Route Not Found", response.body)
+
+
+class FlatHistoryProvider(MarketDataProvider):
+    data_mode = "mock"
+    source_name = "flat_history_fixture"
+
+    def fetch_stocks(self):
+        stock = load_mock_stocks()[0]
+        flat_prices = tuple(replace(price, close=50.0) for price in stock.prices)
+        return (replace(stock, prices=flat_prices),)
 
 
 class _isolated_env:
