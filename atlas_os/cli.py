@@ -479,6 +479,7 @@ def run_greenrock_score(ticker: str, data_mode: str = "real", selection_mode: st
     print(f"price: {indicators.latest_close:.2f}")
     print(f"greenrock_score: {candidate.score:.2f}")
     print(f"greenrock_confidence: {preview.confidence_score:.2f}")
+    print(f"confidence_band: {preview.confidence_band}")
     print(f"signal_label: {score_signal(candidate)}")
     print(f"research_priority: {preview.research_priority}")
     print(f"analyst_summary: {preview.analyst_summary}")
@@ -507,6 +508,12 @@ def run_greenrock_score(ticker: str, data_mode: str = "real", selection_mode: st
         print(f"  {item}")
     print("bearish_evidence:")
     for item in preview.bearish_evidence:
+        print(f"  {item}")
+    print("positive_confidence_drivers:")
+    for item in preview.confidence_drivers:
+        print(f"  {item}")
+    print("confidence_drags:")
+    for item in preview.confidence_drags:
         print(f"  {item}")
     print("what_to_watch_next:")
     for item in preview.watch_next:

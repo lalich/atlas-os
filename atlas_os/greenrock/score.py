@@ -37,12 +37,23 @@ class PriceTarget:
 
 
 @dataclass(frozen=True)
+class ConfidenceAnalysis:
+    score: float
+    band: str
+    drivers: tuple[str, ...]
+    drags: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class ScorePreview:
     candidate: StockCandidate
     data_mode: str
     data_source: str
     selection_mode: str
     confidence_score: float
+    confidence_band: str
+    confidence_drivers: tuple[str, ...]
+    confidence_drags: tuple[str, ...]
     research_priority: str
     analyst_summary: str
     bullish_evidence: tuple[str, ...]
@@ -106,18 +117,21 @@ def calculate_score_preview(
     all_time_high, price_targets, price_target_warnings, price_target_lookback = _price_targets(stock.prices, candidate.has_price_history)
     bonus_penalty_explanations = _bonus_penalty_explanations(candidate)
     data_quality_warnings = _data_quality_warnings(candidate) + price_target_warnings
-    confidence_score = _confidence_score(candidate, stock.prices, all_time_high, price_target_lookback, price_target_warnings)
-    research_priority = _research_priority(candidate, confidence_score)
+    confidence = _confidence_analysis(candidate, stock.prices, all_time_high, price_target_lookback, price_target_warnings, price_targets)
+    research_priority = _research_priority(candidate, confidence.score)
     bullish_evidence = _bullish_evidence(candidate, price_targets)
     bearish_evidence = _bearish_evidence(candidate, data_quality_warnings)
     watch_next = _watch_next(candidate, all_time_high, price_targets)
-    analyst_summary = _analyst_summary(candidate, confidence_score, research_priority, bullish_evidence, bearish_evidence)
+    analyst_summary = _analyst_summary(candidate, confidence.score, research_priority, bullish_evidence, bearish_evidence)
     return ScorePreview(
         candidate=candidate,
         data_mode=market_data_provider.data_mode,
         data_source=market_data_provider.source_name,
         selection_mode=resolved_selection_mode,
-        confidence_score=confidence_score,
+        confidence_score=confidence.score,
+        confidence_band=confidence.band,
+        confidence_drivers=confidence.drivers,
+        confidence_drags=confidence.drags,
         research_priority=research_priority,
         analyst_summary=analyst_summary,
         bullish_evidence=bullish_evidence,
@@ -306,30 +320,119 @@ def _price_targets(
     return round(all_time_high, 2), targets, tuple(warnings), lookback_label
 
 
-def _confidence_score(
+def _confidence_analysis(
     candidate: StockCandidate,
     prices,
     all_time_high: float | None,
     price_target_lookback: str,
     data_quality_warnings: tuple[str, ...],
-) -> float:
-    score = 100.0
+    price_targets: tuple[PriceTarget, ...],
+) -> ConfidenceAnalysis:
+    score = 0.0
+    drivers: list[str] = []
+    drags: list[str] = []
     valid_prices = [price.close for price in prices if price.close > 0]
+    valid_volumes = [price.volume for price in prices if price.volume >= 0]
     indicators = candidate.indicators
-    if len(valid_prices) < 252 or not candidate.has_price_history:
-        score -= 25
-    elif len(valid_prices) < 504:
-        score -= 12
+
+    if candidate.has_price_history and len(valid_prices) >= 170:
+        score += 8
+        drivers.append("Usable price history available.")
+    else:
+        drags.append("Weak or insufficient price history.")
+    if candidate.has_volume_data and any(volume > 0 for volume in valid_volumes):
+        score += 6
+        drivers.append("Complete volume history is available.")
+    else:
+        drags.append("Missing or weak volume history.")
+    if candidate.has_market_cap and candidate.market_cap > 0:
+        score += 6
+        drivers.append("Market cap is available.")
+    else:
+        drags.append("Missing market cap.")
     if all_time_high is None:
-        score -= 15
-    if not candidate.has_market_cap or candidate.market_cap <= 0:
-        score -= 15
-    if not candidate.has_volume_data or indicators.latest_volume <= 0 or indicators.volume_avg_10 <= 0:
-        score -= 15
-    if not candidate.has_52_week_low or indicators.week_52_low <= 0:
-        score -= 10
-    if price_target_lookback != "5 years":
-        score -= 12
+        drags.append("All-Time High is unavailable.")
+    else:
+        score += 5
+        drivers.append("All-Time High is available.")
+    if candidate.has_52_week_low and indicators.week_52_low > 0:
+        score += 5
+        drivers.append("52-week low is available.")
+    else:
+        drags.append("52-week low is unavailable.")
+
+    if price_target_lookback == "5 years":
+        score += 25
+        drivers.append("Full 5-year price history available for statistical targets.")
+    elif len(valid_prices) >= 756:
+        score += 20
+        drivers.append("3-5 years of price history available.")
+        drags.append("Less than 5 years of history for statistical targets.")
+    elif len(valid_prices) >= 252:
+        score += 13
+        drivers.append("1-3 years of price history available.")
+        drags.append("Less than 3 years of history for statistical targets.")
+    elif valid_prices:
+        score += 5
+        drags.append("Less than 1 year of price history.")
+    else:
+        drags.append("No usable price history depth.")
+
+    indicator_ratio = _indicator_agreement_ratio(candidate, price_targets)
+    score += round(indicator_ratio * 20, 2)
+    if indicator_ratio >= 0.75:
+        drivers.append("Indicators broadly agree.")
+    elif indicator_ratio >= 0.50:
+        drivers.append("Some GreenRock indicators agree.")
+        drags.append("Mixed technical signals.")
+        score -= 3
+    else:
+        drags.append("GreenRock indicators conflict.")
+        score -= 8
+
+    annualized_volatility = _annualized_return_volatility(valid_prices)
+    if annualized_volatility is None:
+        drags.append("Price volatility could not be measured.")
+    elif annualized_volatility <= 0.35:
+        score += 8
+        drivers.append("Price action is relatively stable for confidence scoring.")
+    elif annualized_volatility <= 0.70:
+        score += 5
+        drags.append("Moderately noisy price action.")
+    else:
+        score += 2
+        drags.append("Volatile/noisy price action lowers reliability.")
+
+    volume_cv = _coefficient_of_variation([float(volume) for volume in valid_volumes if volume > 0][-252:])
+    if volume_cv is None:
+        drags.append("Volume consistency could not be measured.")
+    elif volume_cv <= 0.60:
+        score += 7
+        drivers.append("Volume history is reasonably consistent.")
+    elif volume_cv <= 1.20:
+        score += 4
+        drags.append("Volume data is somewhat erratic.")
+    else:
+        score += 1
+        drags.append("Erratic volume data lowers reliability.")
+
+    if candidate.has_market_cap and candidate.market_cap > 0:
+        if _market_cap_is_borderline(candidate.market_cap):
+            score += 2
+            drags.append("Market cap bucket is borderline.")
+        else:
+            score += 5
+            drivers.append("Market cap bucket appears reliable.")
+
+    if _targets_are_available(price_targets) and price_target_lookback == "5 years" and not data_quality_warnings:
+        score += 5
+        drivers.append("Statistical targets are based on full 5-year history.")
+    elif _targets_are_available(price_targets):
+        score += 2
+        drags.append("Statistical target reliability is limited by available history.")
+    else:
+        drags.append("Statistical targets are unavailable or unreliable.")
+
     if any(not _is_finite(value) for value in (
         indicators.latest_close,
         indicators.sma_10,
@@ -343,10 +446,31 @@ def _confidence_score(
         indicators.volume_avg_10,
         indicators.previous_volume_avg_10,
     )):
-        score -= 15
-    if data_quality_warnings:
-        score -= min(15, len(data_quality_warnings) * 3)
-    return round(max(0.0, min(score, 100.0)), 2)
+        score -= 10
+        drags.append("One or more indicator fields is missing or invalid.")
+
+    if _has_market_data_warning(data_quality_warnings):
+        score -= min(10, len(data_quality_warnings) * 2)
+
+    score_cap = 100.0
+    if len(valid_prices) < 252:
+        score_cap = min(score_cap, 55.0)
+    elif len(valid_prices) < 756:
+        score_cap = min(score_cap, 74.0)
+    elif len(valid_prices) < 1260:
+        score_cap = min(score_cap, 89.0)
+    if not candidate.has_market_cap or candidate.market_cap <= 0:
+        score_cap = min(score_cap, 74.0)
+    if not _targets_are_available(price_targets):
+        score_cap = min(score_cap, 74.0)
+
+    final_score = round(max(0.0, min(score, score_cap)), 2)
+    return ConfidenceAnalysis(
+        score=final_score,
+        band=confidence_band(final_score),
+        drivers=tuple(dict.fromkeys(drivers)) or ("No major positive confidence driver identified.",),
+        drags=tuple(dict.fromkeys(drags)) or ("No major confidence drag identified.",),
+    )
 
 
 def _research_priority(candidate: StockCandidate, confidence_score: float) -> str:
@@ -454,6 +578,18 @@ def _confidence_label(confidence_score: float) -> str:
     return "very low"
 
 
+def confidence_band(confidence_score: float) -> str:
+    if confidence_score >= 90:
+        return "Very High Confidence"
+    if confidence_score >= 75:
+        return "High Confidence"
+    if confidence_score >= 60:
+        return "Moderate Confidence"
+    if confidence_score >= 40:
+        return "Low Confidence"
+    return "Very Low Confidence"
+
+
 def _is_finite(value: float) -> bool:
     return isinstance(value, (int, float)) and math.isfinite(value)
 
@@ -461,6 +597,60 @@ def _is_finite(value: float) -> bool:
 def _has_market_data_warning(warnings: tuple[str, ...]) -> bool:
     terms = ("missing", "unavailable", "insufficient", "ATH based", "no usable")
     return any(any(term.lower() in warning.lower() for term in terms) for warning in warnings)
+
+
+def _indicator_agreement_ratio(candidate: StockCandidate, price_targets: tuple[PriceTarget, ...]) -> float:
+    indicators = candidate.indicators
+    checks = (
+        indicators.low_proximity <= 0.10,
+        _score_bollinger_supports_setup(indicators),
+        indicators.rsi_14 < 50,
+        (_volume_acceleration_value(candidate) or 0) > 0,
+        _moving_average_alignment_count(candidate) >= 2,
+        any(target.price is not None and target.price > indicators.latest_close for target in price_targets),
+    )
+    return sum(1 for item in checks if item) / len(checks)
+
+
+def _score_bollinger_supports_setup(indicators) -> bool:
+    if indicators.latest_close <= indicators.bollinger_lower:
+        return True
+    return abs(indicators.latest_close - indicators.bollinger_lower) < abs(indicators.bollinger_upper - indicators.latest_close)
+
+
+def _moving_average_alignment_count(candidate: StockCandidate) -> int:
+    rules = ("ema8_below_sma10", "dma50_below_dma150", "dma50_roc_improving_vs_dma150")
+    return sum(1 for rule in rules if rule in candidate.passed_rules)
+
+
+def _annualized_return_volatility(closes: list[float]) -> float | None:
+    values = closes[-252:]
+    returns = [
+        (values[index] - values[index - 1]) / values[index - 1]
+        for index in range(1, len(values))
+        if values[index - 1] > 0
+    ]
+    if len(returns) < 2:
+        return None
+    return statistics.pstdev(returns) * math.sqrt(252)
+
+
+def _coefficient_of_variation(values: list[float]) -> float | None:
+    if len(values) < 2:
+        return None
+    mean = statistics.fmean(values)
+    if mean <= 0:
+        return None
+    return statistics.pstdev(values) / mean
+
+
+def _market_cap_is_borderline(market_cap: float) -> bool:
+    thresholds = (10_000_000_000, 1_000_000_000_000)
+    return any(abs(market_cap - threshold) / threshold <= 0.15 for threshold in thresholds)
+
+
+def _targets_are_available(price_targets: tuple[PriceTarget, ...]) -> bool:
+    return any(target.price is not None for target in price_targets)
 
 
 def _volume_acceleration(candidate: StockCandidate) -> str:

@@ -1249,6 +1249,8 @@ def _score_preview_panel(preview) -> str:
     bullish_items = "".join(f"<li>{_safe(item)}</li>" for item in preview.bullish_evidence)
     bearish_items = "".join(f"<li>{_safe(item)}</li>" for item in preview.bearish_evidence)
     watch_items = "".join(f"<li>{_safe(item)}</li>" for item in preview.watch_next)
+    confidence_driver_items = "".join(f"<li>{_safe(item)}</li>" for item in preview.confidence_drivers)
+    confidence_drag_items = "".join(f"<li>{_safe(item)}</li>" for item in preview.confidence_drags)
     warning_items = "".join(f"<li>{_safe(warning)}</li>" for warning in warnings)
     return f"""
     <section class="panel score-result">
@@ -1264,6 +1266,7 @@ def _score_preview_panel(preview) -> str:
         <div class="score-gauge confidence-card">
           <strong>{preview.confidence_score:.2f}</strong>
           <p>GreenRock Confidence</p>
+          <span class="confidence-band">{_safe(preview.confidence_band)}</span>
         </div>
         <div class="priority-card">
           <span class="badge priority">{_safe(preview.research_priority)}</span>
@@ -1275,6 +1278,22 @@ def _score_preview_panel(preview) -> str:
       <section class="analyst-summary">
         <h2>Analyst Summary</h2>
         <p>{_safe(preview.analyst_summary)}</p>
+      </section>
+      <section class="panel inner-panel confidence-explain-card">
+        <div class="section-head">
+          <h2>Why Confidence Is This Level</h2>
+          <span class="badge confidence-badge">{preview.confidence_score:.2f} - {_safe(preview.confidence_band)}</span>
+        </div>
+        <div class="confidence-explain-grid">
+          <div>
+            <h3>Positive Confidence Drivers</h3>
+            <ul class="compact-list">{confidence_driver_items}</ul>
+          </div>
+          <div>
+            <h3>Confidence Drags</h3>
+            <ul class="compact-list">{confidence_drag_items}</ul>
+          </div>
+        </div>
       </section>
       <div class="detail-grid">
         {_detail_panel("Company", candidate.company_name)}
@@ -2074,6 +2093,11 @@ def _page(title: str, content: str, active: str = "/") -> str:
     .priority-card {{ border-color: rgba(140,108,255,.38); background: rgba(140,108,255,.12); }}
     .score-gauge strong {{ display: block; font-size: 44px; color: var(--gold); line-height: 1; }}
     .confidence-card strong {{ color: #b9ffd3; }}
+    .confidence-band {{ display: inline-block; margin-top: 8px; color: #c9ffdc; font-weight: 800; }}
+    .confidence-explain-card {{ border-color: rgba(55,214,122,.26); }}
+    .confidence-explain-grid {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }}
+    .confidence-explain-grid div {{ border: 1px solid rgba(255,255,255,.08); border-radius: 8px; padding: 12px; background: rgba(255,255,255,.035); }}
+    .confidence-badge {{ background: rgba(55,214,122,.14); color: #b9ffd3; border: 1px solid rgba(55,214,122,.28); }}
     .priority-card .priority {{ display: inline-block; margin-bottom: 12px; background: rgba(243,201,105,.16); color: #ffe3a1; border: 1px solid rgba(243,201,105,.32); font-size: 14px; }}
     .analyst-summary {{ border-color: rgba(55,214,122,.28); background: rgba(55,214,122,.06); margin-bottom: 12px; }}
     .analyst-summary p {{ margin-bottom: 0; }}
@@ -2136,7 +2160,7 @@ def _page(title: str, content: str, active: str = "/") -> str:
     footer {{ border-top: 1px solid var(--line); padding: 18px 30px 28px; color: var(--muted); background: rgba(8,10,16,.7); }}
     footer div {{ display: flex; gap: 12px; flex-wrap: wrap; max-width: 1500px; margin: 0 auto; }}
     @media (max-width: 1000px) {{
-      .attention-grid, .board-meta, .nav-grid, .project-grid, .candidate-grid, .detail-grid, .kanban, .agent-grid, .task-form, .mega-card, .universe-grid, .score-form, .save-list-form, .score-explainer, .score-tool-hero, .rank-grid, .score-breakdown-grid, .target-assumptions, .score-intel-grid, .evidence-grid {{ grid-template-columns: 1fr; }}
+      .attention-grid, .board-meta, .nav-grid, .project-grid, .candidate-grid, .detail-grid, .kanban, .agent-grid, .task-form, .mega-card, .universe-grid, .score-form, .save-list-form, .score-explainer, .score-tool-hero, .rank-grid, .score-breakdown-grid, .target-assumptions, .score-intel-grid, .evidence-grid, .confidence-explain-grid {{ grid-template-columns: 1fr; }}
       .calculator-card, .score-hero-line {{ align-items: flex-start; flex-direction: column; }}
       main, header, footer {{ padding-left: 16px; padding-right: 16px; }}
       .hero {{ min-height: auto; }}

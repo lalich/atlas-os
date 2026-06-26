@@ -121,7 +121,7 @@ It is preview-only. It does not create reports, approval records, artifacts, ema
 
 The calculator is real-data-only for operators. It shows GreenRock Score, GreenRock Confidence, signal label, research priority, analyst summary, Bullish Evidence, Bearish Evidence, What to Watch Next, Finviz link, data-quality warnings, All-Time High, and +2/+3/+5/+7 one-year statistical price targets. Real mode requires the configured local market data provider.
 
-GreenRock Score measures the opportunity/dislocation setup. GreenRock Confidence measures the reliability of that score based on data completeness, ATH availability, market-cap and volume data, 52-week low availability, indicator health, and whether enough history exists for the 5-year target calculation. Research Priority is a local analyst workflow label: Immediate Review, This Week, Interesting, Monitor, or Ignore.
+GreenRock Score measures the opportunity/dislocation setup. GreenRock Confidence measures evidence reliability based on data completeness, data depth, indicator agreement, volatility/noise, market-cap bucket reliability, and target reliability. Confidence may be high when Score is moderate if evidence is clean, and low when Score is high if the data is shallow or conflicted. Research Priority is a local analyst workflow label: Immediate Review, This Week, Interesting, Monitor, or Ignore.
 
 ## GreenRock Real Data Mode
 

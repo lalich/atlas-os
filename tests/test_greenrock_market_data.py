@@ -91,6 +91,7 @@ class GreenRockMarketDataTests(unittest.TestCase):
         self.assertIn("ticker: LC01", output)
         self.assertIn("greenrock_score:", output)
         self.assertIn("greenrock_confidence:", output)
+        self.assertIn("confidence_band:", output)
         self.assertIn("signal_label:", output)
         self.assertIn("research_priority:", output)
         self.assertIn("analyst_summary:", output)
@@ -105,6 +106,8 @@ class GreenRockMarketDataTests(unittest.TestCase):
         self.assertIn("+7 SD:", output)
         self.assertIn("bullish_evidence:", output)
         self.assertIn("bearish_evidence:", output)
+        self.assertIn("positive_confidence_drivers:", output)
+        self.assertIn("confidence_drags:", output)
         self.assertIn("what_to_watch_next:", output)
         self.assertIn("finviz: https://finviz.com/quote.ashx?t=LC01", output)
 

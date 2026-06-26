@@ -18,6 +18,7 @@
 - Keep `/greenrock/score` structured as a reusable product surface: hero score card, confidence card, research priority badge, analyst summary, Bullish Evidence, Bearish Evidence, What to Watch Next, ticker input, rank bands, score breakdown cards, 1-year statistical price targets, Finviz link, real-data badge, save-to-list area, and data-quality warnings.
 - Preserve preview-only behavior for score calculation. It must not create reports, approvals, artifacts, emails, publications, or client-facing files. Saving a ticker writes only to local GreenRock list CSVs.
 - Keep analyst intelligence deterministic and template-based. Do not use LLM/API calls for the score calculator summary.
+- Calibrate GreenRock Confidence as evidence reliability, not just data existence. It should vary across tickers based on data depth, signal agreement, volatility/noise, bucket reliability, and target reliability.
 - Calibrate GreenRock Score against historical mock fixtures first, then approved historical data later.
 - Add sub-scores for trend, dislocation, participation, volatility, and liquidity.
 - Track score stability across multiple lookback windows.

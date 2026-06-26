@@ -19,7 +19,7 @@ from atlas_os.db.database import connect, initialize_database
 from atlas_os.greenrock.market_data import MarketDataProvider
 from atlas_os.greenrock.models import PriceBar
 from atlas_os.greenrock.sample_data import load_mock_stocks
-from atlas_os.greenrock.score import calculate_score_preview
+from atlas_os.greenrock.score import calculate_score_preview, confidence_band
 from atlas_os.web_app import dispatch_request
 
 
@@ -124,8 +124,12 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("LC01 Score Preview", result.body)
         self.assertIn("GreenRock Score", result.body)
         self.assertIn("GreenRock Confidence", result.body)
+        self.assertIn(preview.confidence_band, result.body)
         self.assertIn("Research Priority", result.body)
         self.assertIn("Analyst Summary", result.body)
+        self.assertIn("Why Confidence Is This Level", result.body)
+        self.assertIn("Positive Confidence Drivers", result.body)
+        self.assertIn("Confidence Drags", result.body)
         self.assertIn("How the Score Works", result.body)
         self.assertIn("How the Score Ranks", result.body)
         self.assertIn(f"{preview.candidate.symbol}: {preview.candidate.score:.1f}", result.body)
@@ -179,13 +183,40 @@ class CommandCenterTests(unittest.TestCase):
 
         self.assertGreaterEqual(preview.confidence_score, 0)
         self.assertLessEqual(preview.confidence_score, 100)
+        self.assertLess(preview.confidence_score, 100)
         self.assertLess(lower_confidence.confidence_score, preview.confidence_score)
+        self.assertEqual(preview.confidence_band, confidence_band(preview.confidence_score))
+        self.assertTrue(preview.confidence_drivers)
+        self.assertTrue(preview.confidence_drags)
         self.assertEqual(mock_preview.research_priority, "This Week")
         self.assertEqual(preview.research_priority, "Ignore")
         self.assertTrue(preview.bullish_evidence)
         self.assertTrue(preview.bearish_evidence)
         self.assertTrue(preview.watch_next)
         self.assertIn("Atlas flags LC01", preview.analyst_summary)
+
+    def test_confidence_calibration_drags(self) -> None:
+        complete = calculate_score_preview("LC01", provider=FullHistoryProvider())
+        missing_market_cap = calculate_score_preview("LC01", provider=MissingMarketCapProvider())
+        short_history = calculate_score_preview("LC01", provider=ShortHistoryProvider())
+        noisy = calculate_score_preview("LC01", provider=NoisyHistoryProvider())
+        conflicting = calculate_score_preview("LC01", provider=ConflictingSignalProvider())
+
+        self.assertLess(missing_market_cap.confidence_score, complete.confidence_score)
+        self.assertIn("Missing market cap.", missing_market_cap.confidence_drags)
+        self.assertLess(short_history.confidence_score, complete.confidence_score)
+        self.assertTrue(any("Less than 1 year" in item for item in short_history.confidence_drags))
+        self.assertLess(noisy.confidence_score, complete.confidence_score)
+        self.assertTrue(any("Volatile/noisy price action" in item for item in noisy.confidence_drags))
+        self.assertLess(conflicting.confidence_score, complete.confidence_score)
+        self.assertTrue(any("Mixed technical signals" in item or "conflict" in item for item in conflicting.confidence_drags))
+
+    def test_confidence_band_mapping(self) -> None:
+        self.assertEqual(confidence_band(95), "Very High Confidence")
+        self.assertEqual(confidence_band(80), "High Confidence")
+        self.assertEqual(confidence_band(65), "Moderate Confidence")
+        self.assertEqual(confidence_band(45), "Low Confidence")
+        self.assertEqual(confidence_band(20), "Very Low Confidence")
 
     def test_score_page_shows_clean_price_target_warning(self) -> None:
         preview = calculate_score_preview("LC01", provider=FlatHistoryProvider())
@@ -468,6 +499,66 @@ class FullHistoryProvider(MarketDataProvider):
                 )
             )
         return (replace(stock, prices=tuple(bars)),)
+
+
+class MissingMarketCapProvider(FullHistoryProvider):
+    source_name = "missing_market_cap_fixture"
+
+    def fetch_stocks(self):
+        stock = super().fetch_stocks()[0]
+        return (replace(stock, market_cap=0, has_market_cap=False, skipped_reason="missing_market_cap"),)
+
+
+class ShortHistoryProvider(MarketDataProvider):
+    data_mode = "real"
+    source_name = "short_history_fixture"
+
+    def fetch_stocks(self):
+        stock = load_mock_stocks()[0]
+        start = date.today() - timedelta(days=199)
+        bars = tuple(
+            PriceBar(
+                date=start + timedelta(days=index),
+                close=round(90 - index * 0.08 + ((index % 5) - 2) * 0.05, 2),
+                volume=900_000 + index * 500,
+            )
+            for index in range(200)
+        )
+        return (replace(stock, prices=bars),)
+
+
+class NoisyHistoryProvider(MarketDataProvider):
+    data_mode = "real"
+    source_name = "noisy_history_fixture"
+
+    def fetch_stocks(self):
+        stock = load_mock_stocks()[0]
+        start = date.today() - timedelta(days=1511)
+        bars = []
+        for index in range(1512):
+            swing = 35 if index % 2 else -35
+            close = max(5.0, 120 + swing + (index % 17) * 1.5)
+            volume = 200_000 if index % 3 else 3_500_000
+            bars.append(PriceBar(date=start + timedelta(days=index), close=round(close, 2), volume=volume))
+        return (replace(stock, prices=tuple(bars)),)
+
+
+class ConflictingSignalProvider(MarketDataProvider):
+    data_mode = "real"
+    source_name = "conflicting_signal_fixture"
+
+    def fetch_stocks(self):
+        stock = load_mock_stocks()[0]
+        start = date.today() - timedelta(days=1511)
+        bars = tuple(
+            PriceBar(
+                date=start + timedelta(days=index),
+                close=round(60 + index * 0.05, 2),
+                volume=1_500_000 - (index % 200) * 100,
+            )
+            for index in range(1512)
+        )
+        return (replace(stock, prices=bars),)
 
 
 class _isolated_env:

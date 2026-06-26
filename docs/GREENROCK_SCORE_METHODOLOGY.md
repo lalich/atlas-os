@@ -5,7 +5,9 @@ GreenRock Score is a 0-100 technical dislocation score used by Atlas OS to rank 
 GreenRock Score and GreenRock Confidence are separate:
 
 - GreenRock Score measures the opportunity/dislocation setup.
-- GreenRock Confidence measures data quality and reliability of the score.
+- GreenRock Confidence measures data quality, data depth, signal agreement, and reliability of the score.
+- Confidence may be high when Score is moderate if the evidence is clean and complete.
+- Confidence may be low when Score is high if the data is shallow, noisy, incomplete, or internally conflicted.
 
 ## Current Component Weights
 
@@ -48,6 +50,25 @@ Research Priority is a local workflow label, not investment advice. It combines 
 | Interesting | Watchlist-level setups with enough confidence for research follow-up. |
 | Monitor | Lower-scoring or lower-confidence setups worth tracking but not urgent. |
 | Ignore | Weak setup or low confidence under current GreenRock criteria. |
+
+## GreenRock Confidence Bands
+
+| Confidence Range | Band |
+|---:|---|
+| 90-100 | Very High Confidence |
+| 75-89 | High Confidence |
+| 60-74 | Moderate Confidence |
+| 40-59 | Low Confidence |
+| Below 40 | Very Low Confidence |
+
+Confidence considers:
+
+- Data completeness: price history, volume history, market cap, All-Time High, 52-week low, and 5-year target availability.
+- Data depth: full 5-year history receives stronger confidence than 3-5 years, 1-3 years, or less than 1 year.
+- Indicator agreement: confidence improves when multiple GreenRock indicators point in the same direction and falls when signals conflict.
+- Signal stability: volatile price action and erratic volume reduce confidence.
+- Bucket reliability: missing or borderline market cap lowers confidence.
+- Target reliability: limited target history, missing ATH, or unavailable statistical targets lower confidence.
 
 ## Current Formula Notes
 
