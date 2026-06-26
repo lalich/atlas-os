@@ -111,7 +111,9 @@ Browser:
 http://127.0.0.1:8000/greenrock/score
 ```
 
-The score calculator is real-data-only for operators and preview-only unless you explicitly save the ticker to a local GreenRock list. It shows GreenRock Score, signal label, rank band, selection label, RSI, Bollinger Band position, 52-week low distance, volume acceleration, moving average structure, data quality warnings, explained component scores, bonus/penalty factor explanations, All-Time High, +2/+3/+5/+7 one-year statistical price targets, and a Finviz link. The methodology is documented in `docs/GREENROCK_SCORE_METHODOLOGY.md`. Calculating a score does not create a report, approval, artifact, email, publication, or external distribution action.
+The score calculator is real-data-only for operators and preview-only unless you explicitly save the ticker to a local GreenRock list. It shows GreenRock Score, GreenRock Confidence, signal label, research priority, analyst summary, Bullish Evidence, Bearish Evidence, What to Watch Next, data quality warnings, explained component scores, All-Time High, +2/+3/+5/+7 one-year statistical price targets, and a Finviz link. The methodology is documented in `docs/GREENROCK_SCORE_METHODOLOGY.md`. Calculating a score does not create a report, approval, artifact, email, publication, or external distribution action.
+
+GreenRock Score measures opportunity/dislocation. GreenRock Confidence measures data quality and reliability. Research Priority is a local review label only: Immediate Review, This Week, Interesting, Monitor, or Ignore.
 
 The browser page includes a separate Save Ticker to List control for Watchlist, Ranked Candidates, Strict Review, Mega Rock Candidate Pool, Large Cap Watchlist, and Small/Mid Watchlist. Saving is local only, ignores duplicate tickers in the same list, and shows a warning when available market cap does not fit the selected bucket.
 

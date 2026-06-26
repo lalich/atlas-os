@@ -624,7 +624,6 @@ def render_greenrock_score(
       </form>
     </section>
     {result_html}
-    {_save_ticker_panel(cleaned_ticker, save_status)}
     <section class="panel">
       <div class="section-head">
         <h2>How the Score Ranks</h2>
@@ -644,10 +643,11 @@ def render_greenrock_score(
         <div><strong>RSI</strong><span>15 pts</span><p>Rewards weaker momentum below the neutral threshold.</p></div>
         <div><strong>Volume acceleration</strong><span>15 pts</span><p>Rewards improving 10-day average volume.</p></div>
         <div><strong>Moving average structure</strong><span>20 pts</span><p>Rewards EMA/SMA and 50/150 DMA dislocation with early repair.</p></div>
-        <div><strong>Bonus / penalty factors</strong><span>10 pts</span><p>Adds a bonus below the lower 2.5σ Bollinger Band.</p></div>
+        <div><strong>Bullish / Bearish Evidence</strong><span>10 pts</span><p>Shows setup support and research cautions in plain English.</p></div>
       </div>
       <p><a href="/open-local?path={quote(str(Path('docs/GREENROCK_SCORE_METHODOLOGY.md').resolve()))}">Open methodology notes</a></p>
     </section>
+    {_save_ticker_panel(cleaned_ticker, save_status)}
     """
     return _page("GreenRock Score Calculator", content, active="/greenrock/score")
 
@@ -1246,7 +1246,9 @@ def _score_preview_panel(preview) -> str:
     indicators = candidate.indicators
     warnings = preview.data_quality_warnings or ("none",)
     component_cards = "".join(_score_component_card(component) for component in preview.component_explanations)
-    bonus_items = "".join(f"<li>{_safe(item)}</li>" for item in preview.bonus_penalty_explanations)
+    bullish_items = "".join(f"<li>{_safe(item)}</li>" for item in preview.bullish_evidence)
+    bearish_items = "".join(f"<li>{_safe(item)}</li>" for item in preview.bearish_evidence)
+    watch_items = "".join(f"<li>{_safe(item)}</li>" for item in preview.watch_next)
     warning_items = "".join(f"<li>{_safe(warning)}</li>" for warning in warnings)
     return f"""
     <section class="panel score-result">
@@ -1254,16 +1256,26 @@ def _score_preview_panel(preview) -> str:
         <h2>{_safe(candidate.symbol)} Score Preview</h2>
         <span class="badge data-mode">{_safe(preview.data_mode.upper())} DATA</span>
       </div>
-      <div class="score-hero-line">
-        <div class="score-gauge">
+      <div class="score-intel-grid">
+        <div class="score-gauge score-card">
           <strong>{candidate.score:.2f}</strong>
           <p>GreenRock Score</p>
         </div>
-        <div>
+        <div class="score-gauge confidence-card">
+          <strong>{preview.confidence_score:.2f}</strong>
+          <p>GreenRock Confidence</p>
+        </div>
+        <div class="priority-card">
+          <span class="badge priority">{_safe(preview.research_priority)}</span>
+          <p>Research Priority</p>
           <span class="badge signal">{_safe(score_signal(candidate))}</span>
           <span class="badge selection">{_safe(candidate.selection_label)}</span>
         </div>
       </div>
+      <section class="analyst-summary">
+        <h2>Analyst Summary</h2>
+        <p>{_safe(preview.analyst_summary)}</p>
+      </section>
       <div class="detail-grid">
         {_detail_panel("Company", candidate.company_name)}
         {_detail_panel("Market Cap", _format_market_cap(str(candidate.market_cap)))}
@@ -1276,14 +1288,24 @@ def _score_preview_panel(preview) -> str:
         {_detail_panel("Data Source", preview.data_source)}
         {_detail_panel("Selection Mode", preview.selection_mode)}
       </div>
+      <div class="evidence-grid">
+        <section class="panel inner-panel evidence-card bullish-card">
+          <h2>Bullish Evidence</h2>
+          <ul class="compact-list">{bullish_items}</ul>
+        </section>
+        <section class="panel inner-panel evidence-card bearish-card">
+          <h2>Bearish Evidence</h2>
+          <ul class="compact-list">{bearish_items}</ul>
+        </section>
+      </div>
+      <section class="panel inner-panel watch-next-card">
+        <h2>What to Watch Next</h2>
+        <ul class="compact-list">{watch_items}</ul>
+      </section>
       <section class="panel inner-panel score-breakdown-card">
         <h2>Score Breakdown</h2>
         <p class="subtle">Each card shows the raw metric, component score, weight, and plain-English rationale before the final 100-point cap.</p>
         <div class="score-breakdown-grid">{component_cards}</div>
-      </section>
-      <section class="panel inner-panel">
-        <h2>Bonus / Penalty Factors</h2>
-        <ul class="compact-list">{bonus_items}</ul>
       </section>
       <section class="panel inner-panel price-target-panel">
         <div class="section-head">
@@ -2045,9 +2067,21 @@ def _page(title: str, content: str, active: str = "/") -> str:
     .setup-box {{ border: 1px solid rgba(243,201,105,.32); border-radius: 8px; padding: 12px; background: rgba(0,0,0,.18); margin: 12px 0; }}
     .setup-box pre {{ margin: 8px 0 0; white-space: pre-wrap; color: #ffe5a3; }}
     .score-result {{ border-color: rgba(55,214,122,.42); background: linear-gradient(135deg, rgba(27,32,41,.96), rgba(22,39,31,.9)); }}
+    .score-intel-grid {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 14px 0 18px; }}
     .score-hero-line {{ display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 14px 0 18px; padding: 16px; border: 1px solid rgba(243,201,105,.28); border-radius: 8px; background: rgba(243,201,105,.07); }}
-    .score-gauge {{ min-width: 180px; }}
-    .score-hero-line strong {{ display: block; font-size: 44px; color: var(--gold); line-height: 1; }}
+    .score-gauge, .priority-card {{ min-width: 180px; border: 1px solid rgba(243,201,105,.28); border-radius: 8px; padding: 16px; background: rgba(243,201,105,.07); }}
+    .confidence-card {{ border-color: rgba(55,214,122,.34); background: rgba(55,214,122,.08); }}
+    .priority-card {{ border-color: rgba(140,108,255,.38); background: rgba(140,108,255,.12); }}
+    .score-gauge strong {{ display: block; font-size: 44px; color: var(--gold); line-height: 1; }}
+    .confidence-card strong {{ color: #b9ffd3; }}
+    .priority-card .priority {{ display: inline-block; margin-bottom: 12px; background: rgba(243,201,105,.16); color: #ffe3a1; border: 1px solid rgba(243,201,105,.32); font-size: 14px; }}
+    .analyst-summary {{ border-color: rgba(55,214,122,.28); background: rgba(55,214,122,.06); margin-bottom: 12px; }}
+    .analyst-summary p {{ margin-bottom: 0; }}
+    .evidence-grid {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }}
+    .evidence-card {{ min-height: 180px; }}
+    .bullish-card {{ border-color: rgba(55,214,122,.3); }}
+    .bearish-card {{ border-color: rgba(255,95,109,.28); }}
+    .watch-next-card {{ border-color: rgba(100,181,255,.28); }}
     .rank-grid {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }}
     .rank-band {{ border: 1px solid rgba(255,255,255,.1); border-radius: 8px; padding: 12px; background: rgba(255,255,255,.04); min-height: 112px; }}
     .rank-band strong {{ color: #f4f8f0; }}
@@ -2102,7 +2136,7 @@ def _page(title: str, content: str, active: str = "/") -> str:
     footer {{ border-top: 1px solid var(--line); padding: 18px 30px 28px; color: var(--muted); background: rgba(8,10,16,.7); }}
     footer div {{ display: flex; gap: 12px; flex-wrap: wrap; max-width: 1500px; margin: 0 auto; }}
     @media (max-width: 1000px) {{
-      .attention-grid, .board-meta, .nav-grid, .project-grid, .candidate-grid, .detail-grid, .kanban, .agent-grid, .task-form, .mega-card, .universe-grid, .score-form, .save-list-form, .score-explainer, .score-tool-hero, .rank-grid, .score-breakdown-grid, .target-assumptions {{ grid-template-columns: 1fr; }}
+      .attention-grid, .board-meta, .nav-grid, .project-grid, .candidate-grid, .detail-grid, .kanban, .agent-grid, .task-form, .mega-card, .universe-grid, .score-form, .save-list-form, .score-explainer, .score-tool-hero, .rank-grid, .score-breakdown-grid, .target-assumptions, .score-intel-grid, .evidence-grid {{ grid-template-columns: 1fr; }}
       .calculator-card, .score-hero-line {{ align-items: flex-start; flex-direction: column; }}
       main, header, footer {{ padding-left: 16px; padding-right: 16px; }}
       .hero {{ min-height: auto; }}

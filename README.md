@@ -119,7 +119,9 @@ atlas greenrock score AAPL
 
 It is preview-only. It does not create reports, approval records, artifacts, emails, publications, or external distribution actions.
 
-The calculator is real-data-only for operators. It shows the ticker score, signal label, rank band, component breakdown with raw metrics and explanations, bonus/penalty factor definitions, Finviz link, data-quality warnings, All-Time High, and +2/+3/+5/+7 one-year statistical price targets. Real mode requires the configured local market data provider.
+The calculator is real-data-only for operators. It shows GreenRock Score, GreenRock Confidence, signal label, research priority, analyst summary, Bullish Evidence, Bearish Evidence, What to Watch Next, Finviz link, data-quality warnings, All-Time High, and +2/+3/+5/+7 one-year statistical price targets. Real mode requires the configured local market data provider.
+
+GreenRock Score measures the opportunity/dislocation setup. GreenRock Confidence measures the reliability of that score based on data completeness, ATH availability, market-cap and volume data, 52-week low availability, indicator health, and whether enough history exists for the 5-year target calculation. Research Priority is a local analyst workflow label: Immediate Review, This Week, Interesting, Monitor, or Ignore.
 
 ## GreenRock Real Data Mode
 
@@ -199,7 +201,9 @@ In the Command Center, open:
 http://127.0.0.1:8000/greenrock/score
 ```
 
-The calculator shows GreenRock Score, signal label, selection label, RSI, Bollinger Band position, 52-week low distance, volume acceleration, moving average structure, data quality warnings, Finviz link, and a component-score explanation. The methodology is documented in [GreenRock Score Methodology](docs/GREENROCK_SCORE_METHODOLOGY.md). Real mode requires the configured market data provider and fails safely if unavailable.
+The calculator shows GreenRock Score, GreenRock Confidence, signal label, research priority, analyst summary, Bullish Evidence, Bearish Evidence, What to Watch Next, Finviz link, data-quality warnings, and one-year statistical price targets. The methodology is documented in [GreenRock Score Methodology](docs/GREENROCK_SCORE_METHODOLOGY.md). Real mode requires the configured market data provider and fails safely if unavailable.
+
+Bullish Evidence and Bearish Evidence are deterministic metric summaries. What to Watch Next lists validation items such as moving-average reclaim, RSI improvement, volume continuation, recent-low support, and statistical target context. These are local research aids only and are not investment advice or a price forecast.
 
 Real-data market-cap sections are:
 
@@ -338,7 +342,7 @@ Command Center pages:
 - `/projects` project directory for GreenRock Analysts, Variance Capital / The Bat Signal, GreenRock Insurance, and Atlas Core.
 - `/greenrock` report review console with Run Mock Report and Run Real Report buttons, latest run/report/PDF status, candidate summaries, approval actions, local artifact open links, and PDF export after approval.
 - `/greenrock/picks` GreenRock Picks Board with the featured Mega Rock pick, 11 large-cap picks, 11 small/mid-cap picks, Finviz links, and explicit data-mode labeling.
-- `/greenrock/score` GreenRock Score Calculator with methodology explanation and preview-only score breakdown.
+- `/greenrock/score` GreenRock Score Calculator with confidence, research priority, evidence cards, watch-next notes, methodology explanation, and preview-only score breakdown.
 - `/greenrock/final-reports` final PDF archive for approved exported GreenRock PDFs.
 - `/tasks` local kanban-style manual task board with backlog, in progress, awaiting review, and completed columns.
 - `/agents` planned agent HUD with inactive/planned status labels.

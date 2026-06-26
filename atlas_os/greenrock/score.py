@@ -42,6 +42,12 @@ class ScorePreview:
     data_mode: str
     data_source: str
     selection_mode: str
+    confidence_score: float
+    research_priority: str
+    analyst_summary: str
+    bullish_evidence: tuple[str, ...]
+    bearish_evidence: tuple[str, ...]
+    watch_next: tuple[str, ...]
     component_scores: dict[str, float]
     component_explanations: tuple[ScoreComponentExplanation, ...]
     bonus_penalty_explanations: tuple[str, ...]
@@ -99,11 +105,24 @@ def calculate_score_preview(
     component_scores = greenrock_score_breakdown(candidate.indicators, _rule_results(candidate))
     all_time_high, price_targets, price_target_warnings, price_target_lookback = _price_targets(stock.prices, candidate.has_price_history)
     bonus_penalty_explanations = _bonus_penalty_explanations(candidate)
+    data_quality_warnings = _data_quality_warnings(candidate) + price_target_warnings
+    confidence_score = _confidence_score(candidate, stock.prices, all_time_high, price_target_lookback, price_target_warnings)
+    research_priority = _research_priority(candidate, confidence_score)
+    bullish_evidence = _bullish_evidence(candidate, price_targets)
+    bearish_evidence = _bearish_evidence(candidate, data_quality_warnings)
+    watch_next = _watch_next(candidate, all_time_high, price_targets)
+    analyst_summary = _analyst_summary(candidate, confidence_score, research_priority, bullish_evidence, bearish_evidence)
     return ScorePreview(
         candidate=candidate,
         data_mode=market_data_provider.data_mode,
         data_source=market_data_provider.source_name,
         selection_mode=resolved_selection_mode,
+        confidence_score=confidence_score,
+        research_priority=research_priority,
+        analyst_summary=analyst_summary,
+        bullish_evidence=bullish_evidence,
+        bearish_evidence=bearish_evidence,
+        watch_next=watch_next,
         component_scores=component_scores,
         component_explanations=_component_explanations(candidate, component_scores, bonus_penalty_explanations),
         bonus_penalty_explanations=bonus_penalty_explanations,
@@ -112,7 +131,7 @@ def calculate_score_preview(
         price_target_warnings=price_target_warnings,
         price_target_lookback=price_target_lookback,
         price_target_horizon="1 year",
-        data_quality_warnings=_data_quality_warnings(candidate) + price_target_warnings,
+        data_quality_warnings=data_quality_warnings,
     )
 
 
@@ -212,12 +231,12 @@ def _component_explanations(
             explanation="Scores dislocated trend structure and early repair across 8/10 and 50/150 moving-average tests.",
         ),
         ScoreComponentExplanation(
-            name="Bonus / penalty factors",
+            name="Bullish / Bearish Evidence",
             key="bonus_penalty_factors",
             raw_metric="; ".join(bonus_penalty_explanations),
             component_score=component_scores.get("bonus_penalty_factors", 0.0),
             weight=10,
-            explanation="Shows explicit score adjustments for unusually strong setups or data-quality and criteria risks.",
+            explanation="Shows explicit evidence that supports or cautions against the current research setup.",
         ),
     )
 
@@ -227,23 +246,23 @@ def _bonus_penalty_explanations(candidate: StockCandidate) -> tuple[str, ...]:
     explanations: list[str] = []
     volume_acceleration = _volume_acceleration_value(candidate)
     if indicators.latest_close < indicators.bollinger_lower:
-        explanations.append("Bonus: price below lower 2.5 standard deviation Bollinger Band.")
+        explanations.append("Bullish evidence: price below lower 2.5 standard deviation Bollinger Band.")
     if volume_acceleration is not None and volume_acceleration >= 0.25:
-        explanations.append("Bonus: strong volume acceleration versus the prior 10-day average.")
+        explanations.append("Bullish evidence: strong volume acceleration versus the prior 10-day average.")
     if indicators.low_proximity <= 0.02:
-        explanations.append("Bonus: unusually deep dislocation near the 52-week low.")
+        explanations.append("Bullish evidence: unusually deep dislocation near the 52-week low.")
     if not candidate.has_price_history:
-        explanations.append("Penalty risk: missing or insufficient price history.")
+        explanations.append("Bearish evidence: missing or insufficient price history.")
     if not candidate.has_volume_data or indicators.latest_volume <= 0 or indicators.volume_avg_10 <= 0:
-        explanations.append("Penalty risk: missing volume data or extreme illiquidity.")
+        explanations.append("Bearish evidence: missing volume data or extreme illiquidity.")
     if not candidate.has_market_cap or candidate.market_cap <= 0:
-        explanations.append("Penalty risk: weak market-cap data.")
+        explanations.append("Bearish evidence: weak market-cap data.")
     if not {"ema8_below_sma10", "dma50_below_dma150", "dma50_roc_improving_vs_dma150"}.issubset(candidate.passed_rules):
-        explanations.append("Penalty risk: moving average structure is not fully aligned with GreenRock criteria.")
+        explanations.append("Bearish evidence: moving average structure is not fully aligned with GreenRock criteria.")
     if candidate.failed_rules:
-        explanations.append(f"Penalty risk: {len(candidate.failed_rules)} strict GreenRock rule(s) failed.")
+        explanations.append(f"Bearish evidence: {len(candidate.failed_rules)} strict GreenRock rule(s) failed.")
     if not explanations:
-        explanations.append("No active bonus or penalty factor beyond base component scoring.")
+        explanations.append("No major Bullish or Bearish Evidence item beyond base component scoring.")
     return tuple(explanations)
 
 
@@ -285,6 +304,163 @@ def _price_targets(
         for label, multiple in (("+2 SD", 2), ("+3 SD", 3), ("+5 SD", 5), ("+7 SD", 7))
     )
     return round(all_time_high, 2), targets, tuple(warnings), lookback_label
+
+
+def _confidence_score(
+    candidate: StockCandidate,
+    prices,
+    all_time_high: float | None,
+    price_target_lookback: str,
+    data_quality_warnings: tuple[str, ...],
+) -> float:
+    score = 100.0
+    valid_prices = [price.close for price in prices if price.close > 0]
+    indicators = candidate.indicators
+    if len(valid_prices) < 252 or not candidate.has_price_history:
+        score -= 25
+    elif len(valid_prices) < 504:
+        score -= 12
+    if all_time_high is None:
+        score -= 15
+    if not candidate.has_market_cap or candidate.market_cap <= 0:
+        score -= 15
+    if not candidate.has_volume_data or indicators.latest_volume <= 0 or indicators.volume_avg_10 <= 0:
+        score -= 15
+    if not candidate.has_52_week_low or indicators.week_52_low <= 0:
+        score -= 10
+    if price_target_lookback != "5 years":
+        score -= 12
+    if any(not _is_finite(value) for value in (
+        indicators.latest_close,
+        indicators.sma_10,
+        indicators.ema_8,
+        indicators.sma_50,
+        indicators.sma_150,
+        indicators.rsi_14,
+        indicators.bollinger_lower,
+        indicators.bollinger_upper,
+        indicators.week_52_low,
+        indicators.volume_avg_10,
+        indicators.previous_volume_avg_10,
+    )):
+        score -= 15
+    if data_quality_warnings:
+        score -= min(15, len(data_quality_warnings) * 3)
+    return round(max(0.0, min(score, 100.0)), 2)
+
+
+def _research_priority(candidate: StockCandidate, confidence_score: float) -> str:
+    score = candidate.score
+    if confidence_score < 35 or not candidate.has_price_history:
+        return "Ignore"
+    if score >= 85 and confidence_score >= 75 and candidate.selection_label == "Strict Pass":
+        return "Immediate Review"
+    if score >= 70 and confidence_score >= 65:
+        return "This Week"
+    if score >= 55 and confidence_score >= 50:
+        return "Interesting"
+    if score >= 45 and confidence_score >= 45:
+        return "Monitor"
+    return "Ignore"
+
+
+def _bullish_evidence(candidate: StockCandidate, price_targets: tuple[PriceTarget, ...]) -> tuple[str, ...]:
+    indicators = candidate.indicators
+    evidence: list[str] = []
+    if indicators.low_proximity <= 0.10:
+        evidence.append("Trading near the 52-week low, which supports the dislocation setup.")
+    if indicators.latest_close <= indicators.bollinger_lower:
+        evidence.append("Price is below the lower Bollinger Band.")
+    elif abs(indicators.latest_close - indicators.bollinger_lower) < abs(indicators.bollinger_upper - indicators.latest_close):
+        evidence.append("Price is closer to the lower Bollinger Band than the upper band.")
+    if indicators.rsi_14 < 50:
+        evidence.append("RSI shows oversold or dislocation characteristics.")
+    volume_acceleration = _volume_acceleration_value(candidate)
+    if volume_acceleration is not None and volume_acceleration > 0:
+        evidence.append("Volume acceleration supports renewed attention.")
+    if {"ema8_below_sma10", "dma50_below_dma150"}.issubset(candidate.passed_rules):
+        evidence.append("Moving average structure aligns with GreenRock dislocation criteria.")
+    if any(target.price is not None and target.price > indicators.latest_close for target in price_targets):
+        evidence.append("Statistical upside targets sit above the current price.")
+    if not evidence:
+        evidence.append("No major GreenRock evidence item is active yet.")
+    return tuple(evidence)
+
+
+def _bearish_evidence(candidate: StockCandidate, data_quality_warnings: tuple[str, ...]) -> tuple[str, ...]:
+    indicators = candidate.indicators
+    evidence: list[str] = []
+    if _has_market_data_warning(data_quality_warnings):
+        evidence.append("Missing or incomplete market data reduces score reliability.")
+    if not candidate.has_price_history:
+        evidence.append("Weak or insufficient price history.")
+    volume_acceleration = _volume_acceleration_value(candidate)
+    if volume_acceleration is None or volume_acceleration <= 0:
+        evidence.append("No clear volume confirmation yet.")
+    if indicators.rsi_14 >= 50:
+        evidence.append("RSI is not yet supportive of the dislocation setup.")
+    if indicators.low_proximity > 0.10:
+        evidence.append("Price is not close enough to the preferred dislocation zone.")
+    if not {"ema8_below_sma10", "dma50_below_dma150", "dma50_roc_improving_vs_dma150"}.issubset(candidate.passed_rules):
+        evidence.append("Moving average structure does not yet fully support the setup.")
+    if not candidate.has_market_cap or candidate.market_cap <= 0:
+        evidence.append("Market cap data is weak or unavailable.")
+    if not evidence:
+        evidence.append("No major GreenRock caution item is active beyond normal research review.")
+    return tuple(evidence)
+
+
+def _watch_next(candidate: StockCandidate, all_time_high: float | None, price_targets: tuple[PriceTarget, ...]) -> tuple[str, ...]:
+    indicators = candidate.indicators
+    items = [
+        f"Watch for price reclaiming the 10 SMA near ${indicators.sma_10:,.2f}.",
+        "Watch whether RSI improves while staying consistent with the dislocation setup.",
+        "Watch for continuation of volume acceleration versus the prior 10-day average.",
+        f"Watch whether price holds above the recent low near ${indicators.week_52_low:,.2f}.",
+    ]
+    first_target = next((target for target in price_targets if target.price is not None), None)
+    if first_target:
+        items.append(f"Watch movement toward or reclaim of the {first_target.label} statistical target near ${first_target.price:,.2f}.")
+    if all_time_high is not None:
+        items.append(f"Watch resistance context versus the All-Time High near ${all_time_high:,.2f}.")
+    return tuple(items)
+
+
+def _analyst_summary(
+    candidate: StockCandidate,
+    confidence_score: float,
+    research_priority: str,
+    bullish_evidence: tuple[str, ...],
+    bearish_evidence: tuple[str, ...],
+) -> str:
+    confidence_label = _confidence_label(confidence_score)
+    signal = signal_label(candidate.score)
+    primary_driver = bullish_evidence[0].removesuffix(".").lower() if bullish_evidence else "the current technical setup"
+    primary_caution = bearish_evidence[0].removesuffix(".").lower() if bearish_evidence else "normal research review"
+    return (
+        f"Atlas flags {candidate.symbol} as {signal} / {candidate.selection_label} with "
+        f"{confidence_label} confidence and a {research_priority} research priority. "
+        f"The setup is driven primarily by {primary_driver}, while the primary caution is {primary_caution}."
+    )
+
+
+def _confidence_label(confidence_score: float) -> str:
+    if confidence_score >= 80:
+        return "high"
+    if confidence_score >= 60:
+        return "moderate"
+    if confidence_score >= 40:
+        return "low"
+    return "very low"
+
+
+def _is_finite(value: float) -> bool:
+    return isinstance(value, (int, float)) and math.isfinite(value)
+
+
+def _has_market_data_warning(warnings: tuple[str, ...]) -> bool:
+    terms = ("missing", "unavailable", "insufficient", "ATH based", "no usable")
+    return any(any(term.lower() in warning.lower() for term in terms) for warning in warnings)
 
 
 def _volume_acceleration(candidate: StockCandidate) -> str:

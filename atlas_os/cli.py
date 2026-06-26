@@ -478,7 +478,10 @@ def run_greenrock_score(ticker: str, data_mode: str = "real", selection_mode: st
     print(f"market_cap: {candidate.market_cap:.2f}")
     print(f"price: {indicators.latest_close:.2f}")
     print(f"greenrock_score: {candidate.score:.2f}")
+    print(f"greenrock_confidence: {preview.confidence_score:.2f}")
     print(f"signal_label: {score_signal(candidate)}")
+    print(f"research_priority: {preview.research_priority}")
+    print(f"analyst_summary: {preview.analyst_summary}")
     print(f"rank_band: {_score_rank_band(candidate.score)}")
     print(f"selection_label: {candidate.selection_label}")
     print(f"rsi: {indicators.rsi_14:.2f}")
@@ -499,13 +502,19 @@ def run_greenrock_score(ticker: str, data_mode: str = "real", selection_mode: st
         print("price_target_warnings:")
         for warning in preview.price_target_warnings:
             print(f"  {warning}")
-    print("bonus_penalty_explanations:")
-    for explanation in preview.bonus_penalty_explanations:
-        print(f"  {explanation}")
+    print("bullish_evidence:")
+    for item in preview.bullish_evidence:
+        print(f"  {item}")
+    print("bearish_evidence:")
+    for item in preview.bearish_evidence:
+        print(f"  {item}")
+    print("what_to_watch_next:")
+    for item in preview.watch_next:
+        print(f"  {item}")
     print(f"finviz: https://finviz.com/quote.ashx?t={candidate.symbol}")
     print("component_scores:")
     for name, value in preview.component_scores.items():
-        print(f"  {name}: {value:.2f}")
+        print(f"  {_score_component_label(name)}: {value:.2f}")
     print("component_explanations:")
     for component in preview.component_explanations:
         print(f"  {component.name}:")
@@ -536,6 +545,18 @@ def _format_cli_price(value: float | None) -> str:
     if value is None:
         return "unavailable"
     return f"{value:.2f}"
+
+
+def _score_component_label(name: str) -> str:
+    labels = {
+        "52_week_low_proximity": "52-week low proximity",
+        "bollinger_band_setup": "Bollinger Band setup",
+        "rsi": "RSI",
+        "volume_acceleration": "Volume acceleration",
+        "moving_average_structure": "Moving average structure",
+        "bonus_penalty_factors": "Bullish / Bearish Evidence",
+    }
+    return labels.get(name, name.replace("_", " "))
 
 
 def run_greenrock_open_latest() -> int:

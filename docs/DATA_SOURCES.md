@@ -123,7 +123,7 @@ Score components:
 - RSI.
 - Volume acceleration.
 - Moving average structure.
-- Bonus factor for trading below the lower 2.5 standard deviation Bollinger Band.
+- Bullish / Bearish Evidence for setup support and research cautions.
 
 Do not commit real credentials or private data. The yfinance scaffold does not require an API key, but any future paid provider settings must stay local.
 

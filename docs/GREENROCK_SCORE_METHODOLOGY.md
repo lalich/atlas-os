@@ -2,6 +2,11 @@
 
 GreenRock Score is a 0-100 technical dislocation score used by Atlas OS to rank review candidates for GreenRock Analysts workflows. It is a screening and prioritization aid only. It is not a recommendation, guarantee, or client-facing conclusion.
 
+GreenRock Score and GreenRock Confidence are separate:
+
+- GreenRock Score measures the opportunity/dislocation setup.
+- GreenRock Confidence measures data quality and reliability of the score.
+
 ## Current Component Weights
 
 | Component | Current Weight | Purpose | Future Tuning Notes |
@@ -11,7 +16,7 @@ GreenRock Score is a 0-100 technical dislocation score used by Atlas OS to rank 
 | RSI | 15 points | Rewards lower RSI values below the neutral threshold. | Calibrate RSI cutoffs by volatility regime and market-cap group. |
 | Volume acceleration | 15 points | Rewards improving 10-day average volume versus the prior 10-day average. | Add liquidity floors and distinguish accumulation from event-driven volume spikes. |
 | Moving average structure | 20 points | Rewards dislocated moving-average structure, including 8 EMA below 10 SMA, 50 DMA below 150 DMA, and improving 50 DMA rate of change versus 150 DMA. | Split trend damage and trend repair into separate sub-scores. |
-| Bonus / penalty factors | 10 points | Shows explicit score adjustments and data-quality risks that affect confidence in the setup. | Add calibrated penalties for missing data, extreme liquidity risk, or stale prices once production controls exist. |
+| Bullish / Bearish Evidence | 10 points | Shows explicit setup support and research cautions that affect interpretation of the setup. | Add calibrated evidence weights for missing data, extreme liquidity risk, or stale prices once production controls exist. |
 
 The component total is capped at 100.
 
@@ -32,6 +37,18 @@ The component total is capped at 100.
 | Ranked Candidate | The ticker did not pass every strict rule but ranked high enough to appear in ranked real-data selection mode. |
 | Watchlist | The ticker is visible for review but carries weaker score/rule support. |
 
+## Research Priority
+
+Research Priority is a local workflow label, not investment advice. It combines GreenRock Score, GreenRock Confidence, liquidity/data quality, signal label, and strict/ranked/watchlist classification.
+
+| Priority | Meaning |
+|---|---|
+| Immediate Review | Highest-scoring, higher-confidence strict-pass setups for near-term analyst review. |
+| This Week | Strong higher-confidence setups that merit timely research attention. |
+| Interesting | Watchlist-level setups with enough confidence for research follow-up. |
+| Monitor | Lower-scoring or lower-confidence setups worth tracking but not urgent. |
+| Ignore | Weak setup or low confidence under current GreenRock criteria. |
+
 ## Current Formula Notes
 
 - 52-week low proximity contributes more points as price gets closer to the 52-week low within the current 10% proximity band.
@@ -39,7 +56,16 @@ The component total is capped at 100.
 - RSI contributes more points as RSI falls below 50.
 - Volume acceleration contributes more points as current 10-day average volume improves versus the prior 10-day average.
 - Moving average structure combines short-term dislocation, longer-term trend damage, and early improvement in the 50 DMA rate of change.
-- Bonus / penalty factors are always explained in the calculator output. Bonus examples include price below the lower 2.5 standard deviation Bollinger Band, strong volume acceleration, and unusually deep dislocation near the 52-week low. Penalty-risk examples include missing data, extreme illiquidity, insufficient price history, weak market-cap data, and moving average structure that is not aligned with GreenRock criteria.
+- Bullish Evidence and Bearish Evidence are always explained in the calculator output. Bullish examples include price below the lower 2.5 standard deviation Bollinger Band, strong volume acceleration, and unusually deep dislocation near the 52-week low. Bearish examples include missing data, extreme illiquidity, insufficient price history, weak market-cap data, and moving average structure that is not aligned with GreenRock criteria.
+
+## Analyst Intelligence Notes
+
+The score calculator also generates deterministic, template-based analyst intelligence without any LLM or API call:
+
+- Bullish Evidence: metric-driven observations that support the GreenRock setup.
+- Bearish Evidence: metric-driven cautions or data-quality concerns.
+- What to Watch Next: continuation and validation items such as reclaiming moving averages, improving RSI, volume continuation, holding recent lows, and movement toward statistical target levels.
+- Analyst Summary: a short plain-English summary built from score, confidence, evidence, and research priority.
 
 ## 1-Year Statistical Price Target Notes
 

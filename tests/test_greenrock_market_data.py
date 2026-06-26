@@ -90,7 +90,10 @@ class GreenRockMarketDataTests(unittest.TestCase):
         self.assertIn("GreenRock Score Preview", output)
         self.assertIn("ticker: LC01", output)
         self.assertIn("greenrock_score:", output)
+        self.assertIn("greenrock_confidence:", output)
         self.assertIn("signal_label:", output)
+        self.assertIn("research_priority:", output)
+        self.assertIn("analyst_summary:", output)
         self.assertIn("rank_band:", output)
         self.assertIn("all_time_high:", output)
         self.assertIn("one_year_statistical_price_targets:", output)
@@ -100,7 +103,9 @@ class GreenRockMarketDataTests(unittest.TestCase):
         self.assertIn("+3 SD:", output)
         self.assertIn("+5 SD:", output)
         self.assertIn("+7 SD:", output)
-        self.assertIn("bonus_penalty_explanations:", output)
+        self.assertIn("bullish_evidence:", output)
+        self.assertIn("bearish_evidence:", output)
+        self.assertIn("what_to_watch_next:", output)
         self.assertIn("finviz: https://finviz.com/quote.ashx?t=LC01", output)
 
     def test_score_preview_works_with_fake_provider(self) -> None:

@@ -123,6 +123,9 @@ class CommandCenterTests(unittest.TestCase):
         self.assertEqual(result.status, 200)
         self.assertIn("LC01 Score Preview", result.body)
         self.assertIn("GreenRock Score", result.body)
+        self.assertIn("GreenRock Confidence", result.body)
+        self.assertIn("Research Priority", result.body)
+        self.assertIn("Analyst Summary", result.body)
         self.assertIn("How the Score Works", result.body)
         self.assertIn("How the Score Ranks", result.body)
         self.assertIn(f"{preview.candidate.symbol}: {preview.candidate.score:.1f}", result.body)
@@ -143,14 +146,19 @@ class CommandCenterTests(unittest.TestCase):
             "RSI",
             "Volume acceleration",
             "Moving average structure",
-            "Bonus / penalty factors",
+            "Bullish / Bearish Evidence",
         ):
             self.assertIn(component, result.body)
         self.assertIn("Raw metric", result.body)
         self.assertIn("Component score", result.body)
         self.assertIn("Weight", result.body)
         self.assertIn("plain-English rationale", result.body)
-        self.assertIn("Penalty risk: moving average structure is not fully aligned with GreenRock criteria.", result.body)
+        self.assertIn("Bullish Evidence", result.body)
+        self.assertIn("Bearish Evidence", result.body)
+        self.assertIn("What to Watch Next", result.body)
+        self.assertIn("Moving average structure does not yet fully support the setup.", result.body)
+        self.assertIn("Watch for price reclaiming", result.body)
+        self.assertIn("Atlas flags LC01", result.body)
         self.assertIn("1-Year Statistical Price Targets", result.body)
         self.assertIn("Historical lookback", result.body)
         self.assertIn("5 years", result.body)
@@ -163,6 +171,21 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("+7 SD", result.body)
         self.assertIn("target-below-ath", result.body)
         self.assertIn("target-above-ath", result.body)
+
+    def test_score_intelligence_fields_are_calculated(self) -> None:
+        preview = calculate_score_preview("LC01", provider=FullHistoryProvider())
+        lower_confidence = calculate_score_preview("LC01", provider=FlatHistoryProvider())
+        mock_preview = calculate_score_preview("LC01", data_mode="mock")
+
+        self.assertGreaterEqual(preview.confidence_score, 0)
+        self.assertLessEqual(preview.confidence_score, 100)
+        self.assertLess(lower_confidence.confidence_score, preview.confidence_score)
+        self.assertEqual(mock_preview.research_priority, "This Week")
+        self.assertEqual(preview.research_priority, "Ignore")
+        self.assertTrue(preview.bullish_evidence)
+        self.assertTrue(preview.bearish_evidence)
+        self.assertTrue(preview.watch_next)
+        self.assertIn("Atlas flags LC01", preview.analyst_summary)
 
     def test_score_page_shows_clean_price_target_warning(self) -> None:
         preview = calculate_score_preview("LC01", provider=FlatHistoryProvider())
@@ -181,6 +204,17 @@ class CommandCenterTests(unittest.TestCase):
         self.assertEqual(preview.price_target_lookback, "5 years")
         self.assertEqual(preview.price_target_horizon, "1 year")
         self.assertTrue(all(target.price is not None for target in preview.price_targets))
+
+    def test_save_to_list_appears_after_analysis_sections(self) -> None:
+        preview = calculate_score_preview("LC01", provider=FullHistoryProvider())
+        with _isolated_env():
+            with patch("atlas_os.web_app.calculate_score_preview", return_value=preview):
+                result = dispatch_request("POST", "/greenrock/score", "ticker=LC01")
+
+        self.assertLess(result.body.index("Analyst Summary"), result.body.index("Save Ticker to List"))
+        self.assertLess(result.body.index("Bullish Evidence"), result.body.index("Save Ticker to List"))
+        self.assertLess(result.body.index("What to Watch Next"), result.body.index("Save Ticker to List"))
+        self.assertLess(result.body.index("1-Year Statistical Price Targets"), result.body.index("Save Ticker to List"))
 
     def test_score_page_missing_real_provider_shows_setup_instructions(self) -> None:
         with _isolated_env():

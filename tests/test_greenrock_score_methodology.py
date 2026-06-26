@@ -18,7 +18,10 @@ class GreenRockScoreMethodologyTests(unittest.TestCase):
         self.assertIn("RSI", markdown)
         self.assertIn("Volume acceleration", markdown)
         self.assertIn("Moving average structure", markdown)
-        self.assertIn("Bonus / penalty factors", markdown)
+        self.assertIn("Bullish / Bearish Evidence", markdown)
+        self.assertIn("GreenRock Confidence", markdown)
+        self.assertIn("Research Priority", markdown)
+        self.assertIn("What to Watch Next", markdown)
         self.assertIn("Future Tuning Notes", markdown)
 
 
