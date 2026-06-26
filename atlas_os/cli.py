@@ -162,8 +162,8 @@ def build_parser() -> argparse.ArgumentParser:
     score.add_argument(
         "--data",
         choices=("mock", "real"),
-        default="mock",
-        help="Market data mode. Defaults to mock.",
+        default="real",
+        help=argparse.SUPPRESS,
     )
     score.add_argument(
         "--selection",
@@ -448,7 +448,7 @@ def run_greenrock_picks_board() -> int:
     return 0
 
 
-def run_greenrock_score(ticker: str, data_mode: str = "mock", selection_mode: str | None = None) -> int:
+def run_greenrock_score(ticker: str, data_mode: str = "real", selection_mode: str | None = None) -> int:
     settings = get_settings()
     try:
         preview = calculate_score_preview(
@@ -462,6 +462,8 @@ def run_greenrock_score(ticker: str, data_mode: str = "mock", selection_mode: st
         print(f"ticker: {ticker.upper()}")
         print(f"data_mode: {data_mode.upper()}")
         print(f"reason: {error}")
+        print("setup: export ATLAS_MARKET_DATA_PROVIDER=yfinance")
+        print('setup: python3 -m pip install -e ".[market-data]"')
         print("No report, approval, artifact, email, publication, or external action was created.")
         return 1
 
@@ -485,7 +487,11 @@ def run_greenrock_score(ticker: str, data_mode: str = "mock", selection_mode: st
     print(f"volume_acceleration: {_score_volume_acceleration(candidate)}")
     print(f"moving_average_structure: {_score_moving_average_structure(candidate)}")
     print(f"all_time_high: {_format_cli_price(preview.all_time_high)}")
-    print("price_targets:")
+    print("one_year_statistical_price_targets:")
+    print(f"  historical_lookback: {preview.price_target_lookback}")
+    print(f"  horizon: {preview.price_target_horizon}")
+    print(f"  data_source: {preview.data_source}")
+    print("  disclosure: statistical targets, not forecasts or guarantees")
     for target in preview.price_targets:
         relation = target.relation_to_ath.replace("-", "_")
         print(f"  {target.label}: {_format_cli_price(target.price)} ({relation})")

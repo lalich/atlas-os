@@ -41,17 +41,19 @@ The component total is capped at 100.
 - Moving average structure combines short-term dislocation, longer-term trend damage, and early improvement in the 50 DMA rate of change.
 - Bonus / penalty factors are always explained in the calculator output. Bonus examples include price below the lower 2.5 standard deviation Bollinger Band, strong volume acceleration, and unusually deep dislocation near the 52-week low. Penalty-risk examples include missing data, extreme illiquidity, insufficient price history, weak market-cap data, and moving average structure that is not aligned with GreenRock criteria.
 
-## Price Target Notes
+## 1-Year Statistical Price Target Notes
 
-The score calculator also displays a Standard Deviation Price Targets table for the requested ticker when sufficient price history is available.
+The score calculator displays a 1-Year Statistical Price Targets table for the requested ticker when sufficient price history is available. These are statistical targets, not forecasts or guarantees.
 
 | Field | Meaning |
 |---|---|
 | Current price | Latest available close used by the local score preview. |
-| All-time high | Highest close available in the fetched price history. |
-| +2, +3, +5, +7 SD target | Current price plus the selected number of standard deviations from the available close history. |
+| All-Time High | Highest close available in the full price history returned by the provider, not the 52-week high. |
+| Historical lookback | Previous 5 years of price history where available. |
+| Horizon | 1 year. |
+| +2, +3, +5, +7 SD target | Current price plus the selected number of annualized standard deviations based on prior 5-year daily return behavior. |
 
-Targets below the available all-time high are styled pink because they remain below a prior high-water mark. Targets above the available all-time high are styled GreenRock green. If all-time high or standard deviation data cannot be calculated cleanly, Atlas shows a data-quality warning instead of implying precision.
+Targets below the available All-Time High are styled pink because they remain below a prior high-water mark. Targets above the available All-Time High are styled GreenRock green. If the provider returns limited history, Atlas warns that ATH is based on available provider history and is not guaranteed full exchange history. If All-Time High or standard deviation data cannot be calculated cleanly, Atlas shows a data-quality warning instead of implying precision.
 
 ## Data Quality Notes
 

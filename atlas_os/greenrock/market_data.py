@@ -45,7 +45,7 @@ class RealMarketDataProvider(MarketDataProvider):
     def fetch_stocks(self) -> tuple[MockStock, ...]:
         raise MarketDataConfigurationError(
             "Real market data provider is not configured. Set ATLAS_MARKET_DATA_PROVIDER "
-            "and ATLAS_GREENROCK_REAL_TICKERS, or run with --data mock."
+            "and ATLAS_GREENROCK_REAL_TICKERS."
         )
 
 
@@ -58,7 +58,7 @@ class YFinanceMarketDataProvider(RealMarketDataProvider):
         except ImportError as exc:
             raise MarketDataConfigurationError(
                 "Real mode provider 'yfinance' is configured but the optional yfinance package "
-                "is not installed. Install atlas-os with the market-data extra or use --data mock."
+                "is not installed. Install atlas-os with the market-data extra."
             ) from exc
         self.tickers = tuple(ticker.strip().upper() for ticker in tickers if ticker.strip())
         if not self.tickers:
@@ -76,7 +76,7 @@ class YFinanceMarketDataProvider(RealMarketDataProvider):
         except ImportError as exc:
             raise MarketDataConfigurationError(
                 "Real mode provider 'yfinance' is configured but the optional yfinance package "
-                "is not installed. Install atlas-os with the market-data extra or use --data mock."
+                "is not installed. Install atlas-os with the market-data extra."
             ) from exc
         if hasattr(yf, "set_tz_cache_location"):
             yf.set_tz_cache_location("/tmp/atlas-yfinance-cache")
@@ -84,7 +84,7 @@ class YFinanceMarketDataProvider(RealMarketDataProvider):
         stocks: list[MockStock] = []
         for ticker in self.tickers:
             instrument = yf.Ticker(ticker)
-            history = instrument.history(period="18mo", interval="1d", auto_adjust=False)
+            history = instrument.history(period="max", interval="1d", auto_adjust=False)
             if history is None or history.empty:
                 continue
 
@@ -113,7 +113,7 @@ class YFinanceMarketDataProvider(RealMarketDataProvider):
                     symbol=ticker,
                     company_name=company_name,
                     market_cap=market_cap,
-                    prices=tuple(bars[-252:]),
+                    prices=tuple(bars),
                     has_price_history=True,
                     has_market_cap=raw_market_cap is not None and market_cap > 0,
                     has_volume_data=any(bar.volume > 0 for bar in bars[-252:]),
@@ -164,7 +164,7 @@ def get_market_data_provider(data_mode: str, output_dir: Path | None = None) -> 
     if not provider_name:
         raise MarketDataConfigurationError(
             "Real market data provider is not configured. Set ATLAS_MARKET_DATA_PROVIDER "
-            "and ATLAS_GREENROCK_REAL_TICKERS, or run with --data mock."
+            "and ATLAS_GREENROCK_REAL_TICKERS."
         )
     if provider_name != "yfinance":
         raise MarketDataConfigurationError(

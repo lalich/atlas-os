@@ -102,9 +102,19 @@ The Picks Board does not publish, email, distribute, or bypass approval.
 
 ## Score Calculator Data Source
 
-The GreenRock Score Calculator at `/greenrock/score` and `atlas greenrock score <ticker>` is preview-only. Mock mode scores local generated sample tickers. Real mode fetches only the requested ticker through the configured provider and fails closed if the provider is unavailable.
+The GreenRock Score Calculator at `/greenrock/score` and `atlas greenrock score <ticker>` is real-data-only for operators. It fetches only the requested ticker through the configured provider and fails closed if the provider is unavailable.
+
+Configure locally:
+
+```bash
+export ATLAS_MARKET_DATA_PROVIDER=yfinance
+python3 -m pip install -e ".[market-data]"
+atlas greenrock score AAPL
+```
 
 The calculator does not create workflow runs, reports, approvals, artifacts, emails, publications, or distribution actions.
+
+If the operator explicitly saves a scored ticker to a GreenRock list, Atlas writes only to local CSV storage. Subscriber-style lists are stored under `.atlas/output/greenrock/watchlists/`, and bucket lists reuse `.atlas/output/greenrock/universes/`.
 
 Score components:
 

@@ -93,7 +93,9 @@ class GreenRockMarketDataTests(unittest.TestCase):
         self.assertIn("signal_label:", output)
         self.assertIn("rank_band:", output)
         self.assertIn("all_time_high:", output)
-        self.assertIn("price_targets:", output)
+        self.assertIn("one_year_statistical_price_targets:", output)
+        self.assertIn("historical_lookback:", output)
+        self.assertIn("horizon: 1 year", output)
         self.assertIn("+2 SD:", output)
         self.assertIn("+3 SD:", output)
         self.assertIn("+5 SD:", output)
@@ -111,10 +113,12 @@ class GreenRockMarketDataTests(unittest.TestCase):
 
     def test_real_score_without_provider_fails_safely(self) -> None:
         with patch.dict("os.environ", {"ATLAS_MARKET_DATA_PROVIDER": ""}, clear=False):
-            output, exit_code = _run_cli_raw(["greenrock", "score", "AAPL", "--data", "real"])
+            output, exit_code = _run_cli_raw(["greenrock", "score", "AAPL"])
 
         self.assertEqual(exit_code, 1)
         self.assertIn("GreenRock score preview blocked", output)
+        self.assertIn("export ATLAS_MARKET_DATA_PROVIDER=yfinance", output)
+        self.assertIn('python3 -m pip install -e ".[market-data]"', output)
         self.assertIn("No report, approval, artifact", output)
 
     def test_workflow_with_fake_real_provider_labels_report_and_run(self) -> None:

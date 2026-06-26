@@ -15,8 +15,8 @@
 ## Scoring Improvements
 
 - Make the GreenRock Score Calculator the primary operator surface for explaining why a name qualifies before it appears in a report.
-- Keep `/greenrock/score` structured as a reusable product surface: hero score card, ticker input, rank bands, score breakdown cards, price targets, Finviz link, mock/real data badge, and data-quality warnings.
-- Preserve preview-only behavior for the calculator. It must not create reports, approvals, artifacts, emails, publications, or client-facing files.
+- Keep `/greenrock/score` structured as a reusable product surface: hero score card, ticker input, rank bands, score breakdown cards, 1-year statistical price targets, Finviz link, real-data badge, save-to-list area, and data-quality warnings.
+- Preserve preview-only behavior for score calculation. It must not create reports, approvals, artifacts, emails, publications, or client-facing files. Saving a ticker writes only to local GreenRock list CSVs.
 - Calibrate GreenRock Score against historical mock fixtures first, then approved historical data later.
 - Add sub-scores for trend, dislocation, participation, volatility, and liquidity.
 - Track score stability across multiple lookback windows.

@@ -36,7 +36,7 @@ from atlas_os.db.database import connect, initialize_database
 from atlas_os.greenrock.pdf_export import render_markdown_report_to_pdf
 from atlas_os.greenrock.market_data import MarketDataConfigurationError
 from atlas_os.greenrock.score import calculate_score_preview, score_signal
-from atlas_os.greenrock.universe import load_greenrock_universes
+from atlas_os.greenrock.universe import GREENROCK_PLACEMENT_LABELS, add_ticker_to_greenrock_list, load_greenrock_universes
 from atlas_os.greenrock.workflow import run_greenrock_screening_workflow
 from atlas_os.greenrock.scoring import signal_label
 
@@ -275,8 +275,14 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
             200,
             render_greenrock_score(
                 ticker=form.get("ticker", ""),
-                data_mode=form.get("data_mode", "mock"),
-                selection_mode=form.get("selection_mode", ""),
+            ),
+        )
+    if method == "POST" and route == "/greenrock/score/save":
+        return WebResponse(
+            200,
+            save_greenrock_score_ticker(
+                ticker=form.get("ticker", ""),
+                list_key=form.get("list_key", ""),
             ),
         )
     if method == "POST" and route.startswith("/tasks/") and route.endswith("/status"):
@@ -579,9 +585,8 @@ def render_greenrock_picks_board(status_message: str | None = None) -> str:
 
 def render_greenrock_score(
     ticker: str = "",
-    data_mode: str = "mock",
-    selection_mode: str = "",
     status_message: str | None = None,
+    save_status: str | None = None,
 ) -> str:
     settings = get_settings()
     result_html = ""
@@ -591,8 +596,7 @@ def render_greenrock_score(
         try:
             preview = calculate_score_preview(
                 cleaned_ticker,
-                data_mode=data_mode,
-                selection_mode=selection_mode or None,
+                data_mode="real",
                 output_dir=settings.output_dir,
             )
             result_html = _score_preview_panel(preview)
@@ -601,6 +605,7 @@ def render_greenrock_score(
             <section class="panel warning-panel">
               <h2>Score Preview Blocked</h2>
               <p>{_safe(error)}</p>
+              {_score_setup_instructions()}
               <p class="subtle">No report, approval, artifact, email, publication, or external action was created.</p>
             </section>
             """
@@ -611,23 +616,15 @@ def render_greenrock_score(
       <div>
         <p class="eyebrow">GreenRock Analysts</p>
         <h1>GreenRock Score Calculator</h1>
-        <p>Preview a ticker's GreenRock Score, rank band, component logic, and price targets locally without creating workflow records.</p>
+        <p>Score any ticker against the GreenRock technical dislocation framework.</p>
       </div>
       <form method="post" action="/greenrock/score" class="score-form">
         <input name="ticker" value="{_safe(cleaned_ticker)}" placeholder="Ticker" required>
-        <select name="data_mode">
-          <option value="mock" {'selected' if data_mode == 'mock' else ''}>Mock</option>
-          <option value="real" {'selected' if data_mode == 'real' else ''}>Real</option>
-        </select>
-        <select name="selection_mode">
-          <option value="" {'selected' if not selection_mode else ''}>Default Selection</option>
-          <option value="strict" {'selected' if selection_mode == 'strict' else ''}>Strict</option>
-          <option value="ranked" {'selected' if selection_mode == 'ranked' else ''}>Ranked</option>
-        </select>
         <button type="submit">Calculate Score</button>
       </form>
     </section>
     {result_html}
+    {_save_ticker_panel(cleaned_ticker, save_status)}
     <section class="panel">
       <div class="section-head">
         <h2>How the Score Ranks</h2>
@@ -640,7 +637,7 @@ def render_greenrock_score(
         <h2>How the Score Works</h2>
         <span class="subtle">Current methodology weights total 100 points</span>
       </div>
-      <p class="subtle">GreenRock Score is a technical dislocation ranking aid. It prioritizes review candidates; it is not a recommendation, guarantee, or publication approval.</p>
+      <p class="subtle">GreenRock Score is a technical dislocation ranking aid. It prioritizes review candidates; it is not investment advice, not a price forecast, not a guarantee, and not publication approval.</p>
       <div class="score-explainer">
         <div><strong>52-week low proximity</strong><span>20 pts</span><p>Rewards names trading close to the 52-week low.</p></div>
         <div><strong>Bollinger Band setup</strong><span>20 pts</span><p>Rewards price location nearer the lower 2.5σ band.</p></div>
@@ -653,6 +650,26 @@ def render_greenrock_score(
     </section>
     """
     return _page("GreenRock Score Calculator", content, active="/greenrock/score")
+
+
+def save_greenrock_score_ticker(ticker: str, list_key: str) -> str:
+    settings = get_settings()
+    cleaned_ticker = ticker.strip().upper()
+    save_status = ""
+    try:
+        preview = calculate_score_preview(cleaned_ticker, data_mode="real", output_dir=settings.output_dir)
+        placement = add_ticker_to_greenrock_list(
+            settings.output_dir,
+            preview.candidate.symbol,
+            list_key,
+            market_cap_bucket=preview.candidate.market_cap_bucket,
+        )
+        verb = "saved to" if placement.added else "already exists in"
+        warnings = " ".join(placement.warnings)
+        save_status = f"{placement.ticker} {verb} {placement.list_label}. {warnings}".strip()
+    except (MarketDataConfigurationError, ValueError) as error:
+        save_status = f"Save blocked: {error}"
+    return render_greenrock_score(ticker=cleaned_ticker, save_status=save_status)
 
 
 def render_tasks(status_message: str | None = None) -> str:
@@ -1270,8 +1287,8 @@ def _score_preview_panel(preview) -> str:
       </section>
       <section class="panel inner-panel price-target-panel">
         <div class="section-head">
-          <h2>Standard Deviation Price Targets</h2>
-          <span class="subtle">Based on available local price history</span>
+          <h2>1-Year Statistical Price Targets</h2>
+          <span class="subtle">Statistical targets, not forecasts or guarantees</span>
         </div>
         {_price_target_table(preview)}
       </section>
@@ -1280,6 +1297,40 @@ def _score_preview_panel(preview) -> str:
         <ul class="compact-list">{warning_items}</ul>
       </section>
       <p>{_finviz_link(candidate.symbol)}</p>
+    </section>
+    """
+
+
+def _score_setup_instructions() -> str:
+    return """
+    <div class="setup-box">
+      <p>Configure the real score calculator locally:</p>
+      <pre>export ATLAS_MARKET_DATA_PROVIDER=yfinance
+python3 -m pip install -e ".[market-data]"</pre>
+    </div>
+    """
+
+
+def _save_ticker_panel(ticker: str, save_status: str | None = None) -> str:
+    options = "".join(
+        f"<option value='{_safe(key)}'>{_safe(label)}</option>"
+        for key, label in GREENROCK_PLACEMENT_LABELS.items()
+    )
+    status = f"<p class='save-status'>{_safe(save_status)}</p>" if save_status else ""
+    disabled = "disabled" if not ticker else ""
+    return f"""
+    <section class="panel save-list-panel">
+      <div class="section-head">
+        <h2>Add Ticker to GreenRock List</h2>
+        <span class="subtle">Local storage only</span>
+      </div>
+      <form method="post" action="/greenrock/score/save" class="save-list-form">
+        <input name="ticker" value="{_safe(ticker)}" placeholder="Ticker" required>
+        <select name="list_key">{options}</select>
+        <button type="submit" {disabled}>Save Ticker to List</button>
+      </form>
+      {status}
+      <p class="subtle">Saving writes only to local GreenRock lists. It does not publish, create a report, open an approval, or create an artifact.</p>
     </section>
     """
 
@@ -1339,7 +1390,8 @@ def _score_component_card(component) -> str:
 
 def _price_target_table(preview) -> str:
     candidate = preview.candidate
-    if preview.price_target_warnings or preview.all_time_high is None:
+    targets_unavailable = preview.all_time_high is None or all(target.price is None for target in preview.price_targets)
+    if targets_unavailable:
         warning_items = "".join(f"<li>{_safe(warning)}</li>" for warning in preview.price_target_warnings)
         return f"""
         <div class="warning-panel target-warning">
@@ -1348,6 +1400,11 @@ def _price_target_table(preview) -> str:
         </div>
         """
 
+    warning_html = ""
+    if preview.price_target_warnings:
+        warning_html = "<ul class='compact-list target-notes'>" + "".join(
+            f"<li>{_safe(warning)}</li>" for warning in preview.price_target_warnings
+        ) + "</ul>"
     rows = [
         ("Current Price", candidate.indicators.latest_close, ""),
         ("All-Time High", preview.all_time_high, "ath-row"),
@@ -1358,10 +1415,17 @@ def _price_target_table(preview) -> str:
         for label, price, css_class in rows
     )
     return f"""
+    <dl class="target-assumptions">
+      <div><dt>Historical lookback</dt><dd>{_safe(preview.price_target_lookback)}</dd></div>
+      <div><dt>Horizon</dt><dd>{_safe(preview.price_target_horizon)}</dd></div>
+      <div><dt>Data source</dt><dd>{_safe(preview.data_source)}</dd></div>
+      <div><dt>Disclosure</dt><dd>These are statistical targets, not forecasts or guarantees.</dd></div>
+    </dl>
     <table class="price-target-table">
       <thead><tr><th>Target</th><th>Price</th></tr></thead>
       <tbody>{body}</tbody>
     </table>
+    {warning_html}
     """
 
 
@@ -1972,9 +2036,14 @@ def _page(title: str, content: str, active: str = "/") -> str:
     .picks-table {{ min-width: 1180px; }}
     .picks-table th:nth-child(11), .picks-table td:nth-child(11) {{ min-width: 220px; }}
     .calculator-card {{ display: flex; align-items: center; justify-content: space-between; gap: 16px; border-color: rgba(55,214,122,.38); }}
-    .score-tool-hero {{ display: grid; grid-template-columns: minmax(0, 1fr) minmax(420px, .72fr); gap: 22px; align-items: end; }}
+    .score-tool-hero {{ display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, .5fr); gap: 22px; align-items: end; }}
     .score-tool-hero .score-form {{ margin: 0; }}
-    .score-form {{ display: grid; grid-template-columns: minmax(150px, 1fr) 130px 170px auto; gap: 10px; }}
+    .score-form {{ display: grid; grid-template-columns: minmax(150px, 1fr) auto; gap: 10px; }}
+    .save-list-panel {{ border-color: rgba(55,214,122,.28); }}
+    .save-list-form {{ display: grid; grid-template-columns: minmax(150px, .6fr) minmax(220px, 1fr) auto; gap: 10px; }}
+    .save-status {{ color: #c9ffdc; font-weight: 700; }}
+    .setup-box {{ border: 1px solid rgba(243,201,105,.32); border-radius: 8px; padding: 12px; background: rgba(0,0,0,.18); margin: 12px 0; }}
+    .setup-box pre {{ margin: 8px 0 0; white-space: pre-wrap; color: #ffe5a3; }}
     .score-result {{ border-color: rgba(55,214,122,.42); background: linear-gradient(135deg, rgba(27,32,41,.96), rgba(22,39,31,.9)); }}
     .score-hero-line {{ display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 14px 0 18px; padding: 16px; border: 1px solid rgba(243,201,105,.28); border-radius: 8px; background: rgba(243,201,105,.07); }}
     .score-gauge {{ min-width: 180px; }}
@@ -1996,6 +2065,8 @@ def _page(title: str, content: str, active: str = "/") -> str:
     .component-topline {{ display: flex; justify-content: space-between; gap: 12px; align-items: start; }}
     .component-topline span {{ color: var(--gold); font-weight: 800; white-space: nowrap; }}
     .price-target-panel {{ overflow-x: auto; }}
+    .target-assumptions {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 0 0 12px; }}
+    .target-assumptions div {{ border: 1px solid rgba(255,255,255,.08); border-radius: 8px; padding: 10px; background: rgba(255,255,255,.035); }}
     .price-target-table tr.target-below-ath td:last-child {{ color: #ffc4d3; font-weight: 800; }}
     .price-target-table tr.target-above-ath td:last-child {{ color: #b9ffd3; font-weight: 800; }}
     .price-target-table tr.ath-row td:last-child {{ color: var(--gold); font-weight: 800; }}
@@ -2031,7 +2102,7 @@ def _page(title: str, content: str, active: str = "/") -> str:
     footer {{ border-top: 1px solid var(--line); padding: 18px 30px 28px; color: var(--muted); background: rgba(8,10,16,.7); }}
     footer div {{ display: flex; gap: 12px; flex-wrap: wrap; max-width: 1500px; margin: 0 auto; }}
     @media (max-width: 1000px) {{
-      .attention-grid, .board-meta, .nav-grid, .project-grid, .candidate-grid, .detail-grid, .kanban, .agent-grid, .task-form, .mega-card, .universe-grid, .score-form, .score-explainer, .score-tool-hero, .rank-grid, .score-breakdown-grid {{ grid-template-columns: 1fr; }}
+      .attention-grid, .board-meta, .nav-grid, .project-grid, .candidate-grid, .detail-grid, .kanban, .agent-grid, .task-form, .mega-card, .universe-grid, .score-form, .save-list-form, .score-explainer, .score-tool-hero, .rank-grid, .score-breakdown-grid, .target-assumptions {{ grid-template-columns: 1fr; }}
       .calculator-card, .score-hero-line {{ align-items: flex-start; flex-direction: column; }}
       main, header, footer {{ padding-left: 16px; padding-right: 16px; }}
       .hero {{ min-height: auto; }}

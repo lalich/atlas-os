@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import math
 import statistics
 from dataclasses import dataclass
 from pathlib import Path
@@ -47,12 +48,14 @@ class ScorePreview:
     all_time_high: float | None
     price_targets: tuple[PriceTarget, ...]
     price_target_warnings: tuple[str, ...]
+    price_target_lookback: str
+    price_target_horizon: str
     data_quality_warnings: tuple[str, ...]
 
 
 def calculate_score_preview(
     ticker: str,
-    data_mode: str = "mock",
+    data_mode: str = "real",
     selection_mode: str | None = None,
     output_dir: Path | None = None,
     provider: MarketDataProvider | None = None,
@@ -94,7 +97,7 @@ def calculate_score_preview(
         selection_label=selection_label,
     )
     component_scores = greenrock_score_breakdown(candidate.indicators, _rule_results(candidate))
-    all_time_high, price_targets, price_target_warnings = _price_targets(stock.prices, candidate.has_price_history)
+    all_time_high, price_targets, price_target_warnings, price_target_lookback = _price_targets(stock.prices, candidate.has_price_history)
     bonus_penalty_explanations = _bonus_penalty_explanations(candidate)
     return ScorePreview(
         candidate=candidate,
@@ -107,6 +110,8 @@ def calculate_score_preview(
         all_time_high=all_time_high,
         price_targets=price_targets,
         price_target_warnings=price_target_warnings,
+        price_target_lookback=price_target_lookback,
+        price_target_horizon="1 year",
         data_quality_warnings=_data_quality_warnings(candidate) + price_target_warnings,
     )
 
@@ -125,7 +130,8 @@ def _provider_for_score(symbol: str, data_mode: str, output_dir: Path | None) ->
     if provider_name != "yfinance":
         raise MarketDataConfigurationError(
             "Real score preview requires ATLAS_MARKET_DATA_PROVIDER=yfinance. "
-            "Use --data mock or configure the real provider locally."
+            "Configure real data locally with: export ATLAS_MARKET_DATA_PROVIDER=yfinance; "
+            "python3 -m pip install -e \".[market-data]\""
         )
     return YFinanceMarketDataProvider((symbol,), universe_name="score_preview")
 
@@ -241,28 +247,44 @@ def _bonus_penalty_explanations(candidate: StockCandidate) -> tuple[str, ...]:
     return tuple(explanations)
 
 
-def _price_targets(prices, has_price_history: bool) -> tuple[float | None, tuple[PriceTarget, ...], tuple[str, ...]]:
+def _price_targets(
+    prices,
+    has_price_history: bool,
+) -> tuple[float | None, tuple[PriceTarget, ...], tuple[str, ...], str]:
     closes = [price.close for price in prices if price.close > 0] if has_price_history else []
     labels = ("+2 SD", "+3 SD", "+5 SD", "+7 SD")
     empty_targets = tuple(PriceTarget(label, None, "unavailable") for label in labels)
     if len(closes) < 2:
-        return None, empty_targets, ("Standard deviation price targets unavailable: insufficient price history.",)
+        return None, empty_targets, ("1-year statistical price targets unavailable: insufficient price history.",), "unavailable"
+
+    all_time_high = max(closes)
+    lookback_closes = closes[-1260:]
+    lookback_label = "5 years" if len(closes) >= 1260 else f"{len(lookback_closes)} trading days available"
+    returns = [
+        (lookback_closes[index] - lookback_closes[index - 1]) / lookback_closes[index - 1]
+        for index in range(1, len(lookback_closes))
+        if lookback_closes[index - 1] > 0
+    ]
+    warnings: list[str] = []
+    if len(closes) < 1260:
+        warnings.append("ATH based on available provider history, not guaranteed full exchange history.")
+    if len(returns) < 2:
+        return all_time_high, empty_targets, tuple(warnings + ["1-year statistical price targets unavailable: insufficient return history."]), lookback_label
 
     current_price = closes[-1]
-    all_time_high = max(closes)
-    deviation = statistics.pstdev(closes)
-    if deviation <= 0:
-        return all_time_high, empty_targets, ("Standard deviation price targets unavailable: price history has no usable variation.",)
+    annualized_deviation = statistics.pstdev(returns) * math.sqrt(252)
+    if annualized_deviation <= 0:
+        return all_time_high, empty_targets, tuple(warnings + ["1-year statistical price targets unavailable: price history has no usable variation."]), lookback_label
 
     targets = tuple(
         PriceTarget(
             label=label,
-            price=round(current_price + multiple * deviation, 2),
-            relation_to_ath="above-ath" if current_price + multiple * deviation >= all_time_high else "below-ath",
+            price=round(current_price * (1 + multiple * annualized_deviation), 2),
+            relation_to_ath="above-ath" if current_price * (1 + multiple * annualized_deviation) >= all_time_high else "below-ath",
         )
         for label, multiple in (("+2 SD", 2), ("+3 SD", 3), ("+5 SD", 5), ("+7 SD", 7))
     )
-    return round(all_time_high, 2), targets, ()
+    return round(all_time_high, 2), targets, tuple(warnings), lookback_label
 
 
 def _volume_acceleration(candidate: StockCandidate) -> str:

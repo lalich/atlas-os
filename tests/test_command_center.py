@@ -6,6 +6,7 @@ import tempfile
 import types
 import unittest
 from dataclasses import replace
+from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -16,6 +17,7 @@ from atlas_os.core.artifacts import list_artifacts
 from atlas_os.core.workflow_runs import list_workflow_runs
 from atlas_os.db.database import connect, initialize_database
 from atlas_os.greenrock.market_data import MarketDataProvider
+from atlas_os.greenrock.models import PriceBar
 from atlas_os.greenrock.sample_data import load_mock_stocks
 from atlas_os.greenrock.score import calculate_score_preview
 from atlas_os.web_app import dispatch_request
@@ -106,25 +108,33 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("Small/mid-cap section has 0/11 picks", response.body)
 
     def test_score_page_route_returns_200_and_form_returns_result(self) -> None:
+        preview = calculate_score_preview("LC01", provider=FullHistoryProvider())
         with _isolated_env():
             page = dispatch_request("GET", "/greenrock/score")
-            result = dispatch_request("POST", "/greenrock/score", "ticker=LC01&data_mode=mock&selection_mode=strict")
+            with patch("atlas_os.web_app.calculate_score_preview", return_value=preview):
+                result = dispatch_request("POST", "/greenrock/score", "ticker=LC01")
 
         self.assertEqual(page.status, 200)
         self.assertIn("GreenRock Score Calculator", page.body)
+        self.assertIn("Score any ticker against the GreenRock technical dislocation framework.", page.body)
+        self.assertNotIn('name="data_mode"', page.body)
+        self.assertNotIn(">Mock<", page.body)
+        self.assertNotIn(">Real<", page.body)
         self.assertEqual(result.status, 200)
         self.assertIn("LC01 Score Preview", result.body)
         self.assertIn("GreenRock Score", result.body)
         self.assertIn("How the Score Works", result.body)
         self.assertIn("How the Score Ranks", result.body)
-        self.assertIn("Strong: 70-84 (LC01: 83.1)", result.body)
+        self.assertIn(f"{preview.candidate.symbol}: {preview.candidate.score:.1f}", result.body)
         self.assertIn("Score Breakdown", result.body)
         self.assertIn("Current methodology weights total 100 points", result.body)
         self.assertIn("https://finviz.com/quote.ashx?t=LC01", result.body)
 
     def test_score_page_renders_explainability_and_price_targets(self) -> None:
+        preview = calculate_score_preview("LC01", provider=FullHistoryProvider())
         with _isolated_env():
-            result = dispatch_request("POST", "/greenrock/score", "ticker=LC01&data_mode=mock&selection_mode=strict")
+            with patch("atlas_os.web_app.calculate_score_preview", return_value=preview):
+                result = dispatch_request("POST", "/greenrock/score", "ticker=LC01")
 
         self.assertEqual(result.status, 200)
         for component in (
@@ -140,8 +150,12 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("Component score", result.body)
         self.assertIn("Weight", result.body)
         self.assertIn("plain-English rationale", result.body)
-        self.assertIn("Bonus: unusually deep dislocation near the 52-week low.", result.body)
-        self.assertIn("Standard Deviation Price Targets", result.body)
+        self.assertIn("Penalty risk: moving average structure is not fully aligned with GreenRock criteria.", result.body)
+        self.assertIn("1-Year Statistical Price Targets", result.body)
+        self.assertIn("Historical lookback", result.body)
+        self.assertIn("5 years", result.body)
+        self.assertIn("Horizon", result.body)
+        self.assertIn("not forecasts or guarantees", result.body)
         self.assertIn("All-Time High", result.body)
         self.assertIn("+2 SD", result.body)
         self.assertIn("+3 SD", result.body)
@@ -154,19 +168,83 @@ class CommandCenterTests(unittest.TestCase):
         preview = calculate_score_preview("LC01", provider=FlatHistoryProvider())
         with _isolated_env():
             with patch("atlas_os.web_app.calculate_score_preview", return_value=preview):
-                result = dispatch_request("POST", "/greenrock/score", "ticker=LC01&data_mode=mock")
+                result = dispatch_request("POST", "/greenrock/score", "ticker=LC01")
 
         self.assertEqual(result.status, 200)
         self.assertIn("Price targets cannot be calculated cleanly", result.body)
-        self.assertIn("Standard deviation price targets unavailable", result.body)
+        self.assertIn("1-year statistical price targets unavailable", result.body)
+
+    def test_score_preview_uses_full_history_for_ath_and_five_year_targets(self) -> None:
+        preview = calculate_score_preview("LC01", provider=FullHistoryProvider())
+
+        self.assertEqual(preview.all_time_high, 500.0)
+        self.assertEqual(preview.price_target_lookback, "5 years")
+        self.assertEqual(preview.price_target_horizon, "1 year")
+        self.assertTrue(all(target.price is not None for target in preview.price_targets))
+
+    def test_score_page_missing_real_provider_shows_setup_instructions(self) -> None:
+        with _isolated_env():
+            with patch.dict("os.environ", {"ATLAS_MARKET_DATA_PROVIDER": ""}, clear=False):
+                result = dispatch_request("POST", "/greenrock/score", "ticker=AAPL")
+
+        self.assertEqual(result.status, 200)
+        self.assertIn("Score Preview Blocked", result.body)
+        self.assertIn("export ATLAS_MARKET_DATA_PROVIDER=yfinance", result.body)
+        self.assertIn('python3 -m pip install -e ".[market-data]"', result.body)
 
     def test_score_page_invalid_ticker_shows_clean_warning(self) -> None:
         with _isolated_env():
-            result = dispatch_request("POST", "/greenrock/score", "ticker=NOTREAL&data_mode=mock")
+            with patch.dict("os.environ", {"ATLAS_MARKET_DATA_PROVIDER": ""}, clear=False):
+                result = dispatch_request("POST", "/greenrock/score", "ticker=NOTREAL")
 
         self.assertEqual(result.status, 200)
         self.assertIn("Score Preview Blocked", result.body)
         self.assertIn("No report, approval, artifact", result.body)
+
+    def test_score_calculation_creates_no_reports_approvals_or_artifacts(self) -> None:
+        preview = calculate_score_preview("LC01", provider=FullHistoryProvider())
+        with _isolated_env() as root:
+            with patch("atlas_os.web_app.calculate_score_preview", return_value=preview):
+                result = dispatch_request("POST", "/greenrock/score", "ticker=LC01")
+            with connect(initialize_database(root / "atlas.db")) as connection:
+                approvals = list_approvals(connection)
+                artifacts = list_artifacts(connection)
+                runs = list_workflow_runs(connection)
+
+        self.assertEqual(result.status, 200)
+        self.assertEqual(approvals, ())
+        self.assertEqual(artifacts, ())
+        self.assertEqual(runs, ())
+
+    def test_save_ticker_to_watchlist_and_duplicate_are_local_only(self) -> None:
+        preview = calculate_score_preview("LC01", provider=FullHistoryProvider())
+        with _isolated_env() as root:
+            with patch("atlas_os.web_app.calculate_score_preview", return_value=preview):
+                first = dispatch_request("POST", "/greenrock/score/save", "ticker=LC01&list_key=watchlist")
+                second = dispatch_request("POST", "/greenrock/score/save", "ticker=LC01&list_key=watchlist")
+            saved = (root / "output" / "greenrock" / "watchlists" / "watchlist.csv").read_text(encoding="utf-8")
+            with connect(initialize_database(root / "atlas.db")) as connection:
+                approvals = list_approvals(connection)
+                artifacts = list_artifacts(connection)
+                runs = list_workflow_runs(connection)
+
+        self.assertEqual(first.status, 200)
+        self.assertEqual(second.status, 200)
+        self.assertIn("LC01 saved to Watchlist", first.body)
+        self.assertIn("duplicate ignored", second.body)
+        self.assertEqual(saved.count("LC01"), 1)
+        self.assertEqual(approvals, ())
+        self.assertEqual(artifacts, ())
+        self.assertEqual(runs, ())
+
+    def test_save_ticker_bucket_mismatch_warning_appears(self) -> None:
+        preview = calculate_score_preview("LC01", provider=FullHistoryProvider())
+        with _isolated_env():
+            with patch("atlas_os.web_app.calculate_score_preview", return_value=preview):
+                result = dispatch_request("POST", "/greenrock/score/save", "ticker=LC01&list_key=large_cap")
+
+        self.assertEqual(result.status, 200)
+        self.assertIn("does not currently match Large Cap Watchlist bucket", result.body)
 
     def test_browser_run_buttons_pass_selected_data_mode(self) -> None:
         fake_run = types.SimpleNamespace(run_id="greenrock-test", data_mode="real")
@@ -330,6 +408,32 @@ class FlatHistoryProvider(MarketDataProvider):
         stock = load_mock_stocks()[0]
         flat_prices = tuple(replace(price, close=50.0) for price in stock.prices)
         return (replace(stock, prices=flat_prices),)
+
+
+class FullHistoryProvider(MarketDataProvider):
+    data_mode = "real"
+    source_name = "full_history_fixture"
+
+    def fetch_stocks(self):
+        stock = load_mock_stocks()[0]
+        start = date.today() - timedelta(days=1511)
+        bars = []
+        for index in range(1512):
+            close = 80 + index * 0.02
+            if index == 0:
+                close = 500.0
+            elif index >= 252:
+                close = 100 + (5 if index % 2 else -5) + (index - 252) * 0.002
+            if index > 1460:
+                close -= (index - 1460) * 0.15
+            bars.append(
+                PriceBar(
+                    date=start + timedelta(days=index),
+                    close=round(max(close, 5.0), 2),
+                    volume=1_000_000 + index * 100,
+                )
+            )
+        return (replace(stock, prices=tuple(bars)),)
 
 
 class _isolated_env:

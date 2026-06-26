@@ -45,8 +45,7 @@ atlas greenrock latest-report --print
 atlas greenrock latest-run
 atlas greenrock latest-candidates
 atlas greenrock picks-board
-atlas greenrock score LC01 --data mock
-atlas greenrock score AAPL --data real
+atlas greenrock score AAPL
 atlas greenrock review
 atlas greenrock open-latest
 atlas greenrock export-pdf <approval_id>
@@ -113,13 +112,14 @@ Draft reports remain local, approval-gated, and blocked from client-facing use. 
 The GreenRock Score Calculator is available in the browser at `/greenrock/score` and from the CLI:
 
 ```bash
-atlas greenrock score LC01 --data mock
-atlas greenrock score AAPL --data real
+export ATLAS_MARKET_DATA_PROVIDER=yfinance
+python3 -m pip install -e ".[market-data]"
+atlas greenrock score AAPL
 ```
 
 It is preview-only. It does not create reports, approval records, artifacts, emails, publications, or external distribution actions.
 
-The calculator shows the ticker score, signal label, rank band, component breakdown with raw metrics and explanations, bonus/penalty factor definitions, Finviz link, data-quality warnings, all-time high, and +2/+3/+5/+7 standard deviation price targets calculated from available price history. Mock mode remains available by default. Real mode requires the configured local market data provider.
+The calculator is real-data-only for operators. It shows the ticker score, signal label, rank band, component breakdown with raw metrics and explanations, bonus/penalty factor definitions, Finviz link, data-quality warnings, All-Time High, and +2/+3/+5/+7 one-year statistical price targets. Real mode requires the configured local market data provider.
 
 ## GreenRock Real Data Mode
 
@@ -190,8 +190,7 @@ The board displays one featured Mega Rock pick, eleven large-cap picks, and elev
 Preview a single ticker score without creating a workflow run, report, approval, artifact, email, or publication:
 
 ```bash
-atlas greenrock score LC01 --data mock
-atlas greenrock score AAPL --data real
+atlas greenrock score AAPL
 ```
 
 In the Command Center, open:
