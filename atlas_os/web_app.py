@@ -37,7 +37,7 @@ from atlas_os.greenrock.pdf_export import render_markdown_report_to_pdf
 from atlas_os.greenrock.market_data import MarketDataConfigurationError
 from atlas_os.greenrock.population import GREENROCK_POPULATION_LABELS
 from atlas_os.greenrock.score import calculate_score_preview, score_signal
-from atlas_os.greenrock.scanner import latest_scan, run_population_scan
+from atlas_os.greenrock.scanner import latest_scan, promote_scan_ticker, run_population_scan
 from atlas_os.greenrock.universe import GREENROCK_PLACEMENT_LABELS, add_ticker_to_greenrock_list, load_greenrock_universes
 from atlas_os.greenrock.workflow import run_greenrock_screening_workflow
 from atlas_os.greenrock.scoring import signal_label
@@ -281,6 +281,15 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
     if method == "POST" and route == "/greenrock/scanner/run":
         message = run_greenrock_scan_from_browser(form.get("population", "qqq"))
         return WebResponse(303, "", location=_with_status("/greenrock/scanner", message))
+    if method == "POST" and route == "/greenrock/scanner/promote":
+        return WebResponse(
+            200,
+            promote_greenrock_scan_ticker(
+                scan_id=form.get("scan_id", ""),
+                ticker=form.get("ticker", ""),
+                list_key=form.get("list_key", ""),
+            ),
+        )
     if method == "POST" and route == "/greenrock/score":
         return WebResponse(
             200,
@@ -623,7 +632,7 @@ def render_greenrock_scanner(status_message: str | None = None) -> str:
             <h2>Top Ranked Tickers</h2>
             <span class="subtle">Reports can eventually source picks from latest population scan.</span>
           </div>
-          {_scan_results_table(top_rows)}
+          {_scan_results_table(top_rows, scan.scan_id)}
         </section>
         """
     else:
@@ -664,6 +673,18 @@ def run_greenrock_scan_from_browser(population: str) -> str:
     except (MarketDataConfigurationError, ValueError) as error:
         return f"Population scan blocked: {error}"
     return f"Population scan complete: {result.scan_id}"
+
+
+def promote_greenrock_scan_ticker(scan_id: str, ticker: str, list_key: str) -> str:
+    settings = get_settings()
+    try:
+        placement = promote_scan_ticker(settings.output_dir, scan_id, ticker, list_key)
+        verb = "saved to" if placement.added else "already exists in"
+        warnings = " ".join(placement.warnings)
+        status = f"{placement.ticker} {verb} {placement.list_label}. {warnings}".strip()
+    except ValueError as error:
+        status = f"Promotion blocked: {error}"
+    return render_greenrock_scanner(status)
 
 
 def render_greenrock_score(
@@ -1333,9 +1354,13 @@ def _picks_table(rows: list[dict[str, str]]) -> str:
     )
 
 
-def _scan_results_table(rows) -> str:
+def _scan_results_table(rows, scan_id: str = "") -> str:
     if not rows:
         return "<p class='empty'>No scan rows available yet.</p>"
+    options = "".join(
+        f"<option value='{_safe(key)}'>{_safe(label)}</option>"
+        for key, label in GREENROCK_PLACEMENT_LABELS.items()
+    )
     body = "".join(
         "<tr>"
         f"<td>{_safe(row.get('rank', ''))}</td>"
@@ -1349,13 +1374,21 @@ def _scan_results_table(rows) -> str:
         f"<td>{_safe(row.get('top_bullish_signal', ''))}</td>"
         f"<td>{_safe(row.get('top_caution_signal', ''))}</td>"
         f"<td>{_safe(row.get('data_quality_warnings', ''))}</td>"
+        "<td>"
+        "<form method='post' action='/greenrock/scanner/promote' class='inline-promote-form'>"
+        f"<input type='hidden' name='scan_id' value='{_safe(scan_id)}'>"
+        f"<input type='hidden' name='ticker' value='{_safe(row.get('symbol', ''))}'>"
+        f"<select name='list_key'>{options}</select>"
+        "<button type='submit'>Promote</button>"
+        "</form>"
+        "</td>"
         "</tr>"
         for row in rows
     )
     return (
         "<table class='picks-table'><thead><tr><th>Rank</th><th>Ticker</th><th>Company</th>"
         "<th>Score</th><th>Confidence</th><th>Evidence Agreement</th><th>Guardrail</th><th>Priority</th>"
-        "<th>Top Bullish Signal</th><th>Top Caution Signal</th><th>Data Quality Warnings</th></tr></thead><tbody>"
+        "<th>Top Bullish Signal</th><th>Top Caution Signal</th><th>Data Quality Warnings</th><th>Promote</th></tr></thead><tbody>"
         + body
         + "</tbody></table>"
     )
@@ -1418,6 +1451,7 @@ def _score_preview_panel(preview) -> str:
       <section class="analyst-summary">
         <h2>Analyst Summary</h2>
         <p>{_safe(preview.analyst_summary)}</p>
+        <p class="summary-action">{_finviz_button(candidate.symbol)}</p>
       </section>
       <section class="panel inner-panel confidence-explain-card">
         <div class="section-head">
@@ -1787,6 +1821,14 @@ def _finviz_link(symbol: str) -> str:
         return ""
     href = f"https://finviz.com/quote.ashx?t={quote(clean_symbol)}"
     return f"<a href='{href}' target='_blank' rel='noopener noreferrer'>Finviz</a>"
+
+
+def _finviz_button(symbol: str) -> str:
+    clean_symbol = symbol.strip().replace(".", "-")
+    if not clean_symbol:
+        return ""
+    href = f"https://finviz.com/quote.ashx?t={quote(clean_symbol)}"
+    return f"<a class='button secondary' href='{href}' target='_blank' rel='noopener noreferrer'>Finviz</a>"
 
 
 def _workflow_feed(runs, context) -> str:
@@ -2279,6 +2321,8 @@ def _page(title: str, content: str, active: str = "/") -> str:
     .score-form {{ display: grid; grid-template-columns: minmax(150px, 1fr) auto; gap: 10px; }}
     .save-list-panel {{ border-color: rgba(55,214,122,.28); }}
     .save-list-form {{ display: grid; grid-template-columns: minmax(150px, .6fr) minmax(220px, 1fr) auto; gap: 10px; }}
+    .inline-promote-form {{ display: grid; grid-template-columns: minmax(170px, 1fr) auto; gap: 8px; min-width: 300px; }}
+    .inline-promote-form select, .inline-promote-form button {{ padding: 8px; }}
     .save-status {{ color: #c9ffdc; font-weight: 700; }}
     .setup-box {{ border: 1px solid rgba(243,201,105,.32); border-radius: 8px; padding: 12px; background: rgba(0,0,0,.18); margin: 12px 0; }}
     .setup-box pre {{ margin: 8px 0 0; white-space: pre-wrap; color: #ffe5a3; }}
@@ -2305,6 +2349,7 @@ def _page(title: str, content: str, active: str = "/") -> str:
     .priority-card .priority {{ display: inline-block; margin-bottom: 12px; background: rgba(243,201,105,.16); color: #ffe3a1; border: 1px solid rgba(243,201,105,.32); font-size: 14px; }}
     .analyst-summary {{ border-color: rgba(55,214,122,.28); background: rgba(55,214,122,.06); margin-bottom: 12px; }}
     .analyst-summary p {{ margin-bottom: 0; }}
+    .analyst-summary .summary-action {{ margin-top: 12px; }}
     .evidence-grid {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }}
     .evidence-card {{ min-height: 180px; }}
     .bullish-card {{ border-color: rgba(55,214,122,.3); }}

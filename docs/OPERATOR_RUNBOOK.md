@@ -108,6 +108,7 @@ atlas greenrock scan --population sp500
 atlas greenrock scan --population russell2000
 atlas greenrock scan --population micro_moonshot
 atlas greenrock scan --population all
+atlas greenrock scan-promote <scan_id> SOFI --list watchlist
 ```
 
 Browser:
@@ -122,6 +123,8 @@ Outputs are local only:
 - `.atlas/output/greenrock/scans/<scan_id>/scan_summary.md`
 
 Scans require the configured real provider and fail safely with setup instructions when unavailable. They create local scan files only; they do not create report approvals, emails, or publications.
+
+To promote from the browser, open `/greenrock/scanner`, choose a destination list on a scan row, and click Promote. Promotion saves only to local GreenRock list CSVs. It is duplicate-safe and shows a warning when the ticker market-cap bucket does not fit the selected bucket list.
 
 ## Score Any Ticker
 

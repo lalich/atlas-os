@@ -13,6 +13,7 @@
 - Store raw input snapshots for reproducibility.
 - Maintain separate concepts for population scans, curated watchlists, and report picks. Population scans broaden the source universe but should not bypass report approval gates.
 - Keep Micro/Moonshot population storage editable for non-index-style names that may not appear in standard index populations.
+- Keep scanner promotion local-only and duplicate-safe. Promotion should write selected scan tickers into GreenRock list CSVs without creating reports, approvals, PDFs, emails, publications, or client-facing files.
 
 ## Scoring Improvements
 
@@ -31,6 +32,7 @@
 - Add chart overlays for score components so subscribers can visually compare dislocation, momentum, volume, and moving-average structure.
 - Prepare future `www.greenrockam.com` adaptation by keeping calculator HTML sections semantic and CSS classes product-oriented, without adding external publishing from Atlas OS.
 - Add future report sourcing controls so approved operators can choose latest population scan outputs as upstream candidates without replacing human review or approval gates.
+- Keep the Analyst Summary Finviz button visible as a research convenience, not a recommendation or publication action.
 
 ## Future Options Analysis
 

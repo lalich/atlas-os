@@ -17,6 +17,16 @@ from atlas_os.greenrock.score import (
     score_signal,
     top_evidence_signal,
 )
+from atlas_os.greenrock.universe import (
+    LARGE_CAP_UNIVERSE,
+    MEGA_ROCK_UNIVERSE,
+    RANKED_CANDIDATES_PLACEMENT,
+    SMALL_MID_CAP_UNIVERSE,
+    STRICT_REVIEW_PLACEMENT,
+    WATCHLIST_PLACEMENT,
+    TickerPlacementResult,
+    add_ticker_to_greenrock_list,
+)
 
 
 @dataclass(frozen=True)
@@ -106,6 +116,44 @@ def latest_scan(output_dir: Path) -> ScanResult | None:
     return None
 
 
+def load_scan(output_dir: Path, scan_id: str) -> ScanResult:
+    clean_scan_id = _clean_scan_id(scan_id)
+    scan_dir = Path(output_dir) / "greenrock" / "scans" / clean_scan_id
+    results_path = scan_dir / "scan_results.csv"
+    summary_path = scan_dir / "scan_summary.md"
+    if not results_path.exists():
+        raise ValueError(f"Scan {scan_id} was not found.")
+    rows = _read_results_csv(results_path)
+    population = clean_scan_id.removeprefix("scan-").rsplit("-", maxsplit=1)[0]
+    return ScanResult(
+        scan_id=clean_scan_id,
+        population=population,
+        data_source=_summary_value(summary_path, "Data Source") if summary_path.exists() else "unknown",
+        results_path=results_path,
+        summary_path=summary_path,
+        rows=rows,
+    )
+
+
+def promote_scan_ticker(
+    output_dir: Path,
+    scan_id: str,
+    ticker: str,
+    list_key: str,
+) -> TickerPlacementResult:
+    scan = load_scan(output_dir, scan_id)
+    normalized_ticker = ticker.strip().upper()
+    row = next((item for item in scan.rows if item.get("symbol", "").upper() == normalized_ticker), None)
+    if row is None:
+        raise ValueError(f"{normalized_ticker} was not found in scan {scan.scan_id}.")
+    return add_ticker_to_greenrock_list(
+        output_dir,
+        normalized_ticker,
+        _promotion_list_key(list_key),
+        market_cap_bucket=row.get("market_cap_bucket", ""),
+    )
+
+
 def _provider_for_scan(tickers: tuple[str, ...], population: str) -> MarketDataProvider:
     import os
 
@@ -117,6 +165,31 @@ def _provider_for_scan(tickers: tuple[str, ...], population: str) -> MarketDataP
             "python3 -m pip install -e \".[market-data]\""
         )
     return YFinanceMarketDataProvider(tickers, universe_name=f"population_{population}")
+
+
+def _promotion_list_key(list_key: str) -> str:
+    aliases = {
+        "watchlist": WATCHLIST_PLACEMENT,
+        "ranked": RANKED_CANDIDATES_PLACEMENT,
+        "ranked_candidates": RANKED_CANDIDATES_PLACEMENT,
+        "strict": STRICT_REVIEW_PLACEMENT,
+        "strict_review": STRICT_REVIEW_PLACEMENT,
+        "mega_rock": MEGA_ROCK_UNIVERSE,
+        "large_cap": LARGE_CAP_UNIVERSE,
+        "small_mid": SMALL_MID_CAP_UNIVERSE,
+        "small_mid_cap": SMALL_MID_CAP_UNIVERSE,
+    }
+    normalized = list_key.strip().lower()
+    if normalized not in aliases:
+        raise ValueError("Choose a valid promotion list.")
+    return aliases[normalized]
+
+
+def _clean_scan_id(scan_id: str) -> str:
+    clean_scan_id = scan_id.strip()
+    if not clean_scan_id or "/" in clean_scan_id or ".." in clean_scan_id:
+        raise ValueError("Choose a valid scan ID.")
+    return clean_scan_id
 
 
 def _candidate_row(candidate) -> dict[str, str]:

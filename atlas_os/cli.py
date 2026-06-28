@@ -38,7 +38,7 @@ from atlas_os.greenrock.population import (
 )
 from atlas_os.greenrock.report import build_sample_report
 from atlas_os.greenrock.score import calculate_score_preview, score_signal
-from atlas_os.greenrock.scanner import run_population_scan
+from atlas_os.greenrock.scanner import promote_scan_ticker, run_population_scan
 from atlas_os.greenrock.screener import run_screen
 from atlas_os.greenrock.universe import (
     LARGE_CAP_UNIVERSE,
@@ -265,6 +265,19 @@ def build_parser() -> argparse.ArgumentParser:
         choices=GREENROCK_POPULATION_NAMES + (ALL_POPULATION,),
         required=True,
         help="Population to scan.",
+    )
+    scan_promote = greenrock_subparsers.add_parser(
+        "scan-promote",
+        help="Promote one ticker from a local population scan into a GreenRock list.",
+    )
+    scan_promote.add_argument("scan_id")
+    scan_promote.add_argument("ticker")
+    scan_promote.add_argument(
+        "--list",
+        choices=("watchlist", "ranked", "strict", "mega_rock", "large_cap", "small_mid"),
+        required=True,
+        dest="list_key",
+        help="Destination GreenRock list.",
     )
 
     return parser
@@ -688,6 +701,34 @@ def run_greenrock_scan(population: str) -> int:
             f"confidence={row['greenrock_confidence']} evidence={row['evidence_agreement']} "
             f"guardrail={row['fundamental_guardrail']}"
         )
+    return 0
+
+
+def run_greenrock_scan_promote(scan_id: str, ticker: str, list_key: str) -> int:
+    settings = get_settings()
+    try:
+        placement = promote_scan_ticker(settings.output_dir, scan_id, ticker, list_key)
+    except ValueError as error:
+        print("GreenRock scan promotion blocked")
+        print(f"scan_id: {scan_id}")
+        print(f"ticker: {ticker.upper()}")
+        print(f"reason: {error}")
+        print("No report, approval, PDF, email, publication, or external action was created.")
+        return 1
+    verb = "saved to" if placement.added else "already exists in"
+    print("GreenRock scan promotion complete")
+    print(f"scan_id: {scan_id}")
+    print(f"ticker: {placement.ticker}")
+    print(f"list: {placement.list_label}")
+    print(f"status: {verb}")
+    print(f"path: {placement.path}")
+    print("warnings:")
+    if placement.warnings:
+        for warning in placement.warnings:
+            print(f"  {warning}")
+    else:
+        print("  none")
+    print("No report, approval, PDF, email, publication, or external action was created.")
     return 0
 
 
@@ -1414,6 +1455,8 @@ def main(argv: list[str] | None = None) -> int:
             )
         if args.greenrock_command == "scan":
             return run_greenrock_scan(args.population)
+        if args.greenrock_command == "scan-promote":
+            return run_greenrock_scan_promote(args.scan_id, args.ticker, args.list_key)
         if args.greenrock_command == "review":
             return run_greenrock_review()
         if args.greenrock_command == "open-latest":

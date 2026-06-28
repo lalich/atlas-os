@@ -12,6 +12,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from atlas_os.cli import main
+from atlas_os.core.approvals import list_approvals
+from atlas_os.core.artifacts import list_artifacts
+from atlas_os.core.workflow_runs import list_workflow_runs
 from atlas_os.db.database import connect, initialize_database
 from atlas_os.greenrock.market_data import MarketDataProvider
 from atlas_os.greenrock.market_data import get_market_data_provider
@@ -370,11 +373,85 @@ class GreenRockMarketDataTests(unittest.TestCase):
                 "ATLAS_OUTPUT_DIR": str(root / "output"),
             }
             with patch.dict("os.environ", env, clear=False):
+                run_population_scan(root / "output", "micro_moonshot", provider=FakeMarketDataProvider())
                 response = dispatch_request("GET", "/greenrock/scanner")
 
         self.assertEqual(response.status, 200)
         self.assertIn("Market Scanner", response.body)
         self.assertIn("Run Population Scan", response.body)
+        self.assertIn("Promote", response.body)
+        self.assertIn("https://finviz.com/quote.ashx?t=", response.body)
+
+    def test_scanner_promotion_saves_duplicate_safe_and_local_only(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {
+                "ATLAS_DB_PATH": str(root / "atlas.db"),
+                "ATLAS_OUTPUT_DIR": str(root / "output"),
+            }
+            with patch.dict("os.environ", env, clear=False):
+                db_path = initialize_database(root / "atlas.db")
+                result = run_population_scan(root / "output", "micro_moonshot", provider=FakeMarketDataProvider())
+                ticker = result.rows[0]["symbol"]
+                first = dispatch_request(
+                    "POST",
+                    "/greenrock/scanner/promote",
+                    f"scan_id={result.scan_id}&ticker={ticker}&list_key=watchlist",
+                )
+                second = dispatch_request(
+                    "POST",
+                    "/greenrock/scanner/promote",
+                    f"scan_id={result.scan_id}&ticker={ticker}&list_key=watchlist",
+                )
+                saved = (root / "output" / "greenrock" / "watchlists" / "watchlist.csv").read_text(encoding="utf-8")
+                with connect(db_path) as connection:
+                    approvals = list_approvals(connection)
+                    artifacts = list_artifacts(connection)
+                    runs = list_workflow_runs(connection)
+
+        self.assertEqual(first.status, 200)
+        self.assertEqual(second.status, 200)
+        self.assertIn("saved to Watchlist", first.body)
+        self.assertIn("duplicate ignored", second.body)
+        self.assertEqual(saved.count(ticker), 1)
+        self.assertEqual(approvals, ())
+        self.assertEqual(artifacts, ())
+        self.assertEqual(runs, ())
+
+    def test_scanner_promotion_bucket_mismatch_warning_appears(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {
+                "ATLAS_DB_PATH": str(root / "atlas.db"),
+                "ATLAS_OUTPUT_DIR": str(root / "output"),
+            }
+            with patch.dict("os.environ", env, clear=False):
+                result = run_population_scan(root / "output", "micro_moonshot", provider=FakeMarketDataProvider())
+                row = next(item for item in result.rows if item["market_cap_bucket"] == "small_cap")
+                response = dispatch_request(
+                    "POST",
+                    "/greenrock/scanner/promote",
+                    f"scan_id={result.scan_id}&ticker={row['symbol']}&list_key=large_cap",
+                )
+
+        self.assertEqual(response.status, 200)
+        self.assertIn("does not currently match Large Cap Watchlist bucket", response.body)
+
+    def test_cli_scan_promote_works(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {
+                "ATLAS_DB_PATH": str(root / "atlas.db"),
+                "ATLAS_OUTPUT_DIR": str(root / "output"),
+            }
+            with patch.dict("os.environ", env, clear=False):
+                result = run_population_scan(root / "output", "micro_moonshot", provider=FakeMarketDataProvider())
+                ticker = result.rows[0]["symbol"]
+                output = _run_cli(["greenrock", "scan-promote", result.scan_id, ticker, "--list", "watchlist"])
+
+        self.assertIn("GreenRock scan promotion complete", output)
+        self.assertIn(f"ticker: {ticker}", output)
+        self.assertIn("No report, approval, PDF, email, publication", output)
 
     def test_population_scan_missing_provider_fails_safely(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

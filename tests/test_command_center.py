@@ -131,6 +131,8 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn(preview.score_confidence_divergence, result.body)
         self.assertIn("Research Priority", result.body)
         self.assertIn("Analyst Summary", result.body)
+        summary_section = result.body.split("Analyst Summary", maxsplit=1)[1].split("Why Confidence Is This Level", maxsplit=1)[0]
+        self.assertIn("https://finviz.com/quote.ashx?t=LC01", summary_section)
         self.assertIn("Why Confidence Is This Level", result.body)
         self.assertIn("Positive Confidence Drivers", result.body)
         self.assertIn("Confidence Drags", result.body)

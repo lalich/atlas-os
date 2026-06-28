@@ -117,6 +117,7 @@ atlas greenrock population list
 atlas greenrock population add micro_moonshot GRRR PI
 atlas greenrock population validate
 atlas greenrock scan --population micro_moonshot
+atlas greenrock scan-promote <scan_id> SOFI --list watchlist
 ```
 
 Populations are stored locally under `.atlas/output/greenrock/populations/`:
@@ -127,6 +128,8 @@ Populations are stored locally under `.atlas/output/greenrock/populations/`:
 - `micro_moonshot.csv`
 
 Scan outputs are stored under `.atlas/output/greenrock/scans/<scan_id>/` as `scan_results.csv` and `scan_summary.md`. Scans require the configured real provider, fail safely when it is unavailable, and do not create reports, approvals, emails, or publications. Reports do not source from population scans yet; they can eventually use latest population scan results as upstream candidates.
+
+Scanner promotion can save a scan ticker into Watchlist, Ranked Candidates, Strict Review, Mega Rock Candidate Pool, Large Cap Watchlist, or Small/Mid Watchlist. Promotion is duplicate-safe, shows market-cap bucket warnings where applicable, and writes only to local GreenRock list CSVs.
 
 ## GreenRock Score Calculator
 
@@ -140,7 +143,7 @@ atlas greenrock score AAPL
 
 It is preview-only. It does not create reports, approval records, artifacts, emails, publications, or external distribution actions.
 
-The calculator is real-data-only for operators. It shows GreenRock Score, GreenRock Confidence, signal label, research priority, analyst summary, Bullish Evidence, Bearish Evidence, What to Watch Next, Finviz link, data-quality warnings, All-Time High, and +2/+3/+5/+7 one-year statistical price targets. Real mode requires the configured local market data provider.
+The calculator is real-data-only for operators. It shows GreenRock Score, GreenRock Confidence, signal label, research priority, analyst summary with a Finviz button, Bullish Evidence, Bearish Evidence, What to Watch Next, Finviz link, data-quality warnings, All-Time High, and +2/+3/+5/+7 one-year statistical price targets. Real mode requires the configured local market data provider.
 
 GreenRock Score measures the opportunity/dislocation setup. GreenRock Confidence measures evidence reliability based on data completeness, data depth, indicator agreement, volatility/noise, market-cap bucket reliability, and target reliability. Confidence may be high when Score is moderate if evidence is clean, and low when Score is high if the data is shallow or conflicted. Research Priority is a local analyst workflow label: Immediate Review, This Week, Interesting, Monitor, or Ignore.
 
