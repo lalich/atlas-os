@@ -37,8 +37,18 @@ from atlas_os.greenrock.pdf_export import render_markdown_report_to_pdf
 from atlas_os.greenrock.market_data import MarketDataConfigurationError
 from atlas_os.greenrock.population import GREENROCK_POPULATION_LABELS
 from atlas_os.greenrock.score import calculate_score_preview, score_signal
-from atlas_os.greenrock.scanner import latest_scan, promote_scan_ticker, run_population_scan
-from atlas_os.greenrock.universe import GREENROCK_PLACEMENT_LABELS, add_ticker_to_greenrock_list, load_greenrock_universes
+from atlas_os.greenrock.scanner import (
+    latest_scan,
+    load_promotion_metadata,
+    promote_scan_ticker,
+    run_population_scan,
+)
+from atlas_os.greenrock.universe import (
+    GREENROCK_PLACEMENT_LABELS,
+    add_ticker_to_greenrock_list,
+    load_greenrock_universes,
+    placement_path,
+)
 from atlas_os.greenrock.workflow import run_greenrock_screening_workflow
 from atlas_os.greenrock.scoring import signal_label
 
@@ -118,17 +128,46 @@ def create_app():
     def greenrock_picks() -> str:
         return render_greenrock_picks_board()
 
+    @app.get("/greenrock/discovery", response_class=HTMLResponse)
+    def greenrock_discovery() -> str:
+        return render_greenrock_discovery()
+
     @app.get("/greenrock/scanner", response_class=HTMLResponse)
     def greenrock_scanner() -> str:
         return render_greenrock_scanner()
+
+    @app.post("/greenrock/scanner/run")
+    def greenrock_scanner_run(population: str = Form("qqq")):
+        message = run_greenrock_scan_from_browser(population)
+        return RedirectResponse(_with_status("/greenrock/scanner", message), status_code=303)
+
+    @app.post("/greenrock/scanner/promote", response_class=HTMLResponse)
+    def greenrock_scanner_promote(
+        scan_id: str = Form(""),
+        ticker: str = Form(""),
+        list_key: str = Form(""),
+    ) -> str:
+        return promote_greenrock_scan_ticker(scan_id, ticker, list_key)
+
+    @app.post("/greenrock/scanner/promote-batch", response_class=HTMLResponse)
+    def greenrock_scanner_promote_batch(
+        scan_id: str = Form(""),
+        tickers: list[str] = Form(default=[]),
+        list_key: str = Form(""),
+    ) -> str:
+        return promote_greenrock_scan_tickers(scan_id, tuple(tickers), list_key)
+
+    @app.get("/greenrock/watchlists", response_class=HTMLResponse)
+    def greenrock_watchlists() -> str:
+        return render_greenrock_watchlists()
 
     @app.get("/greenrock/score", response_class=HTMLResponse)
     def greenrock_score() -> str:
         return render_greenrock_score()
 
     @app.post("/greenrock/score", response_class=HTMLResponse)
-    def greenrock_score_post(ticker: str = Form(""), data_mode: str = Form("mock"), selection_mode: str = Form("")) -> str:
-        return render_greenrock_score(ticker=ticker, data_mode=data_mode, selection_mode=selection_mode)
+    def greenrock_score_post(ticker: str = Form("")) -> str:
+        return render_greenrock_score(ticker=ticker)
 
     @app.post("/greenrock/run-report")
     def run_greenrock_report(data_mode: str = Form("mock")):
@@ -222,6 +261,7 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
     route = parsed.path
     query = parse_qs(parsed.query)
     form = _parse_form(body)
+    form_values = parse_qs(body, keep_blank_values=True)
 
     if method == "GET" and route == "/":
         return WebResponse(200, render_dashboard(_first(query, "status")))
@@ -231,8 +271,12 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
         return WebResponse(200, render_greenrock(_first(query, "status")))
     if method == "GET" and route == "/greenrock/picks":
         return WebResponse(200, render_greenrock_picks_board(_first(query, "status")))
+    if method == "GET" and route == "/greenrock/discovery":
+        return WebResponse(200, render_greenrock_discovery(_first(query, "status")))
     if method == "GET" and route == "/greenrock/scanner":
-        return WebResponse(200, render_greenrock_scanner(_first(query, "status")))
+        return WebResponse(200, render_greenrock_scanner(_first(query, "status"), query))
+    if method == "GET" and route == "/greenrock/watchlists":
+        return WebResponse(200, render_greenrock_watchlists(_first(query, "status")))
     if method == "GET" and route == "/greenrock/score":
         return WebResponse(200, render_greenrock_score())
     if method == "GET" and route == "/greenrock/final-reports":
@@ -287,6 +331,15 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
             promote_greenrock_scan_ticker(
                 scan_id=form.get("scan_id", ""),
                 ticker=form.get("ticker", ""),
+                list_key=form.get("list_key", ""),
+            ),
+        )
+    if method == "POST" and route == "/greenrock/scanner/promote-batch":
+        return WebResponse(
+            200,
+            promote_greenrock_scan_tickers(
+                scan_id=form.get("scan_id", ""),
+                tickers=tuple(value for value in form_values.get("tickers", ()) if value),
                 list_key=form.get("list_key", ""),
             ),
         )
@@ -380,6 +433,7 @@ def render_dashboard(status_message: str | None = None) -> str:
     <section class="nav-grid">
       {_nav_card("Project Directory", "/projects", "GreenRock, Bat Signal, Insurance, Atlas Core")}
       {_nav_card("GreenRock Analysts", "/greenrock", "Run latest draft, approvals, candidates")}
+      {_nav_card("GreenRock Discovery", "/greenrock/discovery", "Scan, promote, and manage local research queues")}
       {_nav_card("GreenRock Picks Board", "/greenrock/picks", "Mega Rock, large-cap, and small/mid-cap picks")}
       {_nav_card("GreenRock Market Scanner", "/greenrock/scanner", "Population scans before report picks")}
       {_nav_card("Score Any Ticker", "/greenrock/score", "Preview GreenRock Score without report artifacts")}
@@ -480,7 +534,9 @@ def render_greenrock(status_message: str | None = None) -> str:
           <button class="secondary" type="submit">Run Real Report</button>
         </form>
         <a class="button secondary" href="/greenrock/picks">GreenRock Picks Board</a>
+        <a class="button secondary" href="/greenrock/discovery">Discovery Workflow</a>
         <a class="button secondary" href="/greenrock/scanner">Market Scanner</a>
+        <a class="button secondary" href="/greenrock/watchlists">Watchlists</a>
         <a class="button secondary" href="/greenrock/score">Score Any Ticker</a>
         {_path_action(latest_report.content_path if latest_report else None, "View Markdown report")}
         {_path_action(latest_pdf.path if latest_pdf else None, "Open PDF")}
@@ -561,6 +617,7 @@ def render_greenrock_picks_board(status_message: str | None = None) -> str:
         <p class="subtle">Score any ticker locally without creating a report, approval, or artifact.</p>
       </div>
       <a class="button" href="/greenrock/score">GreenRock Score Calculator</a>
+      <a class="button secondary" href="/greenrock/discovery">Discovery Workflow</a>
     </section>
     <section class="board-meta">
       {_attention_card("neutral", _safe(latest_run.run_id if latest_run else "none"), "Latest Run", _safe(latest_source or "No data source yet"))}
@@ -605,10 +662,66 @@ def render_greenrock_picks_board(status_message: str | None = None) -> str:
     return _page("GreenRock Picks Board", content, active="/greenrock/picks")
 
 
-def render_greenrock_scanner(status_message: str | None = None) -> str:
+def render_greenrock_discovery(status_message: str | None = None) -> str:
     settings = get_settings()
     scan = latest_scan(settings.output_dir)
-    top_rows = scan.rows[:15] if scan else ()
+    latest_scan_copy = (
+        f"Latest scan: {_safe(scan.population)} with {len(scan.rows)} ranked tickers."
+        if scan
+        else "No population scan has been run yet."
+    )
+    steps = (
+        ("1", "Select Population", "Choose a broad scan source such as QQQ, S&P 500, Russell 2000, or Micro/Moonshot."),
+        ("2", "Run Scan", "Use the scanner as the discovery engine. It writes local scan CSV and summary output only."),
+        ("3", "Review Ranked Results", "Compare Score, Confidence, Evidence Agreement, Guardrail, and Research Priority."),
+        ("4", "Promote Selected Names", "Save promising names to a local GreenRock list for future review."),
+        ("5", "View Updated Watchlists", "Use watchlists as curated research queues with promotion metadata and Finviz links."),
+        ("6", "Generate Report Later", "Reports remain separate, local, and human approval-gated."),
+    )
+    step_cards = "".join(
+        f"""
+        <article class="workflow-card">
+          <span>{_safe(number)}</span>
+          <h3>{_safe(title)}</h3>
+          <p>{_safe(copy)}</p>
+        </article>
+        """
+        for number, title, copy in steps
+    )
+    content = f"""
+    {_status_banner(status_message)}
+    <section class="hero compact greenrock-hero discovery-hero">
+      <p class="eyebrow">GreenRock Discovery Workflow</p>
+      <h1>Population -> Scanner -> Promote -> Watchlists -> Reports</h1>
+      <p>Guide broad market discovery into curated local research queues without creating reports, approvals, emails, PDFs, or publication artifacts.</p>
+    </section>
+    <section class="workflow-stepper" aria-label="GreenRock discovery workflow">
+      <span>Population</span><span>Scan</span><span>Promote</span><span>Watchlist</span><span>Report</span>
+    </section>
+    <section class="workflow-grid">{step_cards}</section>
+    <section class="panel">
+      <div class="section-head">
+        <h2>Current Discovery State</h2>
+        <span class="subtle">{latest_scan_copy}</span>
+      </div>
+      <div class="action-row">
+        <a class="button" href="/greenrock/scanner">Open Scanner</a>
+        <a class="button secondary" href="/greenrock/watchlists">View Watchlists</a>
+        <a class="button secondary" href="/greenrock/picks">Picks Board</a>
+        <a class="button secondary" href="/greenrock/score">Score Calculator</a>
+      </div>
+      <p class="subtle">Population = broad scan source. Scanner = discovery engine. Promote = save a promising name for future review/report consideration. Watchlist = curated research queue. Report = approval-gated publication draft.</p>
+    </section>
+    """
+    return _page("GreenRock Discovery", content, active="/greenrock/discovery")
+
+
+def render_greenrock_scanner(status_message: str | None = None, query: dict[str, list[str]] | None = None) -> str:
+    settings = get_settings()
+    scan = latest_scan(settings.output_dir)
+    filters = _scan_filter_values(query or {})
+    filtered_rows = _filter_scan_rows(scan.rows, filters) if scan else ()
+    top_rows = filtered_rows[:25] if scan else ()
     population_buttons = "".join(
         f"""
         <form method="post" action="/greenrock/scanner/run">
@@ -620,19 +733,32 @@ def render_greenrock_scanner(status_message: str | None = None) -> str:
     )
     latest = ""
     if scan:
+        metadata = _scan_metadata(scan)
         latest = f"""
         <section class="board-meta">
-          {_attention_card("neutral", _safe(scan.scan_id), "Latest Scan", _safe(scan.population))}
-          {_attention_card("green", str(len(scan.rows)), "Ranked Tickers", _safe(scan.data_source))}
-          {_attention_card("neutral", _safe(scan.results_path), "Results CSV", "Local scan output")}
-          {_attention_card("neutral", _safe(scan.summary_path), "Summary", "Local Markdown summary")}
+          {_attention_card("neutral", _safe(scan.population), "Population Scanned", _safe(scan.scan_id))}
+          {_attention_card("green", str(len(scan.rows)), "Tickers Scanned", _safe(scan.data_source))}
+          {_attention_card("neutral", _safe(metadata["timestamp"]), "Scan Timestamp", "UTC")}
+          {_attention_card("neutral", str(len(filtered_rows)), "Rows After Filters", "Top-ranked candidates below")}
+        </section>
+        <section class="panel scanner-filter-panel">
+          <div class="section-head">
+            <h2>Quick Filters</h2>
+            <span class="subtle">Narrow the discovery set before promotion.</span>
+          </div>
+          {_scan_filter_form(filters)}
         </section>
         <section class="panel picks-panel">
           <div class="section-head">
             <h2>Top Ranked Tickers</h2>
-            <span class="subtle">Reports can eventually source picks from latest population scan.</span>
+            <span class="subtle">Promoted tickers are now available for future GreenRock report generation and score review.</span>
           </div>
-          {_scan_results_table(top_rows, scan.scan_id)}
+          {_scan_results_table(top_rows, scan.scan_id, batch=True)}
+        </section>
+        <section class="panel">
+          <h2>Local Outputs</h2>
+          <p class="path">{_safe(scan.results_path)}</p>
+          <p class="path">{_safe(scan.summary_path)}</p>
         </section>
         """
     else:
@@ -647,7 +773,8 @@ def render_greenrock_scanner(status_message: str | None = None) -> str:
     <section class="hero compact greenrock-hero">
       <p class="eyebrow">GreenRock Analysts</p>
       <h1>Market Scanner</h1>
-      <p>Population scans rank broader ticker sets locally before any report-pick workflow.</p>
+      <p>Scanner = discovery engine. Review broad populations, then promote selected names into local research queues.</p>
+      <p><a class="button secondary" href="/greenrock/discovery">Discovery Workflow</a></p>
     </section>
     <section class="panel">
       <div class="section-head">
@@ -664,6 +791,27 @@ def render_greenrock_scanner(status_message: str | None = None) -> str:
     </section>
     """
     return _page("GreenRock Market Scanner", content, active="/greenrock/scanner")
+
+
+def render_greenrock_watchlists(status_message: str | None = None) -> str:
+    settings = get_settings()
+    metadata = _promotion_metadata_by_ticker(settings.output_dir)
+    cards = "".join(_watchlist_overview_card(settings.output_dir, key, label, metadata) for key, label in GREENROCK_PLACEMENT_LABELS.items())
+    content = f"""
+    {_status_banner(status_message)}
+    <section class="hero compact greenrock-hero">
+      <p class="eyebrow">GreenRock Watchlists</p>
+      <h1>Curated Research Queues</h1>
+      <p>Promoted names live here locally for future score review and approval-gated report consideration.</p>
+      <p><a class="button secondary" href="/greenrock/discovery">Discovery Workflow</a></p>
+    </section>
+    <section class="watchlist-grid">{cards}</section>
+    <section class="panel">
+      <h2>Report Flow Clarity</h2>
+      <p class="subtle">Promotion is local research organization only. It does not generate a report, approval, PDF, email, publication, or client-facing artifact.</p>
+    </section>
+    """
+    return _page("GreenRock Watchlists", content, active="/greenrock/watchlists")
 
 
 def run_greenrock_scan_from_browser(population: str) -> str:
@@ -685,6 +833,28 @@ def promote_greenrock_scan_ticker(scan_id: str, ticker: str, list_key: str) -> s
     except ValueError as error:
         status = f"Promotion blocked: {error}"
     return render_greenrock_scanner(status)
+
+
+def promote_greenrock_scan_tickers(scan_id: str, tickers: tuple[str, ...], list_key: str) -> str:
+    settings = get_settings()
+    if not tickers:
+        return render_greenrock_scanner("Promotion blocked: choose at least one ticker.")
+    statuses: list[str] = []
+    warnings: list[str] = []
+    for ticker in tickers:
+        try:
+            placement = promote_scan_ticker(settings.output_dir, scan_id, ticker, list_key)
+            if placement.added:
+                statuses.append(f"{placement.ticker} saved to {placement.list_label}")
+            else:
+                statuses.append(f"{placement.ticker} already exists in {placement.list_label}")
+            warnings.extend(placement.warnings)
+        except ValueError as error:
+            warnings.append(str(error))
+    summary = f"Promotion summary: {len(statuses)} reviewed. " + "; ".join(statuses)
+    if warnings:
+        summary += " Warnings: " + " ".join(dict.fromkeys(warnings))
+    return render_greenrock_scanner(summary)
 
 
 def render_greenrock_score(
@@ -1354,15 +1524,192 @@ def _picks_table(rows: list[dict[str, str]]) -> str:
     )
 
 
-def _scan_results_table(rows, scan_id: str = "") -> str:
+def _scan_metadata(scan) -> dict[str, str]:
+    timestamp = "unknown"
+    stamp = scan.scan_id.rsplit("-", maxsplit=1)[-1]
+    try:
+        timestamp = datetime.strptime(stamp, "%Y%m%d%H%M%S").strftime("%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        pass
+    return {"timestamp": timestamp}
+
+
+def _scan_filter_values(query: dict[str, list[str]]) -> dict[str, str]:
+    return {
+        "min_score": _first(query, "min_score"),
+        "min_confidence": _first(query, "min_confidence"),
+        "min_evidence": _first(query, "min_evidence"),
+        "priority": _first(query, "priority"),
+        "guardrail": _first(query, "guardrail"),
+    }
+
+
+def _filter_scan_rows(rows: tuple[dict[str, str], ...], filters: dict[str, str]) -> tuple[dict[str, str], ...]:
+    def keep(row: dict[str, str]) -> bool:
+        if filters["min_score"] and _as_float(row.get("greenrock_score", "")) < _as_float(filters["min_score"]):
+            return False
+        if filters["min_confidence"] and _as_float(row.get("greenrock_confidence", "")) < _as_float(filters["min_confidence"]):
+            return False
+        if filters["min_evidence"] and _as_float(row.get("evidence_agreement", "")) < _as_float(filters["min_evidence"]):
+            return False
+        if filters["priority"] and row.get("research_priority", "") != filters["priority"]:
+            return False
+        if filters["guardrail"] and row.get("fundamental_guardrail", "") != filters["guardrail"]:
+            return False
+        return True
+
+    return tuple(row for row in rows if keep(row))
+
+
+def _as_float(value: str) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _scan_filter_form(filters: dict[str, str]) -> str:
+    priority_options = _select_options(
+        ("", "Immediate Review", "This Week", "Interesting", "Monitor", "Ignore"),
+        filters["priority"],
+    )
+    guardrail_options = _select_options(
+        ("", "Supportive", "Mixed", "Caution", "Incomplete"),
+        filters["guardrail"],
+    )
+    return f"""
+    <form method="get" action="/greenrock/scanner" class="scanner-filter-form">
+      <label>Minimum GreenRock Score<input name="min_score" type="number" min="0" max="100" step="1" value="{_safe(filters['min_score'])}"></label>
+      <label>Minimum Confidence<input name="min_confidence" type="number" min="0" max="100" step="1" value="{_safe(filters['min_confidence'])}"></label>
+      <label>Minimum Evidence Agreement<input name="min_evidence" type="number" min="0" max="100" step="1" value="{_safe(filters['min_evidence'])}"></label>
+      <label>Research Priority<select name="priority">{priority_options}</select></label>
+      <label>Guardrail label<select name="guardrail">{guardrail_options}</select></label>
+      <button type="submit">Apply Filters</button>
+      <a class="button secondary" href="/greenrock/scanner">Clear</a>
+    </form>
+    """
+
+
+def _select_options(values: tuple[str, ...], selected: str) -> str:
+    return "".join(
+        f"<option value='{_safe(value)}' {'selected' if value == selected else ''}>{_safe(value or 'Any')}</option>"
+        for value in values
+    )
+
+
+def _watchlist_tickers(output_dir: Path, list_key: str) -> tuple[str, ...]:
+    path = placement_path(output_dir, list_key)
+    if not path.exists():
+        return ()
+    tickers: list[str] = []
+    with path.open(newline="", encoding="utf-8") as csv_file:
+        reader = csv.DictReader(csv_file)
+        for row in reader:
+            ticker = row.get("ticker", "").strip().upper()
+            if ticker:
+                tickers.append(ticker)
+    return tuple(dict.fromkeys(tickers))
+
+
+def _promotion_metadata_by_ticker(output_dir: Path) -> dict[tuple[str, str], dict[str, str]]:
+    metadata: dict[tuple[str, str], dict[str, str]] = {}
+    for row in load_promotion_metadata(output_dir):
+        ticker = row.get("ticker", "").upper()
+        destination = row.get("destination_list", "")
+        if ticker and destination:
+            metadata[(destination, ticker)] = row
+    return metadata
+
+
+def _watchlist_overview_card(
+    output_dir: Path,
+    list_key: str,
+    label: str,
+    metadata: dict[tuple[str, str], dict[str, str]],
+) -> str:
+    tickers = _watchlist_tickers(output_dir, list_key)
+    rows = "".join(
+        _watchlist_ticker_row(list_key, ticker, metadata.get((list_key, ticker)))
+        for ticker in tickers
+    )
+    if not rows:
+        rows = "<tr><td colspan='4' class='empty'>No tickers saved yet.</td></tr>"
+    return f"""
+    <section class="panel watchlist-card">
+      <div class="section-head">
+        <h2>{_safe(label)}</h2>
+        <span class="badge">{len(tickers)} tickers</span>
+      </div>
+      <table>
+        <thead><tr><th>Ticker</th><th>Finviz</th><th>Source</th><th>Latest Promoted</th></tr></thead>
+        <tbody>{rows}</tbody>
+      </table>
+    </section>
+    """
+
+
+def _watchlist_ticker_row(list_key: str, ticker: str, metadata: dict[str, str] | None) -> str:
+    source = f"scan:{metadata.get('scan_id', '')}" if metadata else "manual/local"
+    promoted_at = metadata.get("promoted_at", "") if metadata else ""
+    return (
+        "<tr>"
+        f"<td><strong>{_safe(ticker)}</strong></td>"
+        f"<td>{_finviz_link(ticker)}</td>"
+        f"<td>{_safe(source)}</td>"
+        f"<td>{_safe(promoted_at or 'not recorded')}</td>"
+        "</tr>"
+    )
+
+
+def _scan_results_table(rows, scan_id: str = "", batch: bool = False) -> str:
     if not rows:
         return "<p class='empty'>No scan rows available yet.</p>"
     options = "".join(
         f"<option value='{_safe(key)}'>{_safe(label)}</option>"
         for key, label in GREENROCK_PLACEMENT_LABELS.items()
     )
-    body = "".join(
+    body = "".join(_scan_results_row(row, scan_id, options, batch) for row in rows)
+    select_column = "<th>Select</th>" if batch else ""
+    promote_column = "" if batch else "<th>Promote</th>"
+    table = (
+        f"<table class='picks-table'><thead><tr>{select_column}<th>Rank</th><th>Ticker</th><th>Company</th>"
+        "<th>Score</th><th>Confidence</th><th>Evidence Agreement</th><th>Guardrail</th><th>Priority</th>"
+        f"<th>Top Bullish Signal</th><th>Top Caution Signal</th><th>Data Quality Warnings</th>{promote_column}</tr></thead><tbody>"
+        + body
+        + "</tbody></table>"
+    )
+    if not batch:
+        return table
+    return f"""
+    <form method="post" action="/greenrock/scanner/promote-batch" class="scan-review-form" onsubmit="return confirm('Promote these tickers to the selected GreenRock list?');">
+      <input type="hidden" name="scan_id" value="{_safe(scan_id)}">
+      <div class="promotion-bar">
+        <span class="subtle">Promote these tickers to [list]?</span>
+        <select name="list_key">{options}</select>
+        <button type="submit">Promote Selected</button>
+      </div>
+      {table}
+    </form>
+    """
+
+
+def _scan_results_row(row: dict[str, str], scan_id: str, options: str, batch: bool) -> str:
+    select_cell = f"<td><input type='checkbox' name='tickers' value='{_safe(row.get('symbol', ''))}'></td>" if batch else ""
+    promote_cell = ""
+    if not batch:
+        promote_cell = (
+            "<td>"
+            "<form method='post' action='/greenrock/scanner/promote' class='inline-promote-form'>"
+            f"<input type='hidden' name='scan_id' value='{_safe(scan_id)}'>"
+            f"<input type='hidden' name='ticker' value='{_safe(row.get('symbol', ''))}'>"
+            f"<select name='list_key'>{options}</select>"
+            "<button type='submit'>Promote</button>"
+            "</form>"
+            "</td>"
+        )
+    return (
         "<tr>"
+        f"{select_cell}"
         f"<td>{_safe(row.get('rank', ''))}</td>"
         f"<td><strong>{_safe(row.get('symbol', ''))}</strong><br>{_finviz_link(row.get('symbol', ''))}</td>"
         f"<td>{_safe(row.get('company_name', ''))}</td>"
@@ -1374,23 +1721,8 @@ def _scan_results_table(rows, scan_id: str = "") -> str:
         f"<td>{_safe(row.get('top_bullish_signal', ''))}</td>"
         f"<td>{_safe(row.get('top_caution_signal', ''))}</td>"
         f"<td>{_safe(row.get('data_quality_warnings', ''))}</td>"
-        "<td>"
-        "<form method='post' action='/greenrock/scanner/promote' class='inline-promote-form'>"
-        f"<input type='hidden' name='scan_id' value='{_safe(scan_id)}'>"
-        f"<input type='hidden' name='ticker' value='{_safe(row.get('symbol', ''))}'>"
-        f"<select name='list_key'>{options}</select>"
-        "<button type='submit'>Promote</button>"
-        "</form>"
-        "</td>"
+        f"{promote_cell}"
         "</tr>"
-        for row in rows
-    )
-    return (
-        "<table class='picks-table'><thead><tr><th>Rank</th><th>Ticker</th><th>Company</th>"
-        "<th>Score</th><th>Confidence</th><th>Evidence Agreement</th><th>Guardrail</th><th>Priority</th>"
-        "<th>Top Bullish Signal</th><th>Top Caution Signal</th><th>Data Quality Warnings</th><th>Promote</th></tr></thead><tbody>"
-        + body
-        + "</tbody></table>"
     )
 
 
@@ -2155,8 +2487,10 @@ def _page(title: str, content: str, active: str = "/") -> str:
         ("Inbox", "/"),
         ("Projects", "/projects"),
         ("GreenRock", "/greenrock"),
+        ("Discovery", "/greenrock/discovery"),
         ("Picks", "/greenrock/picks"),
         ("Scanner", "/greenrock/scanner"),
+        ("Watchlists", "/greenrock/watchlists"),
         ("Score", "/greenrock/score"),
         ("Tasks", "/tasks"),
         ("Agents", "/agents"),
@@ -2323,6 +2657,19 @@ def _page(title: str, content: str, active: str = "/") -> str:
     .save-list-form {{ display: grid; grid-template-columns: minmax(150px, .6fr) minmax(220px, 1fr) auto; gap: 10px; }}
     .inline-promote-form {{ display: grid; grid-template-columns: minmax(170px, 1fr) auto; gap: 8px; min-width: 300px; }}
     .inline-promote-form select, .inline-promote-form button {{ padding: 8px; }}
+    .workflow-stepper {{ display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; background: rgba(55,214,122,.08); border-color: rgba(55,214,122,.28); }}
+    .workflow-stepper span {{ display: block; text-align: center; border: 1px solid rgba(55,214,122,.24); border-radius: 8px; padding: 12px; color: #d7ffe4; font-weight: 800; background: rgba(0,0,0,.16); }}
+    .workflow-grid, .watchlist-grid {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }}
+    .workflow-card {{ min-height: 170px; margin: 0; background: rgba(255,255,255,.045); }}
+    .workflow-card span {{ display: inline-grid; place-items: center; width: 32px; height: 32px; border-radius: 999px; color: #06100b; background: var(--green); font-weight: 900; margin-bottom: 12px; }}
+    .discovery-hero h1 {{ max-width: 980px; }}
+    .scanner-filter-form {{ display: grid; grid-template-columns: repeat(5, minmax(145px, 1fr)) auto auto; gap: 10px; align-items: end; }}
+    .scanner-filter-form label {{ display: grid; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 700; }}
+    .scan-review-form {{ min-width: 1780px; }}
+    .promotion-bar {{ position: sticky; left: 0; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; padding: 10px; margin-bottom: 12px; border: 1px solid rgba(55,214,122,.25); border-radius: 8px; background: rgba(55,214,122,.08); }}
+    .promotion-bar select {{ min-width: 240px; }}
+    .watchlist-card {{ overflow-x: auto; }}
+    .watchlist-card table {{ min-width: 560px; }}
     .save-status {{ color: #c9ffdc; font-weight: 700; }}
     .setup-box {{ border: 1px solid rgba(243,201,105,.32); border-radius: 8px; padding: 12px; background: rgba(0,0,0,.18); margin: 12px 0; }}
     .setup-box pre {{ margin: 8px 0 0; white-space: pre-wrap; color: #ffe5a3; }}
@@ -2409,7 +2756,7 @@ def _page(title: str, content: str, active: str = "/") -> str:
     footer {{ border-top: 1px solid var(--line); padding: 18px 30px 28px; color: var(--muted); background: rgba(8,10,16,.7); }}
     footer div {{ display: flex; gap: 12px; flex-wrap: wrap; max-width: 1500px; margin: 0 auto; }}
     @media (max-width: 1000px) {{
-      .attention-grid, .board-meta, .nav-grid, .project-grid, .candidate-grid, .detail-grid, .kanban, .agent-grid, .task-form, .mega-card, .universe-grid, .score-form, .save-list-form, .score-explainer, .score-tool-hero, .rank-grid, .score-breakdown-grid, .target-assumptions, .score-intel-grid, .evidence-grid, .confidence-explain-grid {{ grid-template-columns: 1fr; }}
+      .attention-grid, .board-meta, .nav-grid, .project-grid, .candidate-grid, .detail-grid, .kanban, .agent-grid, .task-form, .mega-card, .universe-grid, .score-form, .save-list-form, .score-explainer, .score-tool-hero, .rank-grid, .score-breakdown-grid, .target-assumptions, .score-intel-grid, .evidence-grid, .confidence-explain-grid, .workflow-stepper, .workflow-grid, .watchlist-grid, .scanner-filter-form {{ grid-template-columns: 1fr; }}
       .calculator-card, .score-hero-line {{ align-items: flex-start; flex-direction: column; }}
       main, header, footer {{ padding-left: 16px; padding-right: 16px; }}
       .hero {{ min-height: auto; }}

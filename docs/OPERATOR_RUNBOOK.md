@@ -114,7 +114,9 @@ atlas greenrock scan-promote <scan_id> SOFI --list watchlist
 Browser:
 
 ```text
+http://127.0.0.1:8000/greenrock/discovery
 http://127.0.0.1:8000/greenrock/scanner
+http://127.0.0.1:8000/greenrock/watchlists
 ```
 
 Outputs are local only:
@@ -122,9 +124,18 @@ Outputs are local only:
 - `.atlas/output/greenrock/scans/<scan_id>/scan_results.csv`
 - `.atlas/output/greenrock/scans/<scan_id>/scan_summary.md`
 
-Scans require the configured real provider and fail safely with setup instructions when unavailable. They create local scan files only; they do not create report approvals, emails, or publications.
+Scans require the configured real provider and fail safely with setup instructions when unavailable. They create local scan files only; they do not create report approvals, PDFs, emails, or publications.
 
-To promote from the browser, open `/greenrock/scanner`, choose a destination list on a scan row, and click Promote. Promotion saves only to local GreenRock list CSVs. It is duplicate-safe and shows a warning when the ticker market-cap bucket does not fit the selected bucket list.
+Recommended browser flow:
+
+1. Open `/greenrock/discovery` to orient the workflow.
+2. Select a population and run the scan from `/greenrock/scanner`.
+3. Use the scanner filters for minimum GreenRock Score, Confidence, Evidence Agreement, Research Priority, and Guardrail label.
+4. Select one or more tickers, choose a destination list, and confirm promotion.
+5. Open `/greenrock/watchlists` to review updated local research queues.
+6. Generate reports later from the report workflow only; reports remain approval-gated.
+
+Promotion saves only to local GreenRock list CSVs. It is duplicate-safe and shows a warning when the ticker market-cap bucket does not fit the selected bucket list. Promotion metadata is stored locally in `.atlas/output/greenrock/watchlists/promotion_metadata.csv` with scan ID, score, confidence, evidence agreement, research priority, guardrail, and promoted timestamp.
 
 ## Score Any Ticker
 

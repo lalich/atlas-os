@@ -367,7 +367,10 @@ Command Center pages:
 - `/` Atlas Inbox with attention counters, actionable cards, recent workflow feed, and navigation.
 - `/projects` project directory for GreenRock Analysts, Variance Capital / The Bat Signal, GreenRock Insurance, and Atlas Core.
 - `/greenrock` report review console with Run Mock Report and Run Real Report buttons, latest run/report/PDF status, candidate summaries, approval actions, local artifact open links, and PDF export after approval.
+- `/greenrock/discovery` guided GreenRock discovery workflow showing Population -> Scan -> Promote -> Watchlist -> Report, with clear local-only report-gate language.
 - `/greenrock/picks` GreenRock Picks Board with the featured Mega Rock pick, 11 large-cap picks, 11 small/mid-cap picks, Evidence Agreement, top signals, Fundamental Guardrail fields, Finviz links, and explicit data-mode labeling.
+- `/greenrock/scanner` GreenRock Market Scanner for population scans, latest scan metadata, quick filters, ranked results, Finviz links, and deliberate promote-to-list review.
+- `/greenrock/watchlists` local GreenRock watchlist overview with ticker counts, tickers, Finviz links, promotion source, and latest promoted timestamp when available.
 - `/greenrock/score` GreenRock Score Calculator with confidence, Evidence Agreement, Fundamental Guardrails, research priority, evidence cards, watch-next notes, methodology explanation, and preview-only score breakdown.
 - `/greenrock/final-reports` final PDF archive for approved exported GreenRock PDFs.
 - `/tasks` local kanban-style manual task board with backlog, in progress, awaiting review, and completed columns.
@@ -384,7 +387,7 @@ The web app is local development mode only. It uses mock data, keeps the human a
 atlas serve
 ```
 
-Open `http://127.0.0.1:8000`, review the Atlas Inbox, then use the GreenRock page to run a mock or real local draft, inspect report status, approve/reject pending drafts, open local Markdown/PDF artifacts, or export an approved PDF. Use `http://127.0.0.1:8000/greenrock/picks` for the GreenRock Picks Board. Use the task board for manual operator tasks only; it does not trigger autonomous execution.
+Open `http://127.0.0.1:8000`, review the Atlas Inbox, then use the GreenRock page to run a mock or real local draft, inspect report status, approve/reject pending drafts, open local Markdown/PDF artifacts, or export an approved PDF. Use `http://127.0.0.1:8000/greenrock/discovery` for the Scan -> Promote -> Watchlist -> Report workflow, `http://127.0.0.1:8000/greenrock/scanner` for population discovery, `http://127.0.0.1:8000/greenrock/watchlists` for local research queues, and `http://127.0.0.1:8000/greenrock/picks` for the GreenRock Picks Board. Use the task board for manual operator tasks only; it does not trigger autonomous execution.
 
 ## Operator Docs
 

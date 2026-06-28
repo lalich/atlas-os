@@ -40,6 +40,19 @@ class ScanResult:
     warnings: tuple[str, ...] = ()
 
 
+PROMOTION_METADATA_HEADERS = [
+    "ticker",
+    "destination_list",
+    "scan_id",
+    "score",
+    "confidence",
+    "evidence_agreement",
+    "research_priority",
+    "guardrail",
+    "promoted_at",
+]
+
+
 SCAN_HEADERS = [
     "rank",
     "symbol",
@@ -146,12 +159,28 @@ def promote_scan_ticker(
     row = next((item for item in scan.rows if item.get("symbol", "").upper() == normalized_ticker), None)
     if row is None:
         raise ValueError(f"{normalized_ticker} was not found in scan {scan.scan_id}.")
-    return add_ticker_to_greenrock_list(
+    placement = add_ticker_to_greenrock_list(
         output_dir,
         normalized_ticker,
         _promotion_list_key(list_key),
         market_cap_bucket=row.get("market_cap_bucket", ""),
     )
+    if placement.added:
+        _append_promotion_metadata(output_dir, scan, row, placement.list_key)
+    return placement
+
+
+def promotion_metadata_path(output_dir: Path) -> Path:
+    return Path(output_dir) / "greenrock" / "watchlists" / "promotion_metadata.csv"
+
+
+def load_promotion_metadata(output_dir: Path) -> tuple[dict[str, str], ...]:
+    path = promotion_metadata_path(output_dir)
+    if not path.exists():
+        return ()
+    with path.open(newline="", encoding="utf-8") as csv_file:
+        reader = csv.DictReader(csv_file)
+        return tuple(dict(row) for row in reader)
 
 
 def _provider_for_scan(tickers: tuple[str, ...], population: str) -> MarketDataProvider:
@@ -190,6 +219,28 @@ def _clean_scan_id(scan_id: str) -> str:
     if not clean_scan_id or "/" in clean_scan_id or ".." in clean_scan_id:
         raise ValueError("Choose a valid scan ID.")
     return clean_scan_id
+
+
+def _append_promotion_metadata(output_dir: Path, scan: ScanResult, row: dict[str, str], list_key: str) -> None:
+    path = promotion_metadata_path(output_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write_header = not path.exists()
+    metadata_row = {
+        "ticker": row.get("symbol", "").upper(),
+        "destination_list": list_key,
+        "scan_id": scan.scan_id,
+        "score": row.get("greenrock_score", ""),
+        "confidence": row.get("greenrock_confidence", ""),
+        "evidence_agreement": row.get("evidence_agreement", ""),
+        "research_priority": row.get("research_priority", ""),
+        "guardrail": row.get("fundamental_guardrail", ""),
+        "promoted_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    with path.open("a", newline="", encoding="utf-8") as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=PROMOTION_METADATA_HEADERS)
+        if write_header:
+            writer.writeheader()
+        writer.writerow(metadata_row)
 
 
 def _candidate_row(candidate) -> dict[str, str]:

@@ -120,6 +120,22 @@ Population scans use the configured real market-data provider and write:
 
 Scan rows include GreenRock Score, Confidence, Evidence Agreement, Fundamental Guardrail, Research Priority, market-cap bucket, top bullish signal, top caution signal, data-quality warnings, and Finviz links. Scans are local research outputs and do not create report approvals, emails, publications, or client-facing materials.
 
+The browser discovery flow is:
+
+1. Population: broad scan source.
+2. Scanner: local discovery engine.
+3. Promote: save selected names to a local GreenRock list.
+4. Watchlist: curated research queue.
+5. Report: later approval-gated publication draft.
+
+Promotion from scans writes only to local list storage and optional local metadata:
+
+- `.atlas/output/greenrock/watchlists/<list>.csv`
+- `.atlas/output/greenrock/universes/<bucket>.csv`
+- `.atlas/output/greenrock/watchlists/promotion_metadata.csv`
+
+Promotion metadata records ticker, destination list, scan ID, score, confidence, Evidence Agreement, Research Priority, Fundamental Guardrail, and promoted timestamp. It is a local research organization aid, not a report, approval, email, publication, or client artifact.
+
 ## Score Calculator Data Source
 
 The GreenRock Score Calculator at `/greenrock/score` and `atlas greenrock score <ticker>` is real-data-only for operators. It fetches only the requested ticker through the configured provider and fails closed if the provider is unavailable.

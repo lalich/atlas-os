@@ -27,7 +27,7 @@ from atlas_os.greenrock.population import (
 )
 from atlas_os.greenrock.sample_data import load_mock_stocks
 from atlas_os.greenrock.score import calculate_score_preview
-from atlas_os.greenrock.scanner import run_population_scan
+from atlas_os.greenrock.scanner import load_promotion_metadata, run_population_scan
 from atlas_os.greenrock.screener import run_screen
 from atlas_os.greenrock.universe import LARGE_CAP_TICKERS, MEGA_ROCK_TICKERS, SMALL_MID_CAP_TICKERS, save_ticker_universe
 from atlas_os.greenrock.workflow import run_greenrock_screening_workflow
@@ -382,6 +382,48 @@ class GreenRockMarketDataTests(unittest.TestCase):
         self.assertIn("Promote", response.body)
         self.assertIn("https://finviz.com/quote.ashx?t=", response.body)
 
+    def test_discovery_page_returns_200_and_shows_workflow_steps(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {
+                "ATLAS_DB_PATH": str(root / "atlas.db"),
+                "ATLAS_OUTPUT_DIR": str(root / "output"),
+            }
+            with patch.dict("os.environ", env, clear=False):
+                response = dispatch_request("GET", "/greenrock/discovery")
+
+        self.assertEqual(response.status, 200)
+        self.assertIn("GreenRock Discovery Workflow", response.body)
+        self.assertIn("Select Population", response.body)
+        self.assertIn("Run Scan", response.body)
+        self.assertIn("Review Ranked Results", response.body)
+        self.assertIn("Promote Selected Names", response.body)
+        self.assertIn("View Updated Watchlists", response.body)
+        self.assertIn("Generate Report Later", response.body)
+
+    def test_scanner_page_shows_latest_scan_metadata_and_filters(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {
+                "ATLAS_DB_PATH": str(root / "atlas.db"),
+                "ATLAS_OUTPUT_DIR": str(root / "output"),
+            }
+            with patch.dict("os.environ", env, clear=False):
+                result = run_population_scan(root / "output", "micro_moonshot", provider=FakeMarketDataProvider())
+                response = dispatch_request("GET", "/greenrock/scanner")
+
+        self.assertEqual(response.status, 200)
+        self.assertIn("Population Scanned", response.body)
+        self.assertIn(result.population, response.body)
+        self.assertIn("Scan Timestamp", response.body)
+        self.assertIn("Tickers Scanned", response.body)
+        self.assertIn("Minimum GreenRock Score", response.body)
+        self.assertIn("Minimum Confidence", response.body)
+        self.assertIn("Minimum Evidence Agreement", response.body)
+        self.assertIn("Research Priority", response.body)
+        self.assertIn("Guardrail label", response.body)
+        self.assertIn("Promote Selected", response.body)
+
     def test_scanner_promotion_saves_duplicate_safe_and_local_only(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -404,6 +446,7 @@ class GreenRockMarketDataTests(unittest.TestCase):
                     f"scan_id={result.scan_id}&ticker={ticker}&list_key=watchlist",
                 )
                 saved = (root / "output" / "greenrock" / "watchlists" / "watchlist.csv").read_text(encoding="utf-8")
+                metadata = load_promotion_metadata(root / "output")
                 with connect(db_path) as connection:
                     approvals = list_approvals(connection)
                     artifacts = list_artifacts(connection)
@@ -414,6 +457,44 @@ class GreenRockMarketDataTests(unittest.TestCase):
         self.assertIn("saved to Watchlist", first.body)
         self.assertIn("duplicate ignored", second.body)
         self.assertEqual(saved.count(ticker), 1)
+        self.assertEqual(len(metadata), 1)
+        self.assertEqual(metadata[0]["ticker"], ticker)
+        self.assertEqual(metadata[0]["destination_list"], "watchlist")
+        self.assertEqual(metadata[0]["scan_id"], result.scan_id)
+        self.assertIn("score", metadata[0])
+        self.assertIn("evidence_agreement", metadata[0])
+        self.assertEqual(approvals, ())
+        self.assertEqual(artifacts, ())
+        self.assertEqual(runs, ())
+
+    def test_watchlists_page_renders_promoted_ticker(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {
+                "ATLAS_DB_PATH": str(root / "atlas.db"),
+                "ATLAS_OUTPUT_DIR": str(root / "output"),
+            }
+            with patch.dict("os.environ", env, clear=False):
+                db_path = initialize_database(root / "atlas.db")
+                result = run_population_scan(root / "output", "micro_moonshot", provider=FakeMarketDataProvider())
+                ticker = result.rows[0]["symbol"]
+                dispatch_request(
+                    "POST",
+                    "/greenrock/scanner/promote-batch",
+                    f"scan_id={result.scan_id}&tickers={ticker}&list_key=watchlist",
+                )
+                response = dispatch_request("GET", "/greenrock/watchlists")
+                with connect(db_path) as connection:
+                    approvals = list_approvals(connection)
+                    artifacts = list_artifacts(connection)
+                    runs = list_workflow_runs(connection)
+
+        self.assertEqual(response.status, 200)
+        self.assertIn("GreenRock Watchlists", response.body)
+        self.assertIn("Watchlist", response.body)
+        self.assertIn(ticker, response.body)
+        self.assertIn(f"scan:{result.scan_id}", response.body)
+        self.assertIn("https://finviz.com/quote.ashx?t=", response.body)
         self.assertEqual(approvals, ())
         self.assertEqual(artifacts, ())
         self.assertEqual(runs, ())
