@@ -67,6 +67,10 @@ The watchlists are local only and stored at:
 - `.atlas/output/greenrock/universes/mega_rock.csv`
 - `.atlas/output/greenrock/universes/large_cap.csv`
 - `.atlas/output/greenrock/universes/small_mid_cap.csv`
+- `.atlas/output/greenrock/watchlists/watchlist.csv`
+- `.atlas/output/greenrock/watchlists/personal_watchlist.csv`
+
+The browser watchlist page supports confirmed ticker removal. Bucket-specific saves are guarded by available market-cap bucket data; mismatches are blocked with a suggested list. Use Personal Watchlist when market cap is missing or the operator intentionally wants to track a name manually.
 
 ## Inspect Candidates
 
@@ -139,7 +143,9 @@ Recommended browser flow:
 6. Open `/greenrock/staging` to choose final report candidates and operator notes.
 7. Generate reports later from the report workflow only; reports remain approval-gated.
 
-Promotion saves only to local GreenRock list CSVs. It is duplicate-safe and shows a warning when the ticker market-cap bucket does not fit the selected bucket list. Promotion metadata is stored locally in `.atlas/output/greenrock/watchlists/promotion_metadata.csv` with scan ID, score, confidence, evidence agreement, research priority, guardrail, and promoted timestamp.
+Promotion saves only to local GreenRock list CSVs. It is duplicate-safe and blocks bucket-list mismatches before writing, with a suggested destination and Personal Watchlist fallback. Promotion metadata is stored locally in `.atlas/output/greenrock/watchlists/promotion_metadata.csv` with scan ID, score, confidence, evidence agreement, research priority, guardrail, and promoted timestamp.
+
+GreenRock branding expects the local logo at `atlas_os/static/greenrock_logo.png`. If it is missing, browser pages and report/PDF generation continue without failing.
 
 Report Candidate Staging stores local rows at `.atlas/output/greenrock/staging/report_candidates.csv`. Buckets are Mega Rock Candidate, Large Cap Candidate, Small/Mid Candidate, Research Only, and Excluded. The readiness indicators compare staged counts against the current report targets: Mega Rock 1, Large Cap 11, Small/Mid 11. Staging alone does not create report runs, approvals, PDFs, emails, or publication artifacts.
 

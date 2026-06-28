@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 
+from atlas_os.greenrock.assets import greenrock_logo_path
 from atlas_os.greenrock.models import GreenRockReport, StockCandidate
 from atlas_os.greenrock.scoring import signal_label
 from atlas_os.greenrock.models import ScreeningResult
@@ -13,7 +14,7 @@ from atlas_os.greenrock.score import candidate_evidence_agreement, top_evidence_
 
 def build_sample_report() -> GreenRockReport:
     screening = run_sample_screen()
-    lines = [
+    lines = _report_logo_lines() + [
         "# GreenRock Analysts Sample Monthly Report",
         "",
         f"Generated: {date.today().isoformat()}",
@@ -61,7 +62,7 @@ def build_report_draft(
     resolved_data_mode = (screening.data_mode or data_mode).upper()
     resolved_data_source = screening.data_source or data_source
     is_mock = resolved_data_mode == "MOCK"
-    lines = [
+    lines = _report_logo_lines() + [
         "# GreenRock Analysts Monthly Opportunity Report",
         "",
         "## Technical Dislocation Screen",
@@ -176,6 +177,13 @@ def build_report_draft(
         markdown="\n".join(lines) + "\n",
         source=resolved_data_source,
     )
+
+
+def _report_logo_lines() -> list[str]:
+    logo_path = greenrock_logo_path()
+    if not logo_path:
+        return []
+    return [f"![GreenRock Analysts Logo]({logo_path})", ""]
 
 
 def _candidate_table(candidates: tuple[StockCandidate, ...]) -> str:

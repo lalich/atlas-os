@@ -58,6 +58,7 @@ from atlas_os.greenrock.universe import (
     add_ticker_to_greenrock_list,
     load_greenrock_universes,
     placement_path,
+    remove_ticker_from_greenrock_list,
 )
 from atlas_os.greenrock.workflow import run_greenrock_screening_workflow
 from atlas_os.greenrock.scoring import signal_label
@@ -107,9 +108,14 @@ PROJECTS = (
 @dataclass(frozen=True)
 class WebResponse:
     status: int
-    body: str
+    body: str | bytes
     content_type: str = "text/html; charset=utf-8"
     location: str | None = None
+
+
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+GREENROCK_LOGO_PATH = STATIC_DIR / "greenrock_logo.png"
+GREENROCK_LOGO_URL = "/static/greenrock_logo.png"
 
 
 def create_app():
@@ -196,6 +202,10 @@ def create_app():
     def greenrock_staging_notes(ticker: str = Form(""), notes: str = Form("")) -> str:
         return save_greenrock_staging_notes(ticker, notes)
 
+    @app.post("/greenrock/watchlists/remove", response_class=HTMLResponse)
+    def greenrock_watchlists_remove(ticker: str = Form(""), list_key: str = Form("")) -> str:
+        return remove_greenrock_watchlist_ticker(ticker, list_key)
+
     @app.get("/greenrock/score", response_class=HTMLResponse)
     def greenrock_score() -> str:
         return render_greenrock_score()
@@ -266,6 +276,13 @@ def create_app():
         open_local_path(path)
         return RedirectResponse("/", status_code=303)
 
+    @app.get("/static/{filename}")
+    def static_asset(filename: str):
+        from fastapi import Response
+
+        response = _static_response(filename)
+        return Response(content=response.body, status_code=response.status, media_type=response.content_type)
+
     return app
 
 
@@ -327,6 +344,8 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
     if method == "GET" and route == "/open-local":
         open_local_path(_first(query, "path"))
         return WebResponse(303, "", location="/")
+    if method == "GET" and route.startswith("/static/"):
+        return _static_response(route.removeprefix("/static/"))
     if method == "GET" and route.startswith("/runs/"):
         return WebResponse(200, render_run_detail(unquote(route.removeprefix("/runs/"))))
     if method == "GET" and route.startswith("/artifacts/"):
@@ -396,6 +415,8 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
         return WebResponse(200, remove_greenrock_staging_candidate(form.get("ticker", "")))
     if method == "POST" and route == "/greenrock/staging/notes":
         return WebResponse(200, save_greenrock_staging_notes(form.get("ticker", ""), form.get("notes", "")))
+    if method == "POST" and route == "/greenrock/watchlists/remove":
+        return WebResponse(200, remove_greenrock_watchlist_ticker(form.get("ticker", ""), form.get("list_key", "")))
     if method == "POST" and route == "/greenrock/score":
         return WebResponse(
             200,
@@ -563,6 +584,7 @@ def render_greenrock(status_message: str | None = None) -> str:
     content = f"""
     {_status_banner(status_message)}
     <section class="hero compact greenrock-hero">
+      {_greenrock_brand_block()}
       <p class="eyebrow">GreenRock Analysts</p>
       <h1>Report Review Console</h1>
       <p>Mock-data screening output, approval queue, and local final packet controls.</p>
@@ -655,6 +677,7 @@ def render_greenrock_picks_board(status_message: str | None = None) -> str:
     {_status_banner(status_message)}
     <section class="hero picks-hero">
       <div>
+        {_greenrock_brand_block()}
         <p class="eyebrow">GreenRock Analysts</p>
         <h1>Picks Board</h1>
         <p>Local research dashboard for the latest approval-gated report run.</p>
@@ -747,14 +770,21 @@ def render_greenrock_discovery(status_message: str | None = None) -> str:
     content = f"""
     {_status_banner(status_message)}
     <section class="hero compact greenrock-hero discovery-hero">
+      {_greenrock_brand_block()}
       <p class="eyebrow">GreenRock Discovery Workflow</p>
-      <h1>Population -> Scanner -> Promote -> Watchlists -> Stage -> Reports</h1>
+      <h1>GreenRock Discovery Flow</h1>
       <p>Guide broad market discovery into curated local research queues and report candidate staging without publishing or bypassing approvals.</p>
     </section>
-    <section class="workflow-stepper" aria-label="GreenRock discovery workflow">
-      <span>Population</span><span>Scan</span><span>Promote</span><span>Watchlist</span><span>Stage</span><span>Report</span>
+    <section class="panel discovery-flow-panel">
+      <div class="section-head">
+        <h2>GreenRock Discovery Flow</h2>
+        <span class="subtle">Local research workflow</span>
+      </div>
+      <div class="workflow-stepper" aria-label="GreenRock discovery workflow">
+        <span>Population</span><span>Scan</span><span>Promote</span><span>Watchlist</span><span>Stage</span><span>Report</span>
+      </div>
+      <div class="workflow-grid">{step_cards}</div>
     </section>
-    <section class="workflow-grid">{step_cards}</section>
     <section class="panel">
       <div class="section-head">
         <h2>Current Discovery State</h2>
@@ -924,9 +954,12 @@ def promote_greenrock_scan_ticker(scan_id: str, ticker: str, list_key: str) -> s
     settings = get_settings()
     try:
         placement = promote_scan_ticker(settings.output_dir, scan_id, ticker, list_key)
-        verb = "saved to" if placement.added else "already exists in"
         warnings = " ".join(placement.warnings)
-        status = f"{placement.ticker} {verb} {placement.list_label}. {warnings}".strip()
+        if placement.blocked:
+            status = f"Promotion blocked: {warnings}"
+        else:
+            verb = "saved to" if placement.added else "already exists in"
+            status = f"{placement.ticker} {verb} {placement.list_label}. {warnings}".strip()
     except ValueError as error:
         status = f"Promotion blocked: {error}"
     return render_greenrock_scanner(status)
@@ -941,7 +974,9 @@ def promote_greenrock_scan_tickers(scan_id: str, tickers: tuple[str, ...], list_
     for ticker in tickers:
         try:
             placement = promote_scan_ticker(settings.output_dir, scan_id, ticker, list_key)
-            if placement.added:
+            if placement.blocked:
+                warnings.extend(placement.warnings)
+            elif placement.added:
                 statuses.append(f"{placement.ticker} saved to {placement.list_label}")
             else:
                 statuses.append(f"{placement.ticker} already exists in {placement.list_label}")
@@ -991,6 +1026,19 @@ def save_greenrock_staging_notes(ticker: str, notes: str) -> str:
     return render_greenrock_staging(status)
 
 
+def remove_greenrock_watchlist_ticker(ticker: str, list_key: str) -> str:
+    settings = get_settings()
+    try:
+        placement = remove_ticker_from_greenrock_list(settings.output_dir, ticker, list_key)
+        if placement.warnings:
+            status = " ".join(placement.warnings)
+        else:
+            status = f"{placement.ticker} removed from {placement.list_label}."
+    except ValueError as error:
+        status = f"Watchlist removal blocked: {error}"
+    return render_greenrock_watchlists(status)
+
+
 def render_greenrock_score(
     ticker: str = "",
     status_message: str | None = None,
@@ -1022,13 +1070,17 @@ def render_greenrock_score(
     {_status_banner(status_message)}
     <section class="hero compact greenrock-hero score-tool-hero">
       <div>
+        {_greenrock_brand_block()}
         <p class="eyebrow">GreenRock Analysts</p>
         <h1>GreenRock Score Calculator</h1>
         <p>Score any ticker against the GreenRock technical dislocation framework.</p>
       </div>
       <form method="post" action="/greenrock/score" class="score-form">
         <input name="ticker" value="{_safe(cleaned_ticker)}" placeholder="Ticker" required>
-        <button type="submit">Calculate Score</button>
+        <button type="submit" class="logo-score-button" aria-label="Calculate GreenRock Score">
+          {_greenrock_logo("score-button-logo")}
+          <span>Calculate Score</span>
+        </button>
       </form>
     </section>
     {result_html}
@@ -1072,9 +1124,12 @@ def save_greenrock_score_ticker(ticker: str, list_key: str) -> str:
             list_key,
             market_cap_bucket=preview.candidate.market_cap_bucket,
         )
-        verb = "saved to" if placement.added else "already exists in"
         warnings = " ".join(placement.warnings)
-        save_status = f"{placement.ticker} {verb} {placement.list_label}. {warnings}".strip()
+        if placement.blocked:
+            save_status = f"Save blocked: {warnings}"
+        else:
+            verb = "saved to" if placement.added else "already exists in"
+            save_status = f"{placement.ticker} {verb} {placement.list_label}. {warnings}".strip()
     except (MarketDataConfigurationError, ValueError) as error:
         save_status = f"Save blocked: {error}"
     return render_greenrock_score(ticker=cleaned_ticker, save_status=save_status)
@@ -1767,7 +1822,7 @@ def _watchlist_overview_card(
         for ticker in tickers
     )
     if not rows:
-        rows = "<tr><td colspan='4' class='empty'>No tickers saved yet.</td></tr>"
+        rows = "<tr><td colspan='5' class='empty'>No tickers saved yet.</td></tr>"
     return f"""
     <section class="panel watchlist-card">
       <div class="section-head">
@@ -1775,7 +1830,7 @@ def _watchlist_overview_card(
         <span class="badge">{len(tickers)} tickers</span>
       </div>
       <table>
-        <thead><tr><th>Ticker</th><th>Finviz</th><th>Source</th><th>Latest Promoted</th></tr></thead>
+        <thead><tr><th>Ticker</th><th>Finviz</th><th>Source</th><th>Latest Promoted</th><th>Actions</th></tr></thead>
         <tbody>{rows}</tbody>
       </table>
     </section>
@@ -1791,8 +1846,19 @@ def _watchlist_ticker_row(list_key: str, ticker: str, metadata: dict[str, str] |
         f"<td>{_finviz_link(ticker)}</td>"
         f"<td>{_safe(source)}</td>"
         f"<td>{_safe(promoted_at or 'not recorded')}</td>"
+        f"<td>{_watchlist_remove_form(list_key, ticker)}</td>"
         "</tr>"
     )
+
+
+def _watchlist_remove_form(list_key: str, ticker: str) -> str:
+    return f"""
+    <form method="post" action="/greenrock/watchlists/remove" onsubmit="return confirm('Remove this ticker from the selected GreenRock watchlist?');">
+      <input type="hidden" name="list_key" value="{_safe(list_key)}">
+      <input type="hidden" name="ticker" value="{_safe(ticker)}">
+      <button type="submit" class="secondary">Remove</button>
+    </form>
+    """
 
 
 def _staging_readiness_card(item) -> str:
@@ -2740,6 +2806,28 @@ def _safe(value: object) -> str:
     return html.escape(str(value))
 
 
+def _static_response(filename: str) -> WebResponse:
+    clean = filename.strip().lstrip("/")
+    if "/" in clean or ".." in clean:
+        return WebResponse(404, "Not found", content_type="text/plain; charset=utf-8")
+    path = STATIC_DIR / clean
+    if not path.exists():
+        return WebResponse(404, "Not found", content_type="text/plain; charset=utf-8")
+    content_type = "image/png" if path.suffix.lower() == ".png" else "application/octet-stream"
+    return WebResponse(200, path.read_bytes(), content_type=content_type)
+
+
+def _greenrock_logo(class_name: str = "greenrock-logo") -> str:
+    return (
+        f"<img class='{_safe(class_name)}' src='{GREENROCK_LOGO_URL}' "
+        "alt='GreenRock bull logo' loading='lazy' onerror=\"this.style.display='none'\">"
+    )
+
+
+def _greenrock_brand_block() -> str:
+    return f"<div class='greenrock-brand'>{_greenrock_logo()}<span>GreenRock Analysts</span></div>"
+
+
 def _parse_form(body: str) -> dict[str, str]:
     parsed = parse_qs(body, keep_blank_values=True)
     return {key: values[0] for key, values in parsed.items()}
@@ -2876,6 +2964,8 @@ def _page(title: str, content: str, active: str = "/") -> str:
     .hero p {{ color: var(--muted); margin-bottom: 0; }}
     .hive {{ background: linear-gradient(135deg, rgba(18,22,34,.92), rgba(23,34,39,.88)); }}
     .picks-hero {{ background: linear-gradient(135deg, rgba(7,42,25,.95), rgba(31,24,55,.88) 58%, rgba(50,39,18,.86)); }}
+    .greenrock-brand {{ display: flex; align-items: center; gap: 10px; margin-bottom: 12px; color: #d8ffe6; font-weight: 800; }}
+    .greenrock-logo {{ width: 46px; height: 46px; object-fit: contain; border-radius: 8px; background: rgba(255,255,255,.06); border: 1px solid rgba(55,214,122,.22); padding: 4px; }}
     .picks-stamp {{ border: 1px solid rgba(243,201,105,.42); border-radius: 8px; padding: 18px; min-width: 190px; background: rgba(0,0,0,.2); text-align: right; }}
     .picks-stamp strong {{ display: block; font-size: 44px; color: var(--gold); margin-top: 12px; }}
     .orbital {{ width: 170px; aspect-ratio: 1; border: 1px solid rgba(55,214,122,.34); border-radius: 50%; position: relative; animation: spin 18s linear infinite; }}
@@ -2945,6 +3035,8 @@ def _page(title: str, content: str, active: str = "/") -> str:
     .score-tool-hero {{ display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, .5fr); gap: 22px; align-items: end; }}
     .score-tool-hero .score-form {{ margin: 0; }}
     .score-form {{ display: grid; grid-template-columns: minmax(150px, 1fr) auto; gap: 10px; }}
+    .logo-score-button {{ display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-width: 176px; }}
+    .score-button-logo {{ width: 30px; height: 30px; object-fit: contain; }}
     .save-list-panel {{ border-color: rgba(55,214,122,.28); }}
     .save-list-form {{ display: grid; grid-template-columns: minmax(150px, .6fr) minmax(220px, 1fr) auto; gap: 10px; }}
     .inline-promote-form {{ display: grid; grid-template-columns: minmax(170px, 1fr) auto; gap: 8px; min-width: 300px; }}
@@ -2952,6 +3044,8 @@ def _page(title: str, content: str, active: str = "/") -> str:
     .workflow-stepper {{ display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; background: rgba(55,214,122,.08); border-color: rgba(55,214,122,.28); }}
     .workflow-stepper span {{ display: block; text-align: center; border: 1px solid rgba(55,214,122,.24); border-radius: 8px; padding: 12px; color: #d7ffe4; font-weight: 800; background: rgba(0,0,0,.16); }}
     .workflow-grid, .watchlist-grid {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }}
+    .discovery-flow-panel {{ border-color: rgba(55,214,122,.34); background: rgba(55,214,122,.055); }}
+    .discovery-flow-panel .workflow-grid {{ margin-top: 14px; }}
     .workflow-card {{ min-height: 170px; margin: 0; background: rgba(255,255,255,.045); }}
     .workflow-card span {{ display: inline-grid; place-items: center; width: 32px; height: 32px; border-radius: 999px; color: #06100b; background: var(--green); font-weight: 900; margin-bottom: 12px; }}
     .discovery-hero h1 {{ max-width: 980px; }}
@@ -3105,4 +3199,5 @@ class _CommandCenterHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", response.content_type)
         self.end_headers()
         if response.body:
-            self.wfile.write(response.body.encode("utf-8"))
+            body = response.body if isinstance(response.body, bytes) else response.body.encode("utf-8")
+            self.wfile.write(body)

@@ -18,6 +18,8 @@ from atlas_os.core.workflow_runs import list_workflow_runs
 from atlas_os.db.database import connect, initialize_database
 from atlas_os.greenrock.market_data import MarketDataProvider
 from atlas_os.greenrock.models import FundamentalSnapshot, PriceBar
+from atlas_os.greenrock.pdf_export import render_markdown_report_to_pdf
+from atlas_os.greenrock.report import build_sample_report
 from atlas_os.greenrock.sample_data import load_mock_stocks
 from atlas_os.greenrock.score import calculate_score_preview, confidence_band
 from atlas_os.web_app import dispatch_request
@@ -70,6 +72,7 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("Run Real Report", response.body)
         self.assertIn("GreenRock Picks Board", response.body)
         self.assertIn("Score Any Ticker", response.body)
+        self.assertIn("/static/greenrock_logo.png", response.body)
 
     def test_greenrock_picks_route_returns_200_with_finviz_links_and_23_slots(self) -> None:
         with _isolated_env():
@@ -87,6 +90,7 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("Powered by Atlas OS", response.body)
         self.assertIn("MOCK DATA", response.body)
         self.assertIn("GreenRock Score Calculator", response.body)
+        self.assertIn("/static/greenrock_logo.png", response.body)
         self.assertIn("Mega Rock: 1/1", response.body)
         self.assertIn("Large Cap: 11/11", response.body)
         self.assertIn("Small/Mid: 11/11", response.body)
@@ -116,6 +120,9 @@ class CommandCenterTests(unittest.TestCase):
 
         self.assertEqual(page.status, 200)
         self.assertIn("GreenRock Score Calculator", page.body)
+        self.assertIn("/static/greenrock_logo.png", page.body)
+        self.assertIn("logo-score-button", page.body)
+        self.assertIn("aria-label=\"Calculate GreenRock Score\"", page.body)
         self.assertIn("Score any ticker against the GreenRock technical dislocation framework.", page.body)
         self.assertNotIn('name="data_mode"', page.body)
         self.assertNotIn(">Mock<", page.body)
@@ -370,12 +377,38 @@ class CommandCenterTests(unittest.TestCase):
 
     def test_save_ticker_bucket_mismatch_warning_appears(self) -> None:
         preview = calculate_score_preview("LC01", provider=FullHistoryProvider())
-        with _isolated_env():
+        with _isolated_env() as root:
             with patch("atlas_os.web_app.calculate_score_preview", return_value=preview):
                 result = dispatch_request("POST", "/greenrock/score/save", "ticker=LC01&list_key=large_cap")
+            large_path = root / "output" / "greenrock" / "universes" / "large_cap.csv"
+            saved = large_path.read_text(encoding="utf-8") if large_path.exists() else ""
 
         self.assertEqual(result.status, 200)
-        self.assertIn("does not currently match Large Cap Watchlist bucket", result.body)
+        self.assertIn("Save blocked", result.body)
+        self.assertIn("does not currently meet the requirements for Large Cap Watchlist", result.body)
+        self.assertIn("Consider adding it to Small/Mid Watchlist or Personal Watchlist instead.", result.body)
+        self.assertNotIn("LC01", saved)
+
+    def test_personal_watchlist_fallback_works(self) -> None:
+        preview = calculate_score_preview("LC01", provider=FullHistoryProvider())
+        with _isolated_env() as root:
+            with patch("atlas_os.web_app.calculate_score_preview", return_value=preview):
+                result = dispatch_request("POST", "/greenrock/score/save", "ticker=LC01&list_key=personal_watchlist")
+            saved = (root / "output" / "greenrock" / "watchlists" / "personal_watchlist.csv").read_text(encoding="utf-8")
+
+        self.assertEqual(result.status, 200)
+        self.assertIn("LC01 saved to Personal Watchlist", result.body)
+        self.assertIn("LC01", saved)
+
+    def test_report_pdf_generation_handles_missing_logo(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            markdown_path = root / "report.md"
+            pdf_path = root / "report.pdf"
+            markdown_path.write_text(build_sample_report().markdown, encoding="utf-8")
+            rendered = render_markdown_report_to_pdf(markdown_path, pdf_path)
+
+        self.assertEqual(rendered, pdf_path)
 
     def test_browser_run_buttons_pass_selected_data_mode(self) -> None:
         fake_run = types.SimpleNamespace(run_id="greenrock-test", data_mode="real")

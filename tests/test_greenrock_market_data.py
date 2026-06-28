@@ -401,6 +401,9 @@ class GreenRockMarketDataTests(unittest.TestCase):
 
         self.assertEqual(response.status, 200)
         self.assertIn("GreenRock Discovery Workflow", response.body)
+        self.assertIn("/static/greenrock_logo.png", response.body)
+        self.assertIn("GreenRock Discovery Flow", response.body)
+        self.assertNotIn("->", response.body)
         self.assertIn("Select Population", response.body)
         self.assertIn("Run Scan", response.body)
         self.assertIn("Review Ranked Results", response.body)
@@ -506,6 +509,31 @@ class GreenRockMarketDataTests(unittest.TestCase):
         self.assertEqual(artifacts, ())
         self.assertEqual(runs, ())
 
+    def test_watchlist_remove_button_works_and_missing_is_safe(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {
+                "ATLAS_DB_PATH": str(root / "atlas.db"),
+                "ATLAS_OUTPUT_DIR": str(root / "output"),
+            }
+            with patch.dict("os.environ", env, clear=False):
+                result = run_population_scan(root / "output", "micro_moonshot", provider=FakeMarketDataProvider())
+                ticker = result.rows[0]["symbol"]
+                dispatch_request(
+                    "POST",
+                    "/greenrock/scanner/promote",
+                    f"scan_id={result.scan_id}&ticker={ticker}&list_key=watchlist",
+                )
+                page = dispatch_request("GET", "/greenrock/watchlists")
+                removed = dispatch_request("POST", "/greenrock/watchlists/remove", f"ticker={ticker}&list_key=watchlist")
+                missing = dispatch_request("POST", "/greenrock/watchlists/remove", f"ticker={ticker}&list_key=watchlist")
+                saved = (root / "output" / "greenrock" / "watchlists" / "watchlist.csv").read_text(encoding="utf-8")
+
+        self.assertIn("Remove", page.body)
+        self.assertIn(f"{ticker} removed from Watchlist", removed.body)
+        self.assertIn("nothing changed", missing.body)
+        self.assertNotIn(ticker, saved)
+
     def test_scanner_promotion_bucket_mismatch_warning_appears(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -523,7 +551,9 @@ class GreenRockMarketDataTests(unittest.TestCase):
                 )
 
         self.assertEqual(response.status, 200)
-        self.assertIn("does not currently match Large Cap Watchlist bucket", response.body)
+        self.assertIn("Promotion blocked", response.body)
+        self.assertIn("does not currently meet the requirements for Large Cap Watchlist", response.body)
+        self.assertIn("Consider adding it to Small/Mid Watchlist or Personal Watchlist instead.", response.body)
 
     def test_cli_scan_promote_works(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

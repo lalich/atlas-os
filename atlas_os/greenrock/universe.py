@@ -19,8 +19,10 @@ GREENROCK_UNIVERSE_NAMES = (
 WATCHLIST_PLACEMENT = "watchlist"
 RANKED_CANDIDATES_PLACEMENT = "ranked_candidates"
 STRICT_REVIEW_PLACEMENT = "strict_review"
+PERSONAL_WATCHLIST_PLACEMENT = "personal_watchlist"
 GREENROCK_PLACEMENT_LABELS = {
     WATCHLIST_PLACEMENT: "Watchlist",
+    PERSONAL_WATCHLIST_PLACEMENT: "Personal Watchlist",
     RANKED_CANDIDATES_PLACEMENT: "Ranked Candidates",
     STRICT_REVIEW_PLACEMENT: "Strict Review",
     MEGA_ROCK_UNIVERSE: "Mega Rock Candidate Pool",
@@ -109,6 +111,7 @@ class TickerPlacementResult:
     path: Path
     added: bool
     warnings: tuple[str, ...]
+    blocked: bool = False
 
 
 def universe_path(output_dir: Path, name: str = DEFAULT_UNIVERSE_NAME) -> Path:
@@ -170,11 +173,23 @@ def add_ticker_to_greenrock_list(
     if not normalized_ticker:
         raise ValueError("Ticker is required.")
 
+    guardrail_warning = _placement_guardrail_warning(normalized_ticker, normalized_list, market_cap_bucket)
+    if guardrail_warning:
+        return TickerPlacementResult(
+            ticker=normalized_ticker,
+            list_key=normalized_list,
+            list_label=GREENROCK_PLACEMENT_LABELS[normalized_list],
+            path=placement_path(output_dir, normalized_list),
+            added=False,
+            warnings=(guardrail_warning,),
+            blocked=True,
+        )
+
     existing = _load_placement_tickers(output_dir, normalized_list)
     added = normalized_ticker not in existing
     merged = existing if not added else existing + (normalized_ticker,)
     path = _save_placement_tickers(output_dir, normalized_list, merged).path
-    warnings = _placement_warnings(normalized_ticker, normalized_list, market_cap_bucket)
+    warnings = ()
     if not added:
         warnings = (f"{normalized_ticker} is already in {GREENROCK_PLACEMENT_LABELS[normalized_list]}; duplicate ignored.",) + warnings
     return TickerPlacementResult(
@@ -183,6 +198,28 @@ def add_ticker_to_greenrock_list(
         list_label=GREENROCK_PLACEMENT_LABELS[normalized_list],
         path=path,
         added=added,
+        warnings=warnings,
+    )
+
+
+def remove_ticker_from_greenrock_list(output_dir: Path, ticker: str, list_key: str) -> TickerPlacementResult:
+    normalized_list = list_key.strip().lower()
+    if normalized_list not in GREENROCK_PLACEMENT_LABELS:
+        raise ValueError("Choose a valid GreenRock list.")
+    normalized_ticker = normalize_ticker(ticker)
+    if not normalized_ticker:
+        raise ValueError("Ticker is required.")
+    existing = _load_placement_tickers(output_dir, normalized_list)
+    kept = tuple(item for item in existing if item != normalized_ticker)
+    path = _save_placement_tickers(output_dir, normalized_list, kept).path
+    removed = len(kept) != len(existing)
+    warnings = () if removed else (f"{normalized_ticker} was not in {GREENROCK_PLACEMENT_LABELS[normalized_list]}; nothing changed.",)
+    return TickerPlacementResult(
+        ticker=normalized_ticker,
+        list_key=normalized_list,
+        list_label=GREENROCK_PLACEMENT_LABELS[normalized_list],
+        path=path,
+        added=False,
         warnings=warnings,
     )
 
@@ -222,6 +259,28 @@ def _save_placement_tickers(output_dir: Path, list_key: str, tickers: tuple[str,
         for ticker in normalized:
             writer.writerow({"ticker": ticker})
     return TickerUniverse(name=list_key, tickers=normalized, path=path)
+
+
+def _placement_guardrail_warning(ticker: str, list_key: str, market_cap_bucket: str | None) -> str:
+    if list_key in {WATCHLIST_PLACEMENT, PERSONAL_WATCHLIST_PLACEMENT, RANKED_CANDIDATES_PLACEMENT, STRICT_REVIEW_PLACEMENT}:
+        return ""
+    suggested = suggested_list_for_market_cap_bucket(market_cap_bucket)
+    if suggested == list_key:
+        return ""
+    return (
+        f"This ticker does not currently meet the requirements for {GREENROCK_PLACEMENT_LABELS[list_key]}. "
+        f"Consider adding it to {GREENROCK_PLACEMENT_LABELS[suggested]} or Personal Watchlist instead."
+    )
+
+
+def suggested_list_for_market_cap_bucket(market_cap_bucket: str | None) -> str:
+    bucket = (market_cap_bucket or "").strip().lower()
+    return {
+        MEGA_ROCK_UNIVERSE: MEGA_ROCK_UNIVERSE,
+        LARGE_CAP_UNIVERSE: LARGE_CAP_UNIVERSE,
+        "small_cap": SMALL_MID_CAP_UNIVERSE,
+        SMALL_MID_CAP_UNIVERSE: SMALL_MID_CAP_UNIVERSE,
+    }.get(bucket, PERSONAL_WATCHLIST_PLACEMENT)
 
 
 def _placement_warnings(ticker: str, list_key: str, market_cap_bucket: str | None) -> tuple[str, ...]:

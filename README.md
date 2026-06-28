@@ -133,6 +133,8 @@ Scan outputs are stored under `.atlas/output/greenrock/scans/<scan_id>/` as `sca
 
 Scanner promotion can save a scan ticker into Watchlist, Ranked Candidates, Strict Review, Mega Rock Candidate Pool, Large Cap Watchlist, or Small/Mid Watchlist. Promotion is duplicate-safe, shows market-cap bucket warnings where applicable, and writes only to local GreenRock list CSVs.
 
+Bucket-specific saves are guarded by available market-cap bucket data: mismatched Mega Rock, Large Cap, or Small/Mid saves are blocked with a suggested destination. Personal Watchlist is the manual fallback for unknown or intentionally tracked names.
+
 Report Candidate Staging is the next local curation layer:
 
 ```bash
@@ -144,6 +146,8 @@ atlas greenrock staging ready
 ```
 
 Staging stores candidates locally at `.atlas/output/greenrock/staging/report_candidates.csv` with bucket, source, score, confidence, Evidence Agreement, Guardrail, Research Priority, top signals, timestamp, and operator notes. Staging does not create reports, approvals, PDFs, emails, publications, or client-facing artifacts.
+
+GreenRock branding uses the local asset path `atlas_os/static/greenrock_logo.png`. If the logo file is missing, web pages and report/PDF generation continue without failing.
 
 ## GreenRock Score Calculator
 
@@ -194,6 +198,8 @@ When `ATLAS_GREENROCK_REAL_TICKERS` is blank, real mode uses the local GreenRock
 - `mega_rock.csv`
 - `large_cap.csv`
 - `small_mid_cap.csv`
+
+Browser watchlist pages also include Watchlist and Personal Watchlist CSVs under `.atlas/output/greenrock/watchlists/`. `/greenrock/watchlists` supports safe manual removal with confirmation.
 
 Manage the watchlists locally:
 

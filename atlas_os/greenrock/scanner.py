@@ -21,6 +21,7 @@ from atlas_os.greenrock.universe import (
     LARGE_CAP_UNIVERSE,
     MEGA_ROCK_UNIVERSE,
     RANKED_CANDIDATES_PLACEMENT,
+    PERSONAL_WATCHLIST_PLACEMENT,
     SMALL_MID_CAP_UNIVERSE,
     STRICT_REVIEW_PLACEMENT,
     WATCHLIST_PLACEMENT,
@@ -199,6 +200,8 @@ def _provider_for_scan(tickers: tuple[str, ...], population: str) -> MarketDataP
 def _promotion_list_key(list_key: str) -> str:
     aliases = {
         "watchlist": WATCHLIST_PLACEMENT,
+        "personal": PERSONAL_WATCHLIST_PLACEMENT,
+        "personal_watchlist": PERSONAL_WATCHLIST_PLACEMENT,
         "ranked": RANKED_CANDIDATES_PLACEMENT,
         "ranked_candidates": RANKED_CANDIDATES_PLACEMENT,
         "strict": STRICT_REVIEW_PLACEMENT,

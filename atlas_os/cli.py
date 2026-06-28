@@ -282,7 +282,7 @@ def build_parser() -> argparse.ArgumentParser:
     scan_promote.add_argument("ticker")
     scan_promote.add_argument(
         "--list",
-        choices=("watchlist", "ranked", "strict", "mega_rock", "large_cap", "small_mid"),
+        choices=("watchlist", "personal", "ranked", "strict", "mega_rock", "large_cap", "small_mid"),
         required=True,
         dest="list_key",
         help="Destination GreenRock list.",
@@ -740,7 +740,7 @@ def run_greenrock_scan_promote(scan_id: str, ticker: str, list_key: str) -> int:
         print(f"reason: {error}")
         print("No report, approval, PDF, email, publication, or external action was created.")
         return 1
-    verb = "saved to" if placement.added else "already exists in"
+    verb = "blocked" if placement.blocked else ("saved to" if placement.added else "already exists in")
     print("GreenRock scan promotion complete")
     print(f"scan_id: {scan_id}")
     print(f"ticker: {placement.ticker}")

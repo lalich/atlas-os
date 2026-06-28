@@ -8,6 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from atlas_os.greenrock.assets import greenrock_logo_path
+
 
 BUNDLED_PYTHON = Path(
     "/Users/marklalich/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3"
@@ -122,15 +124,24 @@ def _render_with_reportlab(markdown_path: Path, pdf_path: Path) -> None:
 
 def _markdown_to_story(markdown: str, styles, colors) -> list:
     from reportlab.lib.units import inch
-    from reportlab.platypus import PageBreak, Paragraph, Spacer, Table, TableStyle
+    from reportlab.platypus import Image, PageBreak, Paragraph, Spacer, Table, TableStyle
 
     story: list = []
+    logo_path = greenrock_logo_path()
+    if logo_path:
+        try:
+            story.extend([Image(str(logo_path), width=1.1 * inch, height=1.1 * inch), Spacer(1, 0.08 * inch)])
+        except Exception:
+            pass
     lines = markdown.splitlines()
     index = 0
     h2_count = 0
     while index < len(lines):
         line = lines[index].strip()
         if not line:
+            index += 1
+            continue
+        if line.startswith("!["):
             index += 1
             continue
 

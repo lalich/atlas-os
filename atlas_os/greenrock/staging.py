@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from atlas_os.greenrock.scanner import latest_scan, load_promotion_metadata
+from atlas_os.greenrock.universe import LARGE_CAP_UNIVERSE, MEGA_ROCK_UNIVERSE, SMALL_MID_CAP_UNIVERSE
 
 
 MEGA_BUCKET = "mega"
@@ -93,6 +94,7 @@ def add_staged_candidate(
         raise ValueError("Ticker is required.")
     existing = list(load_staged_candidates(output_dir))
     metadata = _candidate_metadata(output_dir, normalized_ticker, source_list)
+    _validate_staging_bucket(normalized_ticker, normalized_bucket, metadata)
     row = _normalize_row(
         {
             "ticker": normalized_ticker,
@@ -212,6 +214,7 @@ def _metadata_from_latest_scan(output_dir: Path, ticker: str) -> dict[str, str]:
         "confidence": row.get("greenrock_confidence", ""),
         "evidence_agreement": row.get("evidence_agreement", ""),
         "guardrail": row.get("fundamental_guardrail", ""),
+        "market_cap_bucket": row.get("market_cap_bucket", ""),
         "research_priority": row.get("research_priority", ""),
         "top_bullish_signal": row.get("top_bullish_signal", ""),
         "top_caution_signal": row.get("top_caution_signal", ""),
@@ -223,6 +226,27 @@ def _normalize_row(row: dict[str, str]) -> dict[str, str]:
     normalized["ticker"] = _normalize_ticker(normalized["ticker"])
     normalized["staged_bucket"] = _normalize_bucket(normalized["staged_bucket"] or RESEARCH_BUCKET)
     return normalized
+
+
+def _validate_staging_bucket(ticker: str, bucket: str, metadata: dict[str, str]) -> None:
+    if bucket in {RESEARCH_BUCKET, EXCLUDED_BUCKET}:
+        return
+    suggested = _suggested_staging_bucket(metadata.get("market_cap_bucket", ""))
+    if not suggested or suggested == bucket:
+        return
+    raise ValueError(
+        f"This ticker does not currently meet the requirements for {STAGING_BUCKET_LABELS[bucket]}. "
+        f"Consider adding it to {STAGING_BUCKET_LABELS[suggested]} or Research Only instead."
+    )
+
+
+def _suggested_staging_bucket(market_cap_bucket: str) -> str:
+    return {
+        MEGA_ROCK_UNIVERSE: MEGA_BUCKET,
+        LARGE_CAP_UNIVERSE: LARGE_BUCKET,
+        "small_cap": SMALL_MID_BUCKET,
+        SMALL_MID_CAP_UNIVERSE: SMALL_MID_BUCKET,
+    }.get(market_cap_bucket.strip().lower(), "")
 
 
 def _normalize_ticker(ticker: str) -> str:
