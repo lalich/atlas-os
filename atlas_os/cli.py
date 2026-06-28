@@ -40,6 +40,14 @@ from atlas_os.greenrock.report import build_sample_report
 from atlas_os.greenrock.score import calculate_score_preview, score_signal
 from atlas_os.greenrock.scanner import promote_scan_ticker, run_population_scan
 from atlas_os.greenrock.screener import run_screen
+from atlas_os.greenrock.staging import (
+    STAGING_BUCKET_LABELS,
+    add_staged_candidate,
+    load_staged_candidates,
+    move_staged_candidate,
+    remove_staged_candidate,
+    staging_readiness,
+)
 from atlas_os.greenrock.universe import (
     LARGE_CAP_UNIVERSE,
     MEGA_ROCK_UNIVERSE,
@@ -279,6 +287,23 @@ def build_parser() -> argparse.ArgumentParser:
         dest="list_key",
         help="Destination GreenRock list.",
     )
+
+    staging = greenrock_subparsers.add_parser(
+        "staging",
+        help="Manage local GreenRock report candidate staging.",
+    )
+    staging_subparsers = staging.add_subparsers(dest="staging_command")
+    staging_subparsers.add_parser("list", help="List staged GreenRock report candidates.")
+    staging_add = staging_subparsers.add_parser("add", help="Add or update a staged GreenRock report candidate.")
+    staging_add.add_argument("ticker")
+    staging_add.add_argument("--bucket", choices=("mega", "large", "small_mid", "research", "excluded"), required=True)
+    staging_add.add_argument("--notes", default="", help="Operator notes.")
+    staging_move = staging_subparsers.add_parser("move", help="Move a staged ticker to a different bucket.")
+    staging_move.add_argument("ticker")
+    staging_move.add_argument("--bucket", choices=("mega", "large", "small_mid", "research", "excluded"), required=True)
+    staging_remove = staging_subparsers.add_parser("remove", help="Remove a ticker from staging.")
+    staging_remove.add_argument("ticker")
+    staging_subparsers.add_parser("ready", help="Show staging readiness versus report slot targets.")
 
     return parser
 
@@ -730,6 +755,70 @@ def run_greenrock_scan_promote(scan_id: str, ticker: str, list_key: str) -> int:
         print("  none")
     print("No report, approval, PDF, email, publication, or external action was created.")
     return 0
+
+
+def run_greenrock_staging(command: str | None, ticker: str | None = None, bucket: str | None = None, notes: str = "") -> int:
+    settings = get_settings()
+    try:
+        if command == "list":
+            rows = load_staged_candidates(settings.output_dir)
+            print("GreenRock report candidate staging")
+            if not rows:
+                print("No staged candidates found.")
+                return 0
+            print("ticker bucket score confidence evidence guardrail priority source_scan_id notes")
+            for row in rows:
+                print(
+                    f"{row['ticker']} {row['staged_bucket']} {row['greenrock_score'] or '-'} "
+                    f"{row['confidence'] or '-'} {row['evidence_agreement'] or '-'} "
+                    f"{row['guardrail'] or '-'} {row['research_priority'] or '-'} "
+                    f"{row['source_scan_id'] or '-'} {row['notes'] or '-'}"
+                )
+            return 0
+        if command == "add" and ticker and bucket:
+            row = add_staged_candidate(settings.output_dir, ticker, bucket, notes=notes)
+            print("GreenRock staging candidate saved")
+            _print_staging_row(row)
+            print("No report, approval, PDF, email, publication, or external action was created.")
+            return 0
+        if command == "move" and ticker and bucket:
+            row = move_staged_candidate(settings.output_dir, ticker, bucket)
+            print("GreenRock staging candidate moved")
+            _print_staging_row(row)
+            print("No report, approval, PDF, email, publication, or external action was created.")
+            return 0
+        if command == "remove" and ticker:
+            removed = remove_staged_candidate(settings.output_dir, ticker)
+            print("GreenRock staging candidate removed" if removed else "GreenRock staging candidate not found")
+            print(f"ticker: {ticker.upper()}")
+            print("No report, approval, PDF, email, publication, or external action was created.")
+            return 0
+        if command == "ready":
+            print("GreenRock staging readiness")
+            for item in staging_readiness(settings.output_dir):
+                target = item.target if item.target is not None else "review"
+                print(f"{item.label}: {item.count}/{target} {item.status}")
+            return 0
+    except ValueError as error:
+        print("GreenRock staging blocked")
+        print(f"reason: {error}")
+        print("No report, approval, PDF, email, publication, or external action was created.")
+        return 1
+    print("Choose a staging command: list, add, move, remove, or ready.")
+    return 1
+
+
+def _print_staging_row(row: dict[str, str]) -> None:
+    print(f"ticker: {row['ticker']}")
+    print(f"bucket: {STAGING_BUCKET_LABELS[row['staged_bucket']]}")
+    print(f"source_list: {row['source_list'] or 'manual'}")
+    print(f"source_scan_id: {row['source_scan_id'] or '-'}")
+    print(f"greenrock_score: {row['greenrock_score'] or '-'}")
+    print(f"confidence: {row['confidence'] or '-'}")
+    print(f"evidence_agreement: {row['evidence_agreement'] or '-'}")
+    print(f"guardrail: {row['guardrail'] or '-'}")
+    print(f"research_priority: {row['research_priority'] or '-'}")
+    print(f"notes: {row['notes'] or '-'}")
 
 
 def _score_rank_band(score: float) -> str:
@@ -1457,6 +1546,13 @@ def main(argv: list[str] | None = None) -> int:
             return run_greenrock_scan(args.population)
         if args.greenrock_command == "scan-promote":
             return run_greenrock_scan_promote(args.scan_id, args.ticker, args.list_key)
+        if args.greenrock_command == "staging":
+            return run_greenrock_staging(
+                args.staging_command,
+                getattr(args, "ticker", None),
+                getattr(args, "bucket", None),
+                getattr(args, "notes", ""),
+            )
         if args.greenrock_command == "review":
             return run_greenrock_review()
         if args.greenrock_command == "open-latest":

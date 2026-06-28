@@ -14,10 +14,12 @@
 - Maintain separate concepts for population scans, curated watchlists, and report picks. Population scans broaden the source universe but should not bypass report approval gates.
 - Keep Micro/Moonshot population storage editable for non-index-style names that may not appear in standard index populations.
 - Keep scanner promotion local-only and duplicate-safe. Promotion should write selected scan tickers into GreenRock list CSVs without creating reports, approvals, PDFs, emails, publications, or client-facing files.
-- Treat the discovery workflow as Population -> Scanner -> Promote -> Watchlists -> Report. The `/greenrock/discovery` page should help operators understand which stage they are in and what the next local action is.
+- Treat the discovery workflow as Population -> Scanner -> Promote -> Watchlists -> Stage -> Report. The `/greenrock/discovery` page should help operators understand which stage they are in and what the next local action is.
 - Keep `/greenrock/scanner` focused on discovery: latest scan metadata, quick filters, ranked candidates, batch promotion, Finviz links, data-quality warnings, and clear no-report/no-approval language.
 - Keep `/greenrock/watchlists` focused on curated research queues: ticker counts, tickers, Finviz links, promotion source, and latest promoted timestamp when promotion metadata exists.
 - Store promotion metadata as a sidecar CSV so existing watchlist/universe CSV files remain simple ticker lists.
+- Keep `/greenrock/staging` as the final human curation layer before approval-gated report generation. It should allow bucket moves, removals, notes, readiness checks, and source context without creating report runs, approvals, PDFs, emails, publications, or client-facing artifacts.
+- Keep staging buckets explicit: Mega Rock Candidate, Large Cap Candidate, Small/Mid Candidate, Research Only, and Excluded. Count targets should remain visible for the three report candidate buckets.
 
 ## Scoring Improvements
 

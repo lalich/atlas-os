@@ -118,6 +118,8 @@ atlas greenrock population add micro_moonshot GRRR PI
 atlas greenrock population validate
 atlas greenrock scan --population micro_moonshot
 atlas greenrock scan-promote <scan_id> SOFI --list watchlist
+atlas greenrock staging add SOFI --bucket small_mid
+atlas greenrock staging ready
 ```
 
 Populations are stored locally under `.atlas/output/greenrock/populations/`:
@@ -130,6 +132,18 @@ Populations are stored locally under `.atlas/output/greenrock/populations/`:
 Scan outputs are stored under `.atlas/output/greenrock/scans/<scan_id>/` as `scan_results.csv` and `scan_summary.md`. Scans require the configured real provider, fail safely when it is unavailable, and do not create reports, approvals, emails, or publications. Reports do not source from population scans yet; they can eventually use latest population scan results as upstream candidates.
 
 Scanner promotion can save a scan ticker into Watchlist, Ranked Candidates, Strict Review, Mega Rock Candidate Pool, Large Cap Watchlist, or Small/Mid Watchlist. Promotion is duplicate-safe, shows market-cap bucket warnings where applicable, and writes only to local GreenRock list CSVs.
+
+Report Candidate Staging is the next local curation layer:
+
+```bash
+atlas greenrock staging list
+atlas greenrock staging add SOFI --bucket small_mid
+atlas greenrock staging move SOFI --bucket research
+atlas greenrock staging remove SOFI
+atlas greenrock staging ready
+```
+
+Staging stores candidates locally at `.atlas/output/greenrock/staging/report_candidates.csv` with bucket, source, score, confidence, Evidence Agreement, Guardrail, Research Priority, top signals, timestamp, and operator notes. Staging does not create reports, approvals, PDFs, emails, publications, or client-facing artifacts.
 
 ## GreenRock Score Calculator
 
@@ -367,10 +381,11 @@ Command Center pages:
 - `/` Atlas Inbox with attention counters, actionable cards, recent workflow feed, and navigation.
 - `/projects` project directory for GreenRock Analysts, Variance Capital / The Bat Signal, GreenRock Insurance, and Atlas Core.
 - `/greenrock` report review console with Run Mock Report and Run Real Report buttons, latest run/report/PDF status, candidate summaries, approval actions, local artifact open links, and PDF export after approval.
-- `/greenrock/discovery` guided GreenRock discovery workflow showing Population -> Scan -> Promote -> Watchlist -> Report, with clear local-only report-gate language.
+- `/greenrock/discovery` guided GreenRock discovery workflow showing Population -> Scan -> Promote -> Watchlist -> Stage -> Report, with clear local-only report-gate language.
 - `/greenrock/picks` GreenRock Picks Board with the featured Mega Rock pick, 11 large-cap picks, 11 small/mid-cap picks, Evidence Agreement, top signals, Fundamental Guardrail fields, Finviz links, and explicit data-mode labeling.
 - `/greenrock/scanner` GreenRock Market Scanner for population scans, latest scan metadata, quick filters, ranked results, Finviz links, and deliberate promote-to-list review.
 - `/greenrock/watchlists` local GreenRock watchlist overview with ticker counts, tickers, Finviz links, promotion source, and latest promoted timestamp when available.
+- `/greenrock/staging` Report Candidate Staging page for final local curation into Mega Rock, Large Cap, Small/Mid, Research Only, and Excluded buckets before approval-gated report drafts.
 - `/greenrock/score` GreenRock Score Calculator with confidence, Evidence Agreement, Fundamental Guardrails, research priority, evidence cards, watch-next notes, methodology explanation, and preview-only score breakdown.
 - `/greenrock/final-reports` final PDF archive for approved exported GreenRock PDFs.
 - `/tasks` local kanban-style manual task board with backlog, in progress, awaiting review, and completed columns.
@@ -387,7 +402,7 @@ The web app is local development mode only. It uses mock data, keeps the human a
 atlas serve
 ```
 
-Open `http://127.0.0.1:8000`, review the Atlas Inbox, then use the GreenRock page to run a mock or real local draft, inspect report status, approve/reject pending drafts, open local Markdown/PDF artifacts, or export an approved PDF. Use `http://127.0.0.1:8000/greenrock/discovery` for the Scan -> Promote -> Watchlist -> Report workflow, `http://127.0.0.1:8000/greenrock/scanner` for population discovery, `http://127.0.0.1:8000/greenrock/watchlists` for local research queues, and `http://127.0.0.1:8000/greenrock/picks` for the GreenRock Picks Board. Use the task board for manual operator tasks only; it does not trigger autonomous execution.
+Open `http://127.0.0.1:8000`, review the Atlas Inbox, then use the GreenRock page to run a mock or real local draft, inspect report status, approve/reject pending drafts, open local Markdown/PDF artifacts, or export an approved PDF. Use `http://127.0.0.1:8000/greenrock/discovery` for the Scan -> Promote -> Watchlist -> Stage -> Report workflow, `http://127.0.0.1:8000/greenrock/scanner` for population discovery, `http://127.0.0.1:8000/greenrock/watchlists` for local research queues, `http://127.0.0.1:8000/greenrock/staging` for report candidate staging, and `http://127.0.0.1:8000/greenrock/picks` for the GreenRock Picks Board. Use the task board for manual operator tasks only; it does not trigger autonomous execution.
 
 ## Operator Docs
 

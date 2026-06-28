@@ -109,6 +109,8 @@ atlas greenrock scan --population russell2000
 atlas greenrock scan --population micro_moonshot
 atlas greenrock scan --population all
 atlas greenrock scan-promote <scan_id> SOFI --list watchlist
+atlas greenrock staging add SOFI --bucket small_mid
+atlas greenrock staging ready
 ```
 
 Browser:
@@ -117,6 +119,7 @@ Browser:
 http://127.0.0.1:8000/greenrock/discovery
 http://127.0.0.1:8000/greenrock/scanner
 http://127.0.0.1:8000/greenrock/watchlists
+http://127.0.0.1:8000/greenrock/staging
 ```
 
 Outputs are local only:
@@ -133,9 +136,12 @@ Recommended browser flow:
 3. Use the scanner filters for minimum GreenRock Score, Confidence, Evidence Agreement, Research Priority, and Guardrail label.
 4. Select one or more tickers, choose a destination list, and confirm promotion.
 5. Open `/greenrock/watchlists` to review updated local research queues.
-6. Generate reports later from the report workflow only; reports remain approval-gated.
+6. Open `/greenrock/staging` to choose final report candidates and operator notes.
+7. Generate reports later from the report workflow only; reports remain approval-gated.
 
 Promotion saves only to local GreenRock list CSVs. It is duplicate-safe and shows a warning when the ticker market-cap bucket does not fit the selected bucket list. Promotion metadata is stored locally in `.atlas/output/greenrock/watchlists/promotion_metadata.csv` with scan ID, score, confidence, evidence agreement, research priority, guardrail, and promoted timestamp.
+
+Report Candidate Staging stores local rows at `.atlas/output/greenrock/staging/report_candidates.csv`. Buckets are Mega Rock Candidate, Large Cap Candidate, Small/Mid Candidate, Research Only, and Excluded. The readiness indicators compare staged counts against the current report targets: Mega Rock 1, Large Cap 11, Small/Mid 11. Staging alone does not create report runs, approvals, PDFs, emails, or publication artifacts.
 
 ## Score Any Ticker
 

@@ -43,6 +43,16 @@ from atlas_os.greenrock.scanner import (
     promote_scan_ticker,
     run_population_scan,
 )
+from atlas_os.greenrock.staging import (
+    STAGING_BUCKET_LABELS,
+    STAGING_BUCKET_TARGETS,
+    add_staged_candidate,
+    load_staged_candidates,
+    move_staged_candidate,
+    remove_staged_candidate,
+    staging_readiness,
+    update_staged_notes,
+)
 from atlas_os.greenrock.universe import (
     GREENROCK_PLACEMENT_LABELS,
     add_ticker_to_greenrock_list,
@@ -161,6 +171,31 @@ def create_app():
     def greenrock_watchlists() -> str:
         return render_greenrock_watchlists()
 
+    @app.get("/greenrock/staging", response_class=HTMLResponse)
+    def greenrock_staging() -> str:
+        return render_greenrock_staging()
+
+    @app.post("/greenrock/staging/add", response_class=HTMLResponse)
+    def greenrock_staging_add(
+        ticker: str = Form(""),
+        bucket: str = Form("research"),
+        source_list: str = Form("manual"),
+        notes: str = Form(""),
+    ) -> str:
+        return stage_greenrock_candidate(ticker, bucket, source_list, notes)
+
+    @app.post("/greenrock/staging/move", response_class=HTMLResponse)
+    def greenrock_staging_move(ticker: str = Form(""), bucket: str = Form("research")) -> str:
+        return move_greenrock_staging_candidate(ticker, bucket)
+
+    @app.post("/greenrock/staging/remove", response_class=HTMLResponse)
+    def greenrock_staging_remove(ticker: str = Form("")) -> str:
+        return remove_greenrock_staging_candidate(ticker)
+
+    @app.post("/greenrock/staging/notes", response_class=HTMLResponse)
+    def greenrock_staging_notes(ticker: str = Form(""), notes: str = Form("")) -> str:
+        return save_greenrock_staging_notes(ticker, notes)
+
     @app.get("/greenrock/score", response_class=HTMLResponse)
     def greenrock_score() -> str:
         return render_greenrock_score()
@@ -277,6 +312,8 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
         return WebResponse(200, render_greenrock_scanner(_first(query, "status"), query))
     if method == "GET" and route == "/greenrock/watchlists":
         return WebResponse(200, render_greenrock_watchlists(_first(query, "status")))
+    if method == "GET" and route == "/greenrock/staging":
+        return WebResponse(200, render_greenrock_staging(_first(query, "status")))
     if method == "GET" and route == "/greenrock/score":
         return WebResponse(200, render_greenrock_score())
     if method == "GET" and route == "/greenrock/final-reports":
@@ -343,6 +380,22 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
                 list_key=form.get("list_key", ""),
             ),
         )
+    if method == "POST" and route == "/greenrock/staging/add":
+        return WebResponse(
+            200,
+            stage_greenrock_candidate(
+                ticker=form.get("ticker", ""),
+                bucket=form.get("bucket", "research"),
+                source_list=form.get("source_list", "manual"),
+                notes=form.get("notes", ""),
+            ),
+        )
+    if method == "POST" and route == "/greenrock/staging/move":
+        return WebResponse(200, move_greenrock_staging_candidate(form.get("ticker", ""), form.get("bucket", "research")))
+    if method == "POST" and route == "/greenrock/staging/remove":
+        return WebResponse(200, remove_greenrock_staging_candidate(form.get("ticker", "")))
+    if method == "POST" and route == "/greenrock/staging/notes":
+        return WebResponse(200, save_greenrock_staging_notes(form.get("ticker", ""), form.get("notes", "")))
     if method == "POST" and route == "/greenrock/score":
         return WebResponse(
             200,
@@ -436,6 +489,7 @@ def render_dashboard(status_message: str | None = None) -> str:
       {_nav_card("GreenRock Discovery", "/greenrock/discovery", "Scan, promote, and manage local research queues")}
       {_nav_card("GreenRock Picks Board", "/greenrock/picks", "Mega Rock, large-cap, and small/mid-cap picks")}
       {_nav_card("GreenRock Market Scanner", "/greenrock/scanner", "Population scans before report picks")}
+      {_nav_card("Report Candidate Staging", "/greenrock/staging", "Final local curation before approval-gated drafts")}
       {_nav_card("Score Any Ticker", "/greenrock/score", "Preview GreenRock Score without report artifacts")}
       {_nav_card("Task Board", "/tasks", "Manual work queue by division")}
       {_nav_card("Agent Monitor", "/agents", "Planned local agent activity HUD")}
@@ -537,6 +591,7 @@ def render_greenrock(status_message: str | None = None) -> str:
         <a class="button secondary" href="/greenrock/discovery">Discovery Workflow</a>
         <a class="button secondary" href="/greenrock/scanner">Market Scanner</a>
         <a class="button secondary" href="/greenrock/watchlists">Watchlists</a>
+        <a class="button secondary" href="/greenrock/staging">Report Candidate Staging</a>
         <a class="button secondary" href="/greenrock/score">Score Any Ticker</a>
         {_path_action(latest_report.content_path if latest_report else None, "View Markdown report")}
         {_path_action(latest_pdf.path if latest_pdf else None, "Open PDF")}
@@ -676,7 +731,8 @@ def render_greenrock_discovery(status_message: str | None = None) -> str:
         ("3", "Review Ranked Results", "Compare Score, Confidence, Evidence Agreement, Guardrail, and Research Priority."),
         ("4", "Promote Selected Names", "Save promising names to a local GreenRock list for future review."),
         ("5", "View Updated Watchlists", "Use watchlists as curated research queues with promotion metadata and Finviz links."),
-        ("6", "Generate Report Later", "Reports remain separate, local, and human approval-gated."),
+        ("6", "Stage Report Candidates", "Move names into Mega Rock, Large Cap, Small/Mid, Research Only, or Excluded buckets."),
+        ("7", "Generate Report Later", "Reports remain separate, local, and human approval-gated."),
     )
     step_cards = "".join(
         f"""
@@ -692,11 +748,11 @@ def render_greenrock_discovery(status_message: str | None = None) -> str:
     {_status_banner(status_message)}
     <section class="hero compact greenrock-hero discovery-hero">
       <p class="eyebrow">GreenRock Discovery Workflow</p>
-      <h1>Population -> Scanner -> Promote -> Watchlists -> Reports</h1>
-      <p>Guide broad market discovery into curated local research queues without creating reports, approvals, emails, PDFs, or publication artifacts.</p>
+      <h1>Population -> Scanner -> Promote -> Watchlists -> Stage -> Reports</h1>
+      <p>Guide broad market discovery into curated local research queues and report candidate staging without publishing or bypassing approvals.</p>
     </section>
     <section class="workflow-stepper" aria-label="GreenRock discovery workflow">
-      <span>Population</span><span>Scan</span><span>Promote</span><span>Watchlist</span><span>Report</span>
+      <span>Population</span><span>Scan</span><span>Promote</span><span>Watchlist</span><span>Stage</span><span>Report</span>
     </section>
     <section class="workflow-grid">{step_cards}</section>
     <section class="panel">
@@ -707,6 +763,7 @@ def render_greenrock_discovery(status_message: str | None = None) -> str:
       <div class="action-row">
         <a class="button" href="/greenrock/scanner">Open Scanner</a>
         <a class="button secondary" href="/greenrock/watchlists">View Watchlists</a>
+        <a class="button secondary" href="/greenrock/staging">Report Candidate Staging</a>
         <a class="button secondary" href="/greenrock/picks">Picks Board</a>
         <a class="button secondary" href="/greenrock/score">Score Calculator</a>
       </div>
@@ -814,6 +871,46 @@ def render_greenrock_watchlists(status_message: str | None = None) -> str:
     return _page("GreenRock Watchlists", content, active="/greenrock/watchlists")
 
 
+def render_greenrock_staging(status_message: str | None = None) -> str:
+    settings = get_settings()
+    rows = load_staged_candidates(settings.output_dir)
+    readiness_cards = "".join(_staging_readiness_card(item) for item in staging_readiness(settings.output_dir))
+    bucket_sections = "".join(_staging_bucket_section(bucket, label, rows) for bucket, label in STAGING_BUCKET_LABELS.items())
+    source_sections = _staging_source_sections(settings.output_dir)
+    content = f"""
+    {_status_banner(status_message)}
+    <section class="hero compact greenrock-hero">
+      <p class="eyebrow">GreenRock Report Candidate Staging</p>
+      <h1>Final Human Curation Before Reports</h1>
+      <p>Stage promoted names into report candidate buckets without creating reports, approvals, PDFs, emails, or publication artifacts.</p>
+      <p><a class="button secondary" href="/greenrock/discovery">Discovery Workflow</a></p>
+    </section>
+    <section class="board-meta">{readiness_cards}</section>
+    <section class="panel warning-panel">
+      <div class="section-head">
+        <h2>Generate Draft From Staging</h2>
+        <span class="badge">Experimental</span>
+      </div>
+      <p class="subtle">This button is intentionally disabled for now. Staging is a local review layer; the existing report workflow remains the approval-gated path for creating draft reports, artifacts, and approvals.</p>
+      <button type="button" disabled>Generate Draft From Staging</button>
+    </section>
+    <section class="panel">
+      <div class="section-head">
+        <h2>Add Candidate Manually</h2>
+        <span class="subtle">Metadata will hydrate from latest scan or promotion records when available.</span>
+      </div>
+      {_staging_add_form()}
+    </section>
+    {source_sections}
+    <section class="staging-grid">{bucket_sections}</section>
+    <section class="panel">
+      <h2>Report Flow Clarity</h2>
+      <p class="subtle">Scan -> Promote -> Watchlist -> Stage -> Report. Staging is the final local curation layer before an approval-gated report draft. It is not publication and not a personalized recommendation.</p>
+    </section>
+    """
+    return _page("GreenRock Staging", content, active="/greenrock/staging")
+
+
 def run_greenrock_scan_from_browser(population: str) -> str:
     settings = get_settings()
     try:
@@ -855,6 +952,43 @@ def promote_greenrock_scan_tickers(scan_id: str, tickers: tuple[str, ...], list_
     if warnings:
         summary += " Warnings: " + " ".join(dict.fromkeys(warnings))
     return render_greenrock_scanner(summary)
+
+
+def stage_greenrock_candidate(ticker: str, bucket: str, source_list: str = "manual", notes: str = "") -> str:
+    settings = get_settings()
+    try:
+        row = add_staged_candidate(settings.output_dir, ticker, bucket, source_list=source_list, notes=notes)
+        status = f"{row['ticker']} staged as {STAGING_BUCKET_LABELS[row['staged_bucket']]}."
+    except ValueError as error:
+        status = f"Staging blocked: {error}"
+    return render_greenrock_staging(status)
+
+
+def move_greenrock_staging_candidate(ticker: str, bucket: str) -> str:
+    settings = get_settings()
+    try:
+        row = move_staged_candidate(settings.output_dir, ticker, bucket)
+        status = f"{row['ticker']} moved to {STAGING_BUCKET_LABELS[row['staged_bucket']]}."
+    except ValueError as error:
+        status = f"Staging move blocked: {error}"
+    return render_greenrock_staging(status)
+
+
+def remove_greenrock_staging_candidate(ticker: str) -> str:
+    settings = get_settings()
+    removed = remove_staged_candidate(settings.output_dir, ticker)
+    status = f"{ticker.strip().upper()} removed from staging." if removed else f"{ticker.strip().upper()} was not staged."
+    return render_greenrock_staging(status)
+
+
+def save_greenrock_staging_notes(ticker: str, notes: str) -> str:
+    settings = get_settings()
+    try:
+        row = update_staged_notes(settings.output_dir, ticker, notes)
+        status = f"Notes updated for {row['ticker']}."
+    except ValueError as error:
+        status = f"Notes update blocked: {error}"
+    return render_greenrock_staging(status)
 
 
 def render_greenrock_score(
@@ -1659,6 +1793,163 @@ def _watchlist_ticker_row(list_key: str, ticker: str, metadata: dict[str, str] |
         f"<td>{_safe(promoted_at or 'not recorded')}</td>"
         "</tr>"
     )
+
+
+def _staging_readiness_card(item) -> str:
+    target = str(item.target) if item.target is not None else "Review"
+    color = {
+        "Ready": "green",
+        "Underfilled": "yellow",
+        "Overfilled": "red",
+        "Needs Review": "neutral",
+    }.get(item.status, "neutral")
+    return _attention_card(color, f"{item.count}/{target}", item.label, item.status)
+
+
+def _staging_add_form(ticker: str = "", source_list: str = "manual", compact: bool = False) -> str:
+    bucket_options = _staging_bucket_options("research")
+    compact_class = " staging-add-form compact-add" if compact else " staging-add-form"
+    return f"""
+    <form method="post" action="/greenrock/staging/add" class="{compact_class}">
+      <input name="ticker" value="{_safe(ticker)}" placeholder="Ticker" required>
+      <input type="hidden" name="source_list" value="{_safe(source_list)}">
+      <select name="bucket">{bucket_options}</select>
+      <input name="notes" placeholder="Operator notes">
+      <button type="submit">Stage</button>
+    </form>
+    """
+
+
+def _staging_bucket_options(selected: str) -> str:
+    return "".join(
+        f"<option value='{_safe(bucket)}' {'selected' if bucket == selected else ''}>{_safe(label)}</option>"
+        for bucket, label in STAGING_BUCKET_LABELS.items()
+    )
+
+
+def _staging_bucket_section(bucket: str, label: str, rows: tuple[dict[str, str], ...]) -> str:
+    bucket_rows = tuple(row for row in rows if row.get("staged_bucket") == bucket)
+    target = STAGING_BUCKET_TARGETS.get(bucket)
+    target_copy = f"Target: {target}" if target is not None else "Research review bucket"
+    body = "".join(_staging_candidate_row(row) for row in bucket_rows)
+    if not body:
+        body = "<tr><td colspan='11' class='empty'>No staged tickers in this bucket.</td></tr>"
+    return f"""
+    <section class="panel staging-bucket">
+      <div class="section-head">
+        <h2>{_safe(label)}</h2>
+        <span class="badge">{len(bucket_rows)} staged | {_safe(target_copy)}</span>
+      </div>
+      <table class="staging-table">
+        <thead><tr><th>Ticker</th><th>Score</th><th>Confidence</th><th>Evidence</th><th>Guardrail</th><th>Priority</th><th>Top Bullish</th><th>Top Caution</th><th>Source</th><th>Notes</th><th>Actions</th></tr></thead>
+        <tbody>{body}</tbody>
+      </table>
+    </section>
+    """
+
+
+def _staging_candidate_row(row: dict[str, str]) -> str:
+    ticker = row.get("ticker", "")
+    source = _safe(row.get("source_list", "") or "manual")
+    if row.get("source_scan_id"):
+        source = f"{source}<br><span class='subtle'>{_safe(row.get('source_scan_id', ''))}</span>"
+    return (
+        "<tr>"
+        f"<td><strong>{_safe(ticker)}</strong><br>{_finviz_link(ticker)}</td>"
+        f"<td>{_safe(row.get('greenrock_score', ''))}</td>"
+        f"<td>{_safe(row.get('confidence', ''))}</td>"
+        f"<td>{_safe(row.get('evidence_agreement', ''))}</td>"
+        f"<td>{_safe(row.get('guardrail', ''))}</td>"
+        f"<td>{_safe(row.get('research_priority', ''))}</td>"
+        f"<td>{_safe(row.get('top_bullish_signal', ''))}</td>"
+        f"<td>{_safe(row.get('top_caution_signal', ''))}</td>"
+        f"<td>{source}</td>"
+        f"<td>{_staging_notes_form(row)}</td>"
+        f"<td>{_staging_action_forms(row)}</td>"
+        "</tr>"
+    )
+
+
+def _staging_notes_form(row: dict[str, str]) -> str:
+    return f"""
+    <form method="post" action="/greenrock/staging/notes" class="staging-notes-form">
+      <input type="hidden" name="ticker" value="{_safe(row.get('ticker', ''))}">
+      <textarea name="notes" placeholder="Notes">{_safe(row.get('notes', ''))}</textarea>
+      <button type="submit" class="secondary">Save</button>
+    </form>
+    """
+
+
+def _staging_action_forms(row: dict[str, str]) -> str:
+    ticker = row.get("ticker", "")
+    bucket_options = _staging_bucket_options(row.get("staged_bucket", "research"))
+    return f"""
+    <div class="staging-actions">
+      <form method="post" action="/greenrock/staging/move">
+        <input type="hidden" name="ticker" value="{_safe(ticker)}">
+        <select name="bucket">{bucket_options}</select>
+        <button type="submit">Move</button>
+      </form>
+      <form method="post" action="/greenrock/staging/remove" onsubmit="return confirm('Remove this ticker from staging?');">
+        <input type="hidden" name="ticker" value="{_safe(ticker)}">
+        <button type="submit" class="secondary">Remove</button>
+      </form>
+    </div>
+    """
+
+
+def _staging_source_sections(output_dir: Path) -> str:
+    watchlist_rows = []
+    for list_key, label in GREENROCK_PLACEMENT_LABELS.items():
+        for ticker in _watchlist_tickers(output_dir, list_key):
+            watchlist_rows.append((ticker, label, list_key))
+    watchlist_body = "".join(
+        "<tr>"
+        f"<td><strong>{_safe(ticker)}</strong><br>{_finviz_link(ticker)}</td>"
+        f"<td>{_safe(label)}</td>"
+        f"<td>{_staging_add_form(ticker, list_key, compact=True)}</td>"
+        "</tr>"
+        for ticker, label, list_key in watchlist_rows[:80]
+    )
+    if not watchlist_body:
+        watchlist_body = "<tr><td colspan='3' class='empty'>No watchlist tickers available yet.</td></tr>"
+
+    scan = latest_scan(output_dir)
+    scan_body = ""
+    if scan:
+        scan_body = "".join(
+            "<tr>"
+            f"<td><strong>{_safe(row.get('symbol', ''))}</strong><br>{_finviz_link(row.get('symbol', ''))}</td>"
+            f"<td>{_safe(row.get('greenrock_score', ''))}</td>"
+            f"<td>{_safe(row.get('greenrock_confidence', ''))}</td>"
+            f"<td>{_safe(row.get('evidence_agreement', ''))}</td>"
+            f"<td>{_safe(row.get('fundamental_guardrail', ''))}</td>"
+            f"<td>{_staging_add_form(row.get('symbol', ''), 'latest_scan', compact=True)}</td>"
+            "</tr>"
+            for row in scan.rows[:25]
+        )
+    if not scan_body:
+        scan_body = "<tr><td colspan='6' class='empty'>No latest population scan available yet.</td></tr>"
+
+    scan_label = f"Latest Population Scan: {scan.scan_id}" if scan else "Latest Population Scan"
+    return f"""
+    <section class="candidate-grid">
+      <div class="panel picks-panel">
+        <div class="section-head">
+          <h2>Stage From Watchlists</h2>
+          <span class="subtle">Promoted and curated lists</span>
+        </div>
+        <table><thead><tr><th>Ticker</th><th>Source List</th><th>Stage</th></tr></thead><tbody>{watchlist_body}</tbody></table>
+      </div>
+      <div class="panel picks-panel">
+        <div class="section-head">
+          <h2>{_safe(scan_label)}</h2>
+          <span class="subtle">Top ranked scan rows</span>
+        </div>
+        <table><thead><tr><th>Ticker</th><th>Score</th><th>Confidence</th><th>Evidence</th><th>Guardrail</th><th>Stage</th></tr></thead><tbody>{scan_body}</tbody></table>
+      </div>
+    </section>
+    """
 
 
 def _scan_results_table(rows, scan_id: str = "", batch: bool = False) -> str:
@@ -2491,6 +2782,7 @@ def _page(title: str, content: str, active: str = "/") -> str:
         ("Picks", "/greenrock/picks"),
         ("Scanner", "/greenrock/scanner"),
         ("Watchlists", "/greenrock/watchlists"),
+        ("Staging", "/greenrock/staging"),
         ("Score", "/greenrock/score"),
         ("Tasks", "/tasks"),
         ("Agents", "/agents"),
@@ -2657,7 +2949,7 @@ def _page(title: str, content: str, active: str = "/") -> str:
     .save-list-form {{ display: grid; grid-template-columns: minmax(150px, .6fr) minmax(220px, 1fr) auto; gap: 10px; }}
     .inline-promote-form {{ display: grid; grid-template-columns: minmax(170px, 1fr) auto; gap: 8px; min-width: 300px; }}
     .inline-promote-form select, .inline-promote-form button {{ padding: 8px; }}
-    .workflow-stepper {{ display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; background: rgba(55,214,122,.08); border-color: rgba(55,214,122,.28); }}
+    .workflow-stepper {{ display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; background: rgba(55,214,122,.08); border-color: rgba(55,214,122,.28); }}
     .workflow-stepper span {{ display: block; text-align: center; border: 1px solid rgba(55,214,122,.24); border-radius: 8px; padding: 12px; color: #d7ffe4; font-weight: 800; background: rgba(0,0,0,.16); }}
     .workflow-grid, .watchlist-grid {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }}
     .workflow-card {{ min-height: 170px; margin: 0; background: rgba(255,255,255,.045); }}
@@ -2670,6 +2962,14 @@ def _page(title: str, content: str, active: str = "/") -> str:
     .promotion-bar select {{ min-width: 240px; }}
     .watchlist-card {{ overflow-x: auto; }}
     .watchlist-card table {{ min-width: 560px; }}
+    .staging-grid {{ display: grid; gap: 14px; }}
+    .staging-bucket {{ overflow-x: auto; }}
+    .staging-table {{ min-width: 1680px; }}
+    .staging-add-form {{ display: grid; grid-template-columns: minmax(120px, .5fr) minmax(190px, .7fr) minmax(220px, 1fr) auto; gap: 10px; }}
+    .staging-add-form.compact-add {{ grid-template-columns: minmax(90px, .5fr) minmax(160px, .7fr) minmax(150px, 1fr) auto; min-width: 560px; }}
+    .staging-actions, .staging-actions form {{ display: grid; gap: 8px; }}
+    .staging-notes-form {{ display: grid; gap: 8px; min-width: 220px; }}
+    .staging-notes-form textarea {{ min-height: 76px; }}
     .save-status {{ color: #c9ffdc; font-weight: 700; }}
     .setup-box {{ border: 1px solid rgba(243,201,105,.32); border-radius: 8px; padding: 12px; background: rgba(0,0,0,.18); margin: 12px 0; }}
     .setup-box pre {{ margin: 8px 0 0; white-space: pre-wrap; color: #ffe5a3; }}
@@ -2756,7 +3056,7 @@ def _page(title: str, content: str, active: str = "/") -> str:
     footer {{ border-top: 1px solid var(--line); padding: 18px 30px 28px; color: var(--muted); background: rgba(8,10,16,.7); }}
     footer div {{ display: flex; gap: 12px; flex-wrap: wrap; max-width: 1500px; margin: 0 auto; }}
     @media (max-width: 1000px) {{
-      .attention-grid, .board-meta, .nav-grid, .project-grid, .candidate-grid, .detail-grid, .kanban, .agent-grid, .task-form, .mega-card, .universe-grid, .score-form, .save-list-form, .score-explainer, .score-tool-hero, .rank-grid, .score-breakdown-grid, .target-assumptions, .score-intel-grid, .evidence-grid, .confidence-explain-grid, .workflow-stepper, .workflow-grid, .watchlist-grid, .scanner-filter-form {{ grid-template-columns: 1fr; }}
+      .attention-grid, .board-meta, .nav-grid, .project-grid, .candidate-grid, .detail-grid, .kanban, .agent-grid, .task-form, .mega-card, .universe-grid, .score-form, .save-list-form, .score-explainer, .score-tool-hero, .rank-grid, .score-breakdown-grid, .target-assumptions, .score-intel-grid, .evidence-grid, .confidence-explain-grid, .workflow-stepper, .workflow-grid, .watchlist-grid, .scanner-filter-form, .staging-add-form, .staging-add-form.compact-add {{ grid-template-columns: 1fr; }}
       .calculator-card, .score-hero-line {{ align-items: flex-start; flex-direction: column; }}
       main, header, footer {{ padding-left: 16px; padding-right: 16px; }}
       .hero {{ min-height: auto; }}
