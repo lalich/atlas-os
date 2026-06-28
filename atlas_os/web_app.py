@@ -1228,6 +1228,9 @@ def _picks_table(rows: list[dict[str, str]]) -> str:
         f"<td>{_safe(row.get('quick_ratio', 'unavailable'))}</td>"
         f"<td>{_safe(row.get('net_cash_debt', 'unavailable'))}</td>"
         f"<td>{_safe(row.get('share_change_percent', 'unavailable'))}</td>"
+        f"<td>{_safe(row.get('evidence_agreement', ''))}</td>"
+        f"<td>{_safe(row.get('top_bullish_signal', 'none'))}</td>"
+        f"<td>{_safe(row.get('top_caution_signal', 'none'))}</td>"
         f"<td>{_safe(row.get('rsi_14', ''))}</td>"
         f"<td>{_format_percent(row.get('low_proximity', ''))}</td>"
         f"<td>{_safe(_bollinger_status(row))}</td>"
@@ -1239,7 +1242,8 @@ def _picks_table(rows: list[dict[str, str]]) -> str:
     return (
         "<table class='picks-table'><thead><tr><th>Ticker</th><th>Company</th><th>Market Cap</th>"
         "<th>Price</th><th>GreenRock Score</th><th>Signal</th><th>Selection</th><th>Guardrail</th><th>Quick Ratio</th>"
-        "<th>Net Cash / Debt</th><th>Share Change</th><th>RSI</th><th>52-week Low Distance</th>"
+        "<th>Net Cash / Debt</th><th>Share Change</th><th>Evidence Agreement</th><th>Top Bullish Signal</th><th>Top Caution Signal</th>"
+        "<th>RSI</th><th>52-week Low Distance</th>"
         "<th>Bollinger Band Status</th><th>Volume Acceleration</th><th>Why It Screened In</th></tr></thead><tbody>"
         + body
         + "</tbody></table>"
@@ -1253,6 +1257,18 @@ def _score_preview_panel(preview) -> str:
     component_cards = "".join(_score_component_card(component) for component in preview.component_explanations)
     bullish_items = "".join(f"<li>{_safe(item)}</li>" for item in preview.bullish_evidence)
     bearish_items = "".join(f"<li>{_safe(item)}</li>" for item in preview.bearish_evidence)
+    neutral_items = "".join(f"<li>{_safe(item)}</li>" for item in preview.neutral_evidence)
+    evidence_rows = "".join(
+        "<tr>"
+        f"<td>{_safe(item.name)}</td>"
+        f"<td>{_safe(item.category)}</td>"
+        f"<td><span class='badge evidence-{_safe(item.direction)}'>{_safe(item.direction)}</span></td>"
+        f"<td>{_safe(item.strength)}</td>"
+        f"<td>{item.numeric_contribution:+.2f}</td>"
+        f"<td>{_safe(item.explanation)}</td>"
+        "</tr>"
+        for item in preview.evidence_items
+    )
     watch_items = "".join(f"<li>{_safe(item)}</li>" for item in preview.watch_next)
     confidence_driver_items = "".join(f"<li>{_safe(item)}</li>" for item in preview.confidence_drivers)
     confidence_drag_items = "".join(f"<li>{_safe(item)}</li>" for item in preview.confidence_drags)
@@ -1276,6 +1292,10 @@ def _score_preview_panel(preview) -> str:
           <strong>{preview.confidence_score:.2f}</strong>
           <p>GreenRock Confidence</p>
           <span class="confidence-band">{_safe(preview.confidence_band)}</span>
+        </div>
+        <div class="priority-card">
+          <strong>{preview.evidence_agreement_score:.2f}</strong>
+          <p>Evidence Agreement</p>
         </div>
         <div class="priority-card">
           <span class="badge priority">{_safe(preview.research_priority)}</span>
@@ -1316,6 +1336,29 @@ def _score_preview_panel(preview) -> str:
         {_detail_panel("Data Source", preview.data_source)}
         {_detail_panel("Selection Mode", preview.selection_mode)}
       </div>
+      <section class="panel inner-panel evidence-engine-card">
+        <div class="section-head">
+          <h2>Evidence Engine</h2>
+          <span class="badge confidence-badge">Agreement {preview.evidence_agreement_score:.2f}</span>
+        </div>
+        <p class="subtle">{_safe(preview.score_confidence_divergence)}</p>
+        <div class="evidence-grid">
+          <div>
+            <h3>Bullish Evidence</h3>
+            <ul class="compact-list">{bullish_items}</ul>
+          </div>
+          <div>
+            <h3>Bearish Evidence</h3>
+            <ul class="compact-list">{bearish_items}</ul>
+          </div>
+        </div>
+        <h3>Neutral / Watch Items</h3>
+        <ul class="compact-list">{neutral_items}</ul>
+        <table class="evidence-table">
+          <thead><tr><th>Signal</th><th>Category</th><th>Direction</th><th>Strength</th><th>Contribution</th><th>Explanation</th></tr></thead>
+          <tbody>{evidence_rows}</tbody>
+        </table>
+      </section>
       <section class="panel inner-panel fundamental-guardrail-card">
         <div class="section-head">
           <h2>Fundamental Guardrails</h2>
@@ -2116,7 +2159,7 @@ def _page(title: str, content: str, active: str = "/") -> str:
     .compact-list {{ margin: 0; padding-left: 18px; color: #dfe9e3; }}
     .compact-list li {{ margin: 0 0 4px; }}
     .picks-panel {{ overflow-x: auto; }}
-    .picks-table {{ min-width: 1460px; }}
+    .picks-table {{ min-width: 1780px; }}
     .picks-table th:nth-child(11), .picks-table td:nth-child(11) {{ min-width: 220px; }}
     .calculator-card {{ display: flex; align-items: center; justify-content: space-between; gap: 16px; border-color: rgba(55,214,122,.38); }}
     .score-tool-hero {{ display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, .5fr); gap: 22px; align-items: end; }}
@@ -2128,7 +2171,7 @@ def _page(title: str, content: str, active: str = "/") -> str:
     .setup-box {{ border: 1px solid rgba(243,201,105,.32); border-radius: 8px; padding: 12px; background: rgba(0,0,0,.18); margin: 12px 0; }}
     .setup-box pre {{ margin: 8px 0 0; white-space: pre-wrap; color: #ffe5a3; }}
     .score-result {{ border-color: rgba(55,214,122,.42); background: linear-gradient(135deg, rgba(27,32,41,.96), rgba(22,39,31,.9)); }}
-    .score-intel-grid {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 14px 0 18px; }}
+    .score-intel-grid {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 14px 0 18px; }}
     .score-hero-line {{ display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 14px 0 18px; padding: 16px; border: 1px solid rgba(243,201,105,.28); border-radius: 8px; background: rgba(243,201,105,.07); }}
     .score-gauge, .priority-card {{ min-width: 180px; border: 1px solid rgba(243,201,105,.28); border-radius: 8px; padding: 16px; background: rgba(243,201,105,.07); }}
     .confidence-card {{ border-color: rgba(55,214,122,.34); background: rgba(55,214,122,.08); }}
@@ -2140,6 +2183,11 @@ def _page(title: str, content: str, active: str = "/") -> str:
     .confidence-explain-grid {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }}
     .confidence-explain-grid div {{ border: 1px solid rgba(255,255,255,.08); border-radius: 8px; padding: 12px; background: rgba(255,255,255,.035); }}
     .confidence-badge {{ background: rgba(55,214,122,.14); color: #b9ffd3; border: 1px solid rgba(55,214,122,.28); }}
+    .evidence-engine-card {{ border-color: rgba(243,201,105,.26); background: rgba(243,201,105,.045); overflow-x: auto; }}
+    .evidence-table {{ min-width: 920px; margin-top: 14px; }}
+    .evidence-bullish {{ background: rgba(55,214,122,.14); color: #b9ffd3; border: 1px solid rgba(55,214,122,.28); }}
+    .evidence-bearish {{ background: rgba(255,95,109,.14); color: #ffc8ce; border: 1px solid rgba(255,95,109,.28); }}
+    .evidence-neutral {{ background: rgba(243,201,105,.14); color: #ffe3a1; border: 1px solid rgba(243,201,105,.28); }}
     .fundamental-guardrail-card {{ border-color: rgba(185,255,240,.24); background: rgba(185,255,240,.045); }}
     .guardrail-badge {{ background: rgba(185,255,240,.13); color: #d4fff7; border: 1px solid rgba(185,255,240,.28); }}
     .priority-card .priority {{ display: inline-block; margin-bottom: 12px; background: rgba(243,201,105,.16); color: #ffe3a1; border: 1px solid rgba(243,201,105,.32); font-size: 14px; }}

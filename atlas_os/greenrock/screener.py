@@ -9,6 +9,7 @@ from atlas_os.greenrock.criteria import evaluate_stock, passes_core_criteria
 from atlas_os.greenrock.market_data import MarketDataProvider, MockMarketDataProvider
 from atlas_os.greenrock.models import StockCandidate, ScreeningResult
 from atlas_os.greenrock.sample_data import SAMPLE_CANDIDATES, load_mock_stocks
+from atlas_os.greenrock.score import candidate_evidence_agreement, top_evidence_signal
 
 
 CSV_HEADERS = [
@@ -42,6 +43,9 @@ CSV_HEADERS = [
     "quick_ratio",
     "net_cash_debt",
     "share_change_percent",
+    "evidence_agreement",
+    "top_bullish_signal",
+    "top_caution_signal",
     "note",
 ]
 
@@ -281,6 +285,9 @@ def _candidate_to_row(candidate: StockCandidate) -> dict[str, str | float]:
         "quick_ratio": _candidate_quick_ratio(candidate),
         "net_cash_debt": _candidate_net_cash_debt(candidate),
         "share_change_percent": _candidate_share_change(candidate),
+        "evidence_agreement": f"{candidate_evidence_agreement(candidate):.2f}",
+        "top_bullish_signal": top_evidence_signal(candidate, "bullish"),
+        "top_caution_signal": top_evidence_signal(candidate, "bearish"),
         "note": candidate.note,
     }
 

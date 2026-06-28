@@ -185,7 +185,7 @@ Then open:
 http://127.0.0.1:8000/greenrock/picks
 ```
 
-The board displays one featured Mega Rock pick, eleven large-cap picks, and eleven small/mid-cap picks when available. Current real mode ranks configured watchlists, not the entire U.S. public market; a full-market scanner is planned. It includes ticker, company name, market cap, price, GreenRock Score, signal label, concise Fundamental Guardrail fields, RSI, 52-week low distance, Bollinger Band status, volume acceleration, screening rationale, and Finviz links. The page is local-only, clearly labels MOCK or REAL data, and does not publish externally.
+The board displays one featured Mega Rock pick, eleven large-cap picks, and eleven small/mid-cap picks when available. Current real mode ranks configured watchlists, not the entire U.S. public market; a full-market scanner is planned. It includes ticker, company name, market cap, price, GreenRock Score, Evidence Agreement, top bullish signal, top caution signal, signal label, concise Fundamental Guardrail fields, RSI, 52-week low distance, Bollinger Band status, volume acceleration, screening rationale, and Finviz links. The page is local-only, clearly labels MOCK or REAL data, and does not publish externally.
 
 ## GreenRock Score Calculator
 
@@ -201,9 +201,9 @@ In the Command Center, open:
 http://127.0.0.1:8000/greenrock/score
 ```
 
-The calculator shows GreenRock Score, GreenRock Confidence, Fundamental Guardrails, signal label, research priority, analyst summary, Bullish Evidence, Bearish Evidence, What to Watch Next, Finviz link, data-quality warnings, and one-year statistical price targets. The methodology is documented in [GreenRock Score Methodology](docs/GREENROCK_SCORE_METHODOLOGY.md). Real mode requires the configured market data provider and fails safely if unavailable.
+The calculator shows GreenRock Score, GreenRock Confidence, Evidence Agreement, Fundamental Guardrails, signal label, research priority, analyst summary, Bullish Evidence, Bearish Evidence, neutral/watch items, What to Watch Next, Finviz link, data-quality warnings, and one-year statistical price targets. The methodology is documented in [GreenRock Score Methodology](docs/GREENROCK_SCORE_METHODOLOGY.md). Real mode requires the configured market data provider and fails safely if unavailable.
 
-Bullish Evidence and Bearish Evidence are deterministic metric summaries. What to Watch Next lists validation items such as moving-average reclaim, RSI improvement, volume continuation, recent-low support, and statistical target context. These are local research aids only and are not investment advice or a price forecast.
+The GreenRock Evidence Engine structures each existing signal with a category, direction, strength, numeric contribution, and plain-English explanation. Evidence Agreement measures whether the available technical, fundamental, and data-quality signals align or conflict. What to Watch Next lists validation items such as moving-average reclaim, RSI improvement, volume continuation, recent-low support, and statistical target context. These are local research aids only and are not investment advice or a price forecast.
 
 Fundamental Guardrails are light survivability checks, not a full valuation model. They review net cash/debt, quick ratio, and share-count change where available. They primarily affect GreenRock Confidence; GreenRock Score remains technical-first with only a small capped `fundamental_guardrail_adjustment`.
 
@@ -343,8 +343,8 @@ Command Center pages:
 - `/` Atlas Inbox with attention counters, actionable cards, recent workflow feed, and navigation.
 - `/projects` project directory for GreenRock Analysts, Variance Capital / The Bat Signal, GreenRock Insurance, and Atlas Core.
 - `/greenrock` report review console with Run Mock Report and Run Real Report buttons, latest run/report/PDF status, candidate summaries, approval actions, local artifact open links, and PDF export after approval.
-- `/greenrock/picks` GreenRock Picks Board with the featured Mega Rock pick, 11 large-cap picks, 11 small/mid-cap picks, Fundamental Guardrail fields, Finviz links, and explicit data-mode labeling.
-- `/greenrock/score` GreenRock Score Calculator with confidence, Fundamental Guardrails, research priority, evidence cards, watch-next notes, methodology explanation, and preview-only score breakdown.
+- `/greenrock/picks` GreenRock Picks Board with the featured Mega Rock pick, 11 large-cap picks, 11 small/mid-cap picks, Evidence Agreement, top signals, Fundamental Guardrail fields, Finviz links, and explicit data-mode labeling.
+- `/greenrock/score` GreenRock Score Calculator with confidence, Evidence Agreement, Fundamental Guardrails, research priority, evidence cards, watch-next notes, methodology explanation, and preview-only score breakdown.
 - `/greenrock/final-reports` final PDF archive for approved exported GreenRock PDFs.
 - `/tasks` local kanban-style manual task board with backlog, in progress, awaiting review, and completed columns.
 - `/agents` planned agent HUD with inactive/planned status labels.

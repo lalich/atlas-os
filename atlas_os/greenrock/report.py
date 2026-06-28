@@ -8,6 +8,7 @@ from atlas_os.greenrock.models import GreenRockReport, StockCandidate
 from atlas_os.greenrock.scoring import signal_label
 from atlas_os.greenrock.models import ScreeningResult
 from atlas_os.greenrock.screener import run_sample_screen, run_screen
+from atlas_os.greenrock.score import candidate_evidence_agreement, top_evidence_signal
 
 
 def build_sample_report() -> GreenRockReport:
@@ -179,8 +180,8 @@ def build_report_draft(
 
 def _candidate_table(candidates: tuple[StockCandidate, ...]) -> str:
     lines = [
-        "| Symbol | Company | Market Cap | GreenRock Score | Signal | Selection | Guardrail | Quick Ratio | Net Cash / Debt | Share Change | RSI | 52w Low Proximity |",
-        "|---|---|---:|---:|---|---|---|---:|---|---:|---:|---:|",
+        "| Symbol | Company | Market Cap | GreenRock Score | Signal | Selection | Guardrail | Evidence Agreement | Top Bullish Signal | Top Caution Signal | RSI | 52w Low Proximity |",
+        "|---|---|---:|---:|---|---|---|---:|---|---|---:|---:|",
     ]
     for candidate in candidates:
         indicators = candidate.indicators
@@ -193,9 +194,9 @@ def _candidate_table(candidates: tuple[StockCandidate, ...]) -> str:
             f"{signal_label(candidate.score)} | "
             f"{candidate.selection_label} | "
             f"{_guardrail_label(candidate)} | "
-            f"{_quick_ratio(candidate)} | "
-            f"{_net_cash_debt(candidate)} | "
-            f"{_share_change(candidate)} | "
+            f"{candidate_evidence_agreement(candidate):.1f} | "
+            f"{top_evidence_signal(candidate, 'bullish')} | "
+            f"{top_evidence_signal(candidate, 'bearish')} | "
             f"{indicators.rsi_14:.1f} | "
             f"{indicators.low_proximity:.1%} |"
         )

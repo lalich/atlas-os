@@ -2,15 +2,48 @@
 
 GreenRock Score is a 0-100 technical dislocation score used by Atlas OS to rank review candidates for GreenRock Analysts workflows. It is a screening and prioritization aid only. It is not a recommendation, guarantee, or client-facing conclusion.
 
-GreenRock Score and GreenRock Confidence are separate:
+GreenRock Score, GreenRock Confidence, and Evidence Agreement are separate:
 
 - GreenRock Score measures the opportunity/dislocation setup.
 - GreenRock Confidence measures data quality, data depth, signal agreement, and reliability of the score.
+- Evidence Agreement measures whether the available signals align or conflict.
 - Fundamental Guardrails measure survivability and recovery support from light balance-sheet and dilution checks.
 - Confidence may be high when Score is moderate if the evidence is clean and complete.
 - Confidence may be low when Score is high if the data is shallow, noisy, incomplete, or internally conflicted.
 
+## GreenRock Evidence Engine
+
+The GreenRock Evidence Engine turns existing GreenRock signals into structured evidence items. It does not add new indicators yet. It improves how current indicators interact.
+
+Each evidence item includes:
+
+- Name.
+- Category: technical, fundamental, or data_quality.
+- Direction: bullish, bearish, or neutral.
+- Strength: weak, moderate, strong, or exceptional.
+- Numeric contribution.
+- Plain-English explanation.
+
+Evidence items are generated for:
+
+- 52-week low proximity.
+- Bollinger Band dislocation.
+- RSI.
+- Volume acceleration.
+- Moving average structure.
+- Statistical target setup.
+- Fundamental Guardrails.
+- Data quality.
+
+Multiple agreeing bullish technical signals can reinforce GreenRock Score. Conflicting evidence can reduce Score or Confidence. Strong technicals with weak fundamentals may keep Score decent while reducing Confidence. Strong fundamentals with mediocre technicals may improve Confidence more than Score. Missing data lowers Confidence more than Score.
+
+Evidence Agreement is scored from 0-100. High agreement means the available technical, fundamental, and data-quality signals mostly point in the same direction. Lower agreement means bullish and bearish signals are mixed, technicals conflict, guardrails are weak, or data quality reduces reliability.
+
+The calculator also explains meaningful Score/Confidence divergence. Example: a high Score with moderate Confidence can occur when technical evidence is strong but fundamental guardrails are incomplete or bearish.
+
 ## Current Component Weights
+
+The base component weights remain explainable, but final calculator interpretation now also uses Evidence Agreement and capped evidence interaction adjustments.
 
 | Component | Current Weight | Purpose | Future Tuning Notes |
 |---|---:|---|---|
@@ -83,6 +116,7 @@ Confidence considers:
 - Bucket reliability: missing or borderline market cap lowers confidence.
 - Target reliability: limited target history, missing ATH, or unavailable statistical targets lower confidence.
 - Fundamental Guardrails: net cash, strong quick ratio, stable shares, and complete fundamental data can raise confidence; net debt, weak quick ratio, dilution, and incomplete liquidity metrics can lower confidence.
+- Evidence Agreement: aligned evidence raises reliability, while mixed or conflicting evidence lowers reliability.
 
 ## Fundamental Guardrails
 
@@ -121,6 +155,7 @@ Fundamentals primarily affect GreenRock Confidence because they help assess surv
 - Moving average structure combines short-term dislocation, longer-term trend damage, and early improvement in the 50 DMA rate of change.
 - Bullish Evidence and Bearish Evidence are always explained in the calculator output. Bullish examples include price below the lower 2.5 standard deviation Bollinger Band, strong volume acceleration, and unusually deep dislocation near the 52-week low. Bearish examples include missing data, extreme illiquidity, insufficient price history, weak market-cap data, and moving average structure that is not aligned with GreenRock criteria.
 - Bullish and bearish fundamental evidence is shown separately inside Fundamental Guardrails, including balance-sheet quality, quick ratio context, share-count stability or dilution, confidence impact, and data warnings.
+- The Evidence Engine produces Bullish Evidence, Bearish Evidence, and Neutral / Watch Items from structured evidence records rather than unexplained text snippets.
 
 ## Analyst Intelligence Notes
 
@@ -130,6 +165,7 @@ The score calculator also generates deterministic, template-based analyst intell
 - Bearish Evidence: metric-driven cautions or data-quality concerns.
 - What to Watch Next: continuation and validation items such as reclaiming moving averages, improving RSI, volume continuation, holding recent lows, and movement toward statistical target levels.
 - Analyst Summary: a short plain-English summary built from score, confidence, evidence, and research priority.
+- Score/Confidence divergence: a short explanation when Score and Confidence differ meaningfully.
 
 ## 1-Year Statistical Price Target Notes
 

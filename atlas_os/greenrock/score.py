@@ -60,6 +60,16 @@ class FundamentalGuardrailAnalysis:
 
 
 @dataclass(frozen=True)
+class EvidenceItem:
+    name: str
+    category: str
+    direction: str
+    strength: str
+    numeric_contribution: float
+    explanation: str
+
+
+@dataclass(frozen=True)
 class ScorePreview:
     candidate: StockCandidate
     data_mode: str
@@ -73,6 +83,10 @@ class ScorePreview:
     analyst_summary: str
     bullish_evidence: tuple[str, ...]
     bearish_evidence: tuple[str, ...]
+    neutral_evidence: tuple[str, ...]
+    evidence_items: tuple[EvidenceItem, ...]
+    evidence_agreement_score: float
+    score_confidence_divergence: str
     fundamental_guardrails: FundamentalGuardrailAnalysis
     fundamental_guardrail_adjustment: float
     watch_next: tuple[str, ...]
@@ -108,7 +122,22 @@ def calculate_score_preview(
 
     candidate = evaluate_stock(stock)
     fundamental_guardrails = _fundamental_guardrails(candidate)
-    adjusted_score = round(max(0.0, min(100.0, candidate.score + fundamental_guardrails.score_adjustment)), 2)
+    all_time_high, price_targets, price_target_warnings, price_target_lookback = _price_targets(stock.prices, candidate.has_price_history)
+    base_evidence_items = build_evidence_items(
+        candidate,
+        price_targets,
+        _data_quality_warnings(candidate) + price_target_warnings + fundamental_guardrails.warnings,
+        fundamental_guardrails,
+    )
+    evidence_agreement_score = evidence_agreement_score_from_items(base_evidence_items)
+    evidence_score_adjustment = _evidence_score_adjustment(base_evidence_items, evidence_agreement_score)
+    adjusted_score = round(
+        max(
+            0.0,
+            min(100.0, candidate.score + fundamental_guardrails.score_adjustment + evidence_score_adjustment),
+        ),
+        2,
+    )
     candidate = StockCandidate(
         symbol=candidate.symbol,
         company_name=candidate.company_name,
@@ -152,9 +181,10 @@ def calculate_score_preview(
         fundamentals=candidate.fundamentals,
     )
     component_scores = greenrock_score_breakdown(candidate.indicators, _rule_results(candidate))
-    all_time_high, price_targets, price_target_warnings, price_target_lookback = _price_targets(stock.prices, candidate.has_price_history)
     bonus_penalty_explanations = _bonus_penalty_explanations(candidate)
     data_quality_warnings = _data_quality_warnings(candidate) + price_target_warnings + fundamental_guardrails.warnings
+    evidence_items = build_evidence_items(candidate, price_targets, data_quality_warnings, fundamental_guardrails)
+    evidence_agreement_score = evidence_agreement_score_from_items(evidence_items)
     confidence = _confidence_analysis(
         candidate,
         stock.prices,
@@ -163,10 +193,13 @@ def calculate_score_preview(
         price_target_warnings,
         price_targets,
         fundamental_guardrails,
+        evidence_agreement_score,
     )
     research_priority = _research_priority(candidate, confidence.score)
-    bullish_evidence = _bullish_evidence(candidate, price_targets) + fundamental_guardrails.bullish_evidence
-    bearish_evidence = _bearish_evidence(candidate, data_quality_warnings) + fundamental_guardrails.bearish_evidence
+    bullish_evidence = _evidence_lines(evidence_items, "bullish")
+    bearish_evidence = _evidence_lines(evidence_items, "bearish")
+    neutral_evidence = _evidence_lines(evidence_items, "neutral")
+    divergence = _score_confidence_divergence(candidate.score, confidence.score, evidence_items, fundamental_guardrails)
     watch_next = _watch_next(candidate, all_time_high, price_targets)
     analyst_summary = _analyst_summary(
         candidate,
@@ -175,6 +208,7 @@ def calculate_score_preview(
         bullish_evidence,
         bearish_evidence,
         fundamental_guardrails,
+        divergence,
     )
     return ScorePreview(
         candidate=candidate,
@@ -189,6 +223,10 @@ def calculate_score_preview(
         analyst_summary=analyst_summary,
         bullish_evidence=bullish_evidence,
         bearish_evidence=bearish_evidence,
+        neutral_evidence=neutral_evidence,
+        evidence_items=evidence_items,
+        evidence_agreement_score=evidence_agreement_score,
+        score_confidence_divergence=divergence,
         fundamental_guardrails=fundamental_guardrails,
         fundamental_guardrail_adjustment=fundamental_guardrails.score_adjustment,
         watch_next=watch_next,
@@ -333,6 +371,189 @@ def _bonus_penalty_explanations(candidate: StockCandidate) -> tuple[str, ...]:
     if not explanations:
         explanations.append("No major Bullish or Bearish Evidence item beyond base component scoring.")
     return tuple(explanations)
+
+
+def build_evidence_items(
+    candidate: StockCandidate,
+    price_targets: tuple[PriceTarget, ...] = (),
+    data_quality_warnings: tuple[str, ...] = (),
+    fundamental_guardrails: FundamentalGuardrailAnalysis | None = None,
+) -> tuple[EvidenceItem, ...]:
+    """Build structured evidence from existing GreenRock signals."""
+    guardrails = fundamental_guardrails or _fundamental_guardrails(candidate)
+    items = [
+        _low_proximity_evidence(candidate),
+        _bollinger_evidence(candidate),
+        _rsi_evidence(candidate),
+        _volume_evidence(candidate),
+        _moving_average_evidence(candidate),
+        _target_evidence(candidate, price_targets),
+        _fundamental_evidence(guardrails),
+        _data_quality_evidence(candidate, data_quality_warnings),
+    ]
+    return tuple(items)
+
+
+def evidence_agreement_score_from_items(evidence_items: tuple[EvidenceItem, ...]) -> float:
+    directional = [item for item in evidence_items if item.direction in {"bullish", "bearish"}]
+    if not directional:
+        return 50.0
+    bullish = sum(_strength_weight(item.strength) for item in directional if item.direction == "bullish")
+    bearish = sum(_strength_weight(item.strength) for item in directional if item.direction == "bearish")
+    total = bullish + bearish
+    if total <= 0:
+        return 50.0
+    alignment = max(bullish, bearish) / total
+    bullish_share = bullish / total
+    technical_bullish = sum(
+        1 for item in evidence_items if item.category == "technical" and item.direction == "bullish"
+    )
+    technical_bearish = sum(
+        1 for item in evidence_items if item.category == "technical" and item.direction == "bearish"
+    )
+    agreement = 35 + alignment * 50
+    if technical_bullish >= 5 and bullish_share >= 0.70:
+        agreement += 10
+    if technical_bearish and technical_bullish:
+        agreement -= min(15, technical_bearish * 4)
+    if any(item.category == "fundamental" and item.direction == "bearish" for item in evidence_items) and technical_bullish >= 4:
+        agreement -= 10
+    if any(item.category == "data_quality" and item.direction == "bearish" for item in evidence_items):
+        agreement -= 8
+    return round(max(0.0, min(100.0, agreement)), 2)
+
+
+def top_evidence_signal(
+    candidate: StockCandidate,
+    direction: str,
+    price_targets: tuple[PriceTarget, ...] = (),
+    data_quality_warnings: tuple[str, ...] = (),
+) -> str:
+    items = build_evidence_items(candidate, price_targets, data_quality_warnings)
+    matching = [item for item in items if item.direction == direction]
+    if not matching:
+        return "none"
+    top = sorted(matching, key=lambda item: abs(item.numeric_contribution), reverse=True)[0]
+    return f"{top.name}: {top.explanation}"
+
+
+def candidate_evidence_agreement(candidate: StockCandidate) -> float:
+    return evidence_agreement_score_from_items(build_evidence_items(candidate))
+
+
+def _low_proximity_evidence(candidate: StockCandidate) -> EvidenceItem:
+    proximity = candidate.indicators.low_proximity
+    if not candidate.has_52_week_low:
+        return EvidenceItem("52-week low proximity", "data_quality", "bearish", "moderate", -4.0, "52-week low is unavailable.")
+    if proximity <= 0.02:
+        return EvidenceItem("52-week low proximity", "technical", "bullish", "exceptional", 20.0, f"Price is only {proximity:.1%} above the 52-week low.")
+    if proximity <= 0.10:
+        return EvidenceItem("52-week low proximity", "technical", "bullish", "strong", 15.0, f"Price is within {proximity:.1%} of the 52-week low.")
+    if proximity <= 0.20:
+        return EvidenceItem("52-week low proximity", "technical", "neutral", "weak", 2.0, f"Price is {proximity:.1%} above the 52-week low.")
+    return EvidenceItem("52-week low proximity", "technical", "bearish", "moderate", -6.0, f"Price is {proximity:.1%} above the 52-week low.")
+
+
+def _bollinger_evidence(candidate: StockCandidate) -> EvidenceItem:
+    indicators = candidate.indicators
+    if indicators.latest_close <= indicators.bollinger_lower:
+        return EvidenceItem("Bollinger Band dislocation", "technical", "bullish", "exceptional", 18.0, "Price is below the lower 2.5 standard deviation Bollinger Band.")
+    if _score_bollinger_supports_setup(indicators):
+        return EvidenceItem("Bollinger Band dislocation", "technical", "bullish", "strong", 14.0, "Price is closer to the lower Bollinger Band than the upper band.")
+    return EvidenceItem("Bollinger Band dislocation", "technical", "bearish", "moderate", -6.0, "Price is not positioned near the lower Bollinger Band.")
+
+
+def _rsi_evidence(candidate: StockCandidate) -> EvidenceItem:
+    rsi = candidate.indicators.rsi_14
+    if rsi < 30:
+        return EvidenceItem("RSI", "technical", "bullish", "strong", 12.0, f"RSI is deeply dislocated at {rsi:.1f}.")
+    if rsi < 50:
+        return EvidenceItem("RSI", "technical", "bullish", "moderate", 8.0, f"RSI remains below neutral at {rsi:.1f}.")
+    if rsi <= 60:
+        return EvidenceItem("RSI", "technical", "neutral", "weak", 1.0, f"RSI is near neutral at {rsi:.1f}.")
+    return EvidenceItem("RSI", "technical", "bearish", "moderate", -5.0, f"RSI is not dislocated at {rsi:.1f}.")
+
+
+def _volume_evidence(candidate: StockCandidate) -> EvidenceItem:
+    acceleration = _volume_acceleration_value(candidate)
+    if not candidate.has_volume_data or acceleration is None:
+        return EvidenceItem("Volume acceleration", "data_quality", "bearish", "moderate", -5.0, "Volume data is missing or insufficient.")
+    if acceleration >= 0.25:
+        return EvidenceItem("Volume acceleration", "technical", "bullish", "strong", 12.0, f"Recent volume is accelerating by {acceleration:.1%}.")
+    if acceleration > 0:
+        return EvidenceItem("Volume acceleration", "technical", "bullish", "moderate", 7.0, f"Recent volume is improving by {acceleration:.1%}.")
+    return EvidenceItem("Volume acceleration", "technical", "bearish", "moderate", -6.0, f"Recent volume is not confirming the setup ({acceleration:.1%}).")
+
+
+def _moving_average_evidence(candidate: StockCandidate) -> EvidenceItem:
+    alignment = _moving_average_alignment_count(candidate)
+    if alignment == 3:
+        return EvidenceItem("Moving average structure", "technical", "bullish", "strong", 16.0, "Moving average structure aligns with GreenRock dislocation criteria.")
+    if alignment == 2:
+        return EvidenceItem("Moving average structure", "technical", "bullish", "moderate", 9.0, "Most moving-average checks support the setup.")
+    if alignment == 1:
+        return EvidenceItem("Moving average structure", "technical", "neutral", "weak", 1.0, "Moving-average evidence is mixed.")
+    return EvidenceItem("Moving average structure", "technical", "bearish", "strong", -10.0, "Moving-average structure does not support the setup.")
+
+
+def _target_evidence(candidate: StockCandidate, price_targets: tuple[PriceTarget, ...]) -> EvidenceItem:
+    available = [target for target in price_targets if target.price is not None]
+    if not available:
+        return EvidenceItem("Statistical target setup", "data_quality", "bearish", "moderate", -5.0, "Statistical targets are unavailable or unreliable.")
+    if any(target.price and target.price > candidate.indicators.latest_close for target in available):
+        above_ath = sum(1 for target in available if target.relation_to_ath == "above-ath")
+        strength = "strong" if above_ath >= 2 else "moderate"
+        contribution = 10.0 if above_ath >= 2 else 6.0
+        return EvidenceItem("Statistical target setup", "technical", "bullish", strength, contribution, "Statistical upside targets sit above the current price.")
+    return EvidenceItem("Statistical target setup", "technical", "neutral", "weak", 0.0, "Statistical targets do not add clear upside evidence.")
+
+
+def _fundamental_evidence(guardrails: FundamentalGuardrailAnalysis) -> EvidenceItem:
+    if guardrails.label == "Strong Balance Sheet":
+        return EvidenceItem("Fundamental guardrails", "fundamental", "bullish", "strong", 6.0, "Strong Balance Sheet guardrail supports survivability evidence.")
+    if guardrails.label == "Acceptable":
+        return EvidenceItem("Fundamental guardrails", "fundamental", "bullish", "moderate", 3.0, "Acceptable guardrail supports baseline recovery evidence.")
+    if guardrails.label == "Caution":
+        return EvidenceItem("Fundamental guardrails", "fundamental", "bearish", "moderate", -5.0, "Fundamental guardrail is Caution.")
+    if guardrails.label == "Red Flag":
+        return EvidenceItem("Fundamental guardrails", "fundamental", "bearish", "strong", -9.0, "Fundamental guardrail is Red Flag.")
+    return EvidenceItem("Fundamental guardrails", "fundamental", "neutral", "weak", 0.0, "Fundamental guardrail data is insufficient.")
+
+
+def _data_quality_evidence(candidate: StockCandidate, data_quality_warnings: tuple[str, ...]) -> EvidenceItem:
+    market_warnings = _data_quality_warnings(candidate) + data_quality_warnings
+    warning_count = len(tuple(dict.fromkeys(market_warnings)))
+    if warning_count == 0:
+        return EvidenceItem("Data quality", "data_quality", "bullish", "moderate", 4.0, "Core data quality is clean for this preview.")
+    if warning_count <= 2:
+        return EvidenceItem("Data quality", "data_quality", "bearish", "moderate", -4.0, f"{warning_count} data quality warning(s) require review.")
+    return EvidenceItem("Data quality", "data_quality", "bearish", "strong", -8.0, f"{warning_count} data quality warning(s) materially reduce reliability.")
+
+
+def _evidence_score_adjustment(evidence_items: tuple[EvidenceItem, ...], agreement_score: float) -> float:
+    technical_net = sum(
+        item.numeric_contribution for item in evidence_items if item.category == "technical"
+    )
+    technical_adjustment = max(-5.0, min(6.0, technical_net / 20))
+    if agreement_score >= 80:
+        technical_adjustment += 2.0
+    elif agreement_score < 45:
+        technical_adjustment -= 4.0
+    elif agreement_score < 60:
+        technical_adjustment -= 2.0
+    return round(max(-8.0, min(8.0, technical_adjustment)), 2)
+
+
+def _evidence_lines(evidence_items: tuple[EvidenceItem, ...], direction: str) -> tuple[str, ...]:
+    matching = [item for item in evidence_items if item.direction == direction]
+    if not matching:
+        labels = {"bullish": "bullish", "bearish": "bearish", "neutral": "neutral"}
+        return (f"No major {labels.get(direction, direction)} evidence item is active.",)
+    ordered = sorted(matching, key=lambda item: abs(item.numeric_contribution), reverse=True)
+    return tuple(
+        f"{item.name} ({item.strength}): {item.explanation}"
+        for item in ordered
+    )
 
 
 def _fundamental_guardrails(candidate: StockCandidate) -> FundamentalGuardrailAnalysis:
@@ -490,6 +711,7 @@ def _confidence_analysis(
     data_quality_warnings: tuple[str, ...],
     price_targets: tuple[PriceTarget, ...],
     fundamental_guardrails: FundamentalGuardrailAnalysis,
+    evidence_agreement_score: float,
 ) -> ConfidenceAnalysis:
     score = 0.0
     drivers: list[str] = []
@@ -595,6 +817,14 @@ def _confidence_analysis(
         drags.append("Statistical target reliability is limited by available history.")
     else:
         drags.append("Statistical targets are unavailable or unreliable.")
+
+    score += round((evidence_agreement_score - 50) * 0.22, 2)
+    if evidence_agreement_score >= 75:
+        drivers.append("Evidence Agreement is strong.")
+    elif evidence_agreement_score < 50:
+        drags.append("Evidence Agreement is weak or conflicted.")
+    else:
+        drags.append("Evidence Agreement is mixed.")
 
     if any(not _is_finite(value) for value in (
         indicators.latest_close,
@@ -738,6 +968,7 @@ def _analyst_summary(
     bullish_evidence: tuple[str, ...],
     bearish_evidence: tuple[str, ...],
     fundamental_guardrails: FundamentalGuardrailAnalysis,
+    divergence: str,
 ) -> str:
     confidence_label = _confidence_label(confidence_score)
     signal = signal_label(candidate.score)
@@ -754,7 +985,7 @@ def _analyst_summary(
         f"Atlas flags {candidate.symbol} as {signal} / {candidate.selection_label} with "
         f"{confidence_label} confidence and a {research_priority} research priority. "
         f"The setup is driven primarily by {primary_driver}, while the primary caution is {primary_caution}."
-        f"{fundamental_clause}"
+        f"{fundamental_clause} {divergence}".strip()
     )
 
 
@@ -766,6 +997,33 @@ def _confidence_label(confidence_score: float) -> str:
     if confidence_score >= 40:
         return "low"
     return "very low"
+
+
+def _score_confidence_divergence(
+    score: float,
+    confidence_score: float,
+    evidence_items: tuple[EvidenceItem, ...],
+    fundamental_guardrails: FundamentalGuardrailAnalysis,
+) -> str:
+    if abs(score - confidence_score) < 15:
+        return "Score and Confidence are broadly aligned."
+    bearish_fundamental = any(item.category == "fundamental" and item.direction == "bearish" for item in evidence_items)
+    bearish_data = any(item.category == "data_quality" and item.direction == "bearish" for item in evidence_items)
+    bullish_technical_count = sum(
+        1 for item in evidence_items if item.category == "technical" and item.direction == "bullish"
+    )
+    if score > confidence_score:
+        if bearish_fundamental:
+            return (
+                "Score is higher than Confidence because the technical setup is stronger than the "
+                f"{fundamental_guardrails.label} fundamental guardrail."
+            )
+        if bearish_data:
+            return "Score is higher than Confidence because technical evidence is present while data quality is incomplete."
+        return "Score is higher than Confidence because the setup has technical support but evidence reliability is mixed."
+    if bullish_technical_count < 3 and fundamental_guardrails.label in {"Strong Balance Sheet", "Acceptable"}:
+        return "Confidence is higher than Score because guardrails and data quality are cleaner than the current technical setup."
+    return "Confidence is higher than Score because evidence reliability is stronger than the current dislocation setup."
 
 
 def confidence_band(confidence_score: float) -> str:
@@ -787,6 +1045,15 @@ def _is_finite(value: float) -> bool:
 def _has_market_data_warning(warnings: tuple[str, ...]) -> bool:
     terms = ("missing", "unavailable", "insufficient", "ATH based", "no usable")
     return any(any(term.lower() in warning.lower() for term in terms) for warning in warnings)
+
+
+def _strength_weight(strength: str) -> float:
+    return {
+        "weak": 1.0,
+        "moderate": 2.0,
+        "strong": 3.0,
+        "exceptional": 4.0,
+    }.get(strength, 1.0)
 
 
 def _indicator_agreement_ratio(candidate: StockCandidate, price_targets: tuple[PriceTarget, ...]) -> float:

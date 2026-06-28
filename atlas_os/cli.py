@@ -480,6 +480,8 @@ def run_greenrock_score(ticker: str, data_mode: str = "real", selection_mode: st
     print(f"greenrock_score: {candidate.score:.2f}")
     print(f"greenrock_confidence: {preview.confidence_score:.2f}")
     print(f"confidence_band: {preview.confidence_band}")
+    print(f"evidence_agreement: {preview.evidence_agreement_score:.2f}")
+    print(f"score_confidence_divergence: {preview.score_confidence_divergence}")
     print(f"signal_label: {score_signal(candidate)}")
     print(f"research_priority: {preview.research_priority}")
     print(f"analyst_summary: {preview.analyst_summary}")
@@ -524,6 +526,18 @@ def run_greenrock_score(ticker: str, data_mode: str = "real", selection_mode: st
         print("price_target_warnings:")
         for warning in preview.price_target_warnings:
             print(f"  {warning}")
+    print("evidence_engine:")
+    for item in preview.evidence_items:
+        print(
+            f"  {item.name}: {item.category} {item.direction} {item.strength} "
+            f"{item.numeric_contribution:+.2f} - {item.explanation}"
+        )
+    print("top_bullish_evidence:")
+    for item in preview.bullish_evidence[:3]:
+        print(f"  {item}")
+    print("top_bearish_evidence:")
+    for item in preview.bearish_evidence[:3]:
+        print(f"  {item}")
     print("bullish_evidence:")
     for item in preview.bullish_evidence:
         print(f"  {item}")
@@ -1229,9 +1243,14 @@ def _print_candidate_rows(title: str, rows: list[dict[str, str]]) -> None:
     if not rows:
         print("No candidate rows found.")
         return
-    print("symbol score market_cap company")
+    print("symbol score evidence_agreement market_cap top_bullish_signal top_caution_signal company")
     for row in rows:
-        print(f"{row.get('symbol', '')} {row.get('score', '')} {row.get('market_cap', '')} {row.get('company_name', '')}")
+        print(
+            f"{row.get('symbol', '')} {row.get('score', '')} "
+            f"{row.get('evidence_agreement', '')} {row.get('market_cap', '')} "
+            f"{row.get('top_bullish_signal', 'none')} | {row.get('top_caution_signal', 'none')} | "
+            f"{row.get('company_name', '')}"
+        )
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -125,6 +125,10 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("GreenRock Score", result.body)
         self.assertIn("GreenRock Confidence", result.body)
         self.assertIn(preview.confidence_band, result.body)
+        self.assertIn("Evidence Agreement", result.body)
+        self.assertIn("Evidence Engine", result.body)
+        self.assertIn("Neutral / Watch Items", result.body)
+        self.assertIn(preview.score_confidence_divergence, result.body)
         self.assertIn("Research Priority", result.body)
         self.assertIn("Analyst Summary", result.body)
         self.assertIn("Why Confidence Is This Level", result.body)
@@ -160,7 +164,7 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("Bullish Evidence", result.body)
         self.assertIn("Bearish Evidence", result.body)
         self.assertIn("What to Watch Next", result.body)
-        self.assertIn("Moving average structure does not yet fully support the setup.", result.body)
+        self.assertIn("Moving-average evidence is mixed.", result.body)
         self.assertIn("Watch for price reclaiming", result.body)
         self.assertIn("Atlas flags LC01", result.body)
         self.assertIn("Fundamental Guardrails", result.body)
@@ -168,6 +172,9 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("Bullish Fundamental Evidence", result.body)
         self.assertIn("Bearish Fundamental Evidence", result.body)
         self.assertIn("Confidence Impact", result.body)
+        self.assertIn("Evidence Engine", result.body)
+        self.assertIn("Agreement", result.body)
+        self.assertIn("Contribution", result.body)
         self.assertIn("1-Year Statistical Price Targets", result.body)
         self.assertIn("Historical lookback", result.body)
         self.assertIn("5 years", result.body)
@@ -197,8 +204,30 @@ class CommandCenterTests(unittest.TestCase):
         self.assertEqual(preview.research_priority, "Ignore")
         self.assertTrue(preview.bullish_evidence)
         self.assertTrue(preview.bearish_evidence)
+        self.assertTrue(preview.neutral_evidence)
+        self.assertTrue(preview.evidence_items)
+        self.assertGreaterEqual(preview.evidence_agreement_score, 0)
+        self.assertLessEqual(preview.evidence_agreement_score, 100)
+        self.assertTrue(preview.score_confidence_divergence)
         self.assertTrue(preview.watch_next)
         self.assertIn("Atlas flags LC01", preview.analyst_summary)
+
+    def test_evidence_agreement_rises_and_falls_with_signal_alignment(self) -> None:
+        aligned = calculate_score_preview("LC01", provider=StrongFundamentalsProvider())
+        conflicted = calculate_score_preview("LC01", provider=ConflictingSignalProvider())
+
+        self.assertGreater(aligned.evidence_agreement_score, conflicted.evidence_agreement_score)
+        self.assertTrue(any(item.direction == "bullish" for item in aligned.evidence_items))
+        self.assertTrue(any(item.direction == "bearish" for item in conflicted.evidence_items))
+
+    def test_weak_or_missing_support_lowers_confidence_more_than_score(self) -> None:
+        strong = calculate_score_preview("LC01", provider=StrongFundamentalsProvider())
+        weak = calculate_score_preview("LC01", provider=WeakFundamentalsProvider())
+        missing = calculate_score_preview("LC01", provider=MissingFundamentalsProvider())
+
+        self.assertGreater(strong.confidence_score - weak.confidence_score, strong.candidate.score - weak.candidate.score)
+        self.assertGreater(strong.confidence_score - missing.confidence_score, strong.candidate.score - missing.candidate.score)
+        self.assertIn("Confidence", weak.score_confidence_divergence)
 
     def test_fundamental_guardrails_weight_confidence_more_than_score(self) -> None:
         strong = calculate_score_preview("LC01", provider=StrongFundamentalsProvider())
