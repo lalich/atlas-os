@@ -35,7 +35,9 @@ from atlas_os.core.workflow_runs import get_workflow_run, list_workflow_runs
 from atlas_os.db.database import connect, initialize_database
 from atlas_os.greenrock.pdf_export import render_markdown_report_to_pdf
 from atlas_os.greenrock.market_data import MarketDataConfigurationError
+from atlas_os.greenrock.population import GREENROCK_POPULATION_LABELS
 from atlas_os.greenrock.score import calculate_score_preview, score_signal
+from atlas_os.greenrock.scanner import latest_scan, run_population_scan
 from atlas_os.greenrock.universe import GREENROCK_PLACEMENT_LABELS, add_ticker_to_greenrock_list, load_greenrock_universes
 from atlas_os.greenrock.workflow import run_greenrock_screening_workflow
 from atlas_os.greenrock.scoring import signal_label
@@ -115,6 +117,10 @@ def create_app():
     @app.get("/greenrock/picks", response_class=HTMLResponse)
     def greenrock_picks() -> str:
         return render_greenrock_picks_board()
+
+    @app.get("/greenrock/scanner", response_class=HTMLResponse)
+    def greenrock_scanner() -> str:
+        return render_greenrock_scanner()
 
     @app.get("/greenrock/score", response_class=HTMLResponse)
     def greenrock_score() -> str:
@@ -225,6 +231,8 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
         return WebResponse(200, render_greenrock(_first(query, "status")))
     if method == "GET" and route == "/greenrock/picks":
         return WebResponse(200, render_greenrock_picks_board(_first(query, "status")))
+    if method == "GET" and route == "/greenrock/scanner":
+        return WebResponse(200, render_greenrock_scanner(_first(query, "status")))
     if method == "GET" and route == "/greenrock/score":
         return WebResponse(200, render_greenrock_score())
     if method == "GET" and route == "/greenrock/final-reports":
@@ -270,6 +278,9 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
     if method == "POST" and route == "/greenrock/run-report":
         ok, message = run_greenrock_report_from_browser(form.get("data_mode", "mock"))
         return WebResponse(303, "", location=_with_status("/greenrock", message))
+    if method == "POST" and route == "/greenrock/scanner/run":
+        message = run_greenrock_scan_from_browser(form.get("population", "qqq"))
+        return WebResponse(303, "", location=_with_status("/greenrock/scanner", message))
     if method == "POST" and route == "/greenrock/score":
         return WebResponse(
             200,
@@ -361,6 +372,7 @@ def render_dashboard(status_message: str | None = None) -> str:
       {_nav_card("Project Directory", "/projects", "GreenRock, Bat Signal, Insurance, Atlas Core")}
       {_nav_card("GreenRock Analysts", "/greenrock", "Run latest draft, approvals, candidates")}
       {_nav_card("GreenRock Picks Board", "/greenrock/picks", "Mega Rock, large-cap, and small/mid-cap picks")}
+      {_nav_card("GreenRock Market Scanner", "/greenrock/scanner", "Population scans before report picks")}
       {_nav_card("Score Any Ticker", "/greenrock/score", "Preview GreenRock Score without report artifacts")}
       {_nav_card("Task Board", "/tasks", "Manual work queue by division")}
       {_nav_card("Agent Monitor", "/agents", "Planned local agent activity HUD")}
@@ -459,6 +471,7 @@ def render_greenrock(status_message: str | None = None) -> str:
           <button class="secondary" type="submit">Run Real Report</button>
         </form>
         <a class="button secondary" href="/greenrock/picks">GreenRock Picks Board</a>
+        <a class="button secondary" href="/greenrock/scanner">Market Scanner</a>
         <a class="button secondary" href="/greenrock/score">Score Any Ticker</a>
         {_path_action(latest_report.content_path if latest_report else None, "View Markdown report")}
         {_path_action(latest_pdf.path if latest_pdf else None, "Open PDF")}
@@ -484,7 +497,7 @@ def render_greenrock(status_message: str | None = None) -> str:
         <h2>GreenRock Watchlists</h2>
         <span class="subtle">Mega Rock candidate pool, large-cap watchlist, and small/mid-cap watchlist</span>
       </div>
-      <p class="subtle">Real mode uses environment tickers first. When blank, Atlas ranks these configured local watchlists. Full-market scanner planned.</p>
+      <p class="subtle">Real report mode uses environment tickers first. When blank, Atlas ranks these configured local watchlists. Population scans are available separately and do not replace report sourcing yet.</p>
       {_universe_panels(universes)}
     </section>
     <section class="panel">
@@ -581,6 +594,76 @@ def render_greenrock_picks_board(status_message: str | None = None) -> str:
     </section>
     """
     return _page("GreenRock Picks Board", content, active="/greenrock/picks")
+
+
+def render_greenrock_scanner(status_message: str | None = None) -> str:
+    settings = get_settings()
+    scan = latest_scan(settings.output_dir)
+    top_rows = scan.rows[:15] if scan else ()
+    population_buttons = "".join(
+        f"""
+        <form method="post" action="/greenrock/scanner/run">
+          <input type="hidden" name="population" value="{_safe(name)}">
+          <button type="submit">{_safe(label)}</button>
+        </form>
+        """
+        for name, label in {**GREENROCK_POPULATION_LABELS, "all": "All Populations"}.items()
+    )
+    latest = ""
+    if scan:
+        latest = f"""
+        <section class="board-meta">
+          {_attention_card("neutral", _safe(scan.scan_id), "Latest Scan", _safe(scan.population))}
+          {_attention_card("green", str(len(scan.rows)), "Ranked Tickers", _safe(scan.data_source))}
+          {_attention_card("neutral", _safe(scan.results_path), "Results CSV", "Local scan output")}
+          {_attention_card("neutral", _safe(scan.summary_path), "Summary", "Local Markdown summary")}
+        </section>
+        <section class="panel picks-panel">
+          <div class="section-head">
+            <h2>Top Ranked Tickers</h2>
+            <span class="subtle">Reports can eventually source picks from latest population scan.</span>
+          </div>
+          {_scan_results_table(top_rows)}
+        </section>
+        """
+    else:
+        latest = """
+        <section class="panel warning-panel">
+          <h2>No Population Scan Yet</h2>
+          <p>Run a local scan with one of the population buttons. Real provider setup is required.</p>
+        </section>
+        """
+    content = f"""
+    {_status_banner(status_message)}
+    <section class="hero compact greenrock-hero">
+      <p class="eyebrow">GreenRock Analysts</p>
+      <h1>Market Scanner</h1>
+      <p>Population scans rank broader ticker sets locally before any report-pick workflow.</p>
+    </section>
+    <section class="panel">
+      <div class="section-head">
+        <h2>Run Population Scan</h2>
+        <span class="subtle">Real provider required. Local output only.</span>
+      </div>
+      <div class="action-row">{population_buttons}</div>
+      <p class="subtle">Population = broad scan source. Watchlist = manually curated list. Report picks = final ranked output after approval-gated report workflow.</p>
+    </section>
+    {latest}
+    <section class="panel">
+      <h2>Data Quality Notes</h2>
+      <p class="subtle">If the real provider is unavailable, scans fail safely with setup instructions and create no report, approval, email, or publication.</p>
+    </section>
+    """
+    return _page("GreenRock Market Scanner", content, active="/greenrock/scanner")
+
+
+def run_greenrock_scan_from_browser(population: str) -> str:
+    settings = get_settings()
+    try:
+        result = run_population_scan(settings.output_dir, population)
+    except (MarketDataConfigurationError, ValueError) as error:
+        return f"Population scan blocked: {error}"
+    return f"Population scan complete: {result.scan_id}"
 
 
 def render_greenrock_score(
@@ -1245,6 +1328,34 @@ def _picks_table(rows: list[dict[str, str]]) -> str:
         "<th>Net Cash / Debt</th><th>Share Change</th><th>Evidence Agreement</th><th>Top Bullish Signal</th><th>Top Caution Signal</th>"
         "<th>RSI</th><th>52-week Low Distance</th>"
         "<th>Bollinger Band Status</th><th>Volume Acceleration</th><th>Why It Screened In</th></tr></thead><tbody>"
+        + body
+        + "</tbody></table>"
+    )
+
+
+def _scan_results_table(rows) -> str:
+    if not rows:
+        return "<p class='empty'>No scan rows available yet.</p>"
+    body = "".join(
+        "<tr>"
+        f"<td>{_safe(row.get('rank', ''))}</td>"
+        f"<td><strong>{_safe(row.get('symbol', ''))}</strong><br>{_finviz_link(row.get('symbol', ''))}</td>"
+        f"<td>{_safe(row.get('company_name', ''))}</td>"
+        f"<td>{_safe(row.get('greenrock_score', ''))}</td>"
+        f"<td>{_safe(row.get('greenrock_confidence', ''))}</td>"
+        f"<td>{_safe(row.get('evidence_agreement', ''))}</td>"
+        f"<td>{_safe(row.get('fundamental_guardrail', ''))}</td>"
+        f"<td>{_safe(row.get('research_priority', ''))}</td>"
+        f"<td>{_safe(row.get('top_bullish_signal', ''))}</td>"
+        f"<td>{_safe(row.get('top_caution_signal', ''))}</td>"
+        f"<td>{_safe(row.get('data_quality_warnings', ''))}</td>"
+        "</tr>"
+        for row in rows
+    )
+    return (
+        "<table class='picks-table'><thead><tr><th>Rank</th><th>Ticker</th><th>Company</th>"
+        "<th>Score</th><th>Confidence</th><th>Evidence Agreement</th><th>Guardrail</th><th>Priority</th>"
+        "<th>Top Bullish Signal</th><th>Top Caution Signal</th><th>Data Quality Warnings</th></tr></thead><tbody>"
         + body
         + "</tbody></table>"
     )
@@ -2003,6 +2114,7 @@ def _page(title: str, content: str, active: str = "/") -> str:
         ("Projects", "/projects"),
         ("GreenRock", "/greenrock"),
         ("Picks", "/greenrock/picks"),
+        ("Scanner", "/greenrock/scanner"),
         ("Score", "/greenrock/score"),
         ("Tasks", "/tasks"),
         ("Agents", "/agents"),

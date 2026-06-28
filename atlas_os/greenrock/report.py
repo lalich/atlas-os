@@ -310,14 +310,15 @@ def _mega_rock_section(data_mode: str, data_source: str, candidate_count: int) -
     if data_source in {"yfinance:mega_rock", "yfinance:greenrock_universes", "yfinance:greenrock_watchlists"}:
         return (
             f"This {data_mode} run ranked {candidate_count} securities from configured local GreenRock "
-            "watchlists using the configured yfinance provider. Current real mode ranks configured "
-            "watchlists, not the entire U.S. public market. The Mega Rock candidate pool, large-cap "
+            "watchlists using the configured yfinance provider. Population scans are available separately "
+            "but do not replace report sourcing yet. The Mega Rock candidate pool, large-cap "
             "watchlist, and small/mid-cap watchlist are operator-managed starting points and do not imply "
-            "that any security is suitable for any person or portfolio. Full-market scanner planned."
+            "that any security is suitable for any person or portfolio."
         )
     return (
         f"This {data_mode} run screened {candidate_count} securities from data source `{data_source}`. "
-        "Ticker watchlist composition is an operator input and remains subject to review. Full-market scanner planned."
+        "Ticker watchlist composition is an operator input and remains subject to review. Reports can eventually "
+        "source picks from latest population scans, but this workflow does not do that yet."
     )
 
 

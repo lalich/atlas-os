@@ -91,9 +91,37 @@ Open:
 http://127.0.0.1:8000/greenrock/picks
 ```
 
-The Picks Board shows one featured Mega Rock pick, eleven large-cap picks, and eleven small/mid-cap picks when available. It includes section counts, Finviz links, GreenRock Scores, signal labels, technical fields, and a clear mock/real data badge. Current real mode ranks configured watchlists, not the entire U.S. public market; a full-market scanner is planned. If a section is incomplete, Atlas shows a data quality warning. It is local-only and not a publishing surface.
+The Picks Board shows one featured Mega Rock pick, eleven large-cap picks, and eleven small/mid-cap picks when available. It includes section counts, Finviz links, GreenRock Scores, signal labels, technical fields, and a clear mock/real data badge. Current report mode ranks configured watchlists; population scans are available separately and do not replace report sourcing yet. If a section is incomplete, Atlas shows a data quality warning. It is local-only and not a publishing surface.
 
 Real-data buckets are Mega Rock at $1T+, large cap from $10B to below $1T, and small/mid below $10B.
+
+## Run Population Scanner
+
+Population scans are broad source screens, not report picks.
+
+```bash
+atlas greenrock population reset-all
+atlas greenrock population list
+atlas greenrock population validate
+atlas greenrock scan --population qqq
+atlas greenrock scan --population sp500
+atlas greenrock scan --population russell2000
+atlas greenrock scan --population micro_moonshot
+atlas greenrock scan --population all
+```
+
+Browser:
+
+```text
+http://127.0.0.1:8000/greenrock/scanner
+```
+
+Outputs are local only:
+
+- `.atlas/output/greenrock/scans/<scan_id>/scan_results.csv`
+- `.atlas/output/greenrock/scans/<scan_id>/scan_summary.md`
+
+Scans require the configured real provider and fail safely with setup instructions when unavailable. They create local scan files only; they do not create report approvals, emails, or publications.
 
 ## Score Any Ticker
 

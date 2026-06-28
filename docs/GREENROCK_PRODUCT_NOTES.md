@@ -11,6 +11,8 @@
 - Replace mock data with an approved market data provider only after vendor, credential, and compliance controls are defined.
 - Add survivorship-bias checks, liquidity thresholds, and history completeness checks.
 - Store raw input snapshots for reproducibility.
+- Maintain separate concepts for population scans, curated watchlists, and report picks. Population scans broaden the source universe but should not bypass report approval gates.
+- Keep Micro/Moonshot population storage editable for non-index-style names that may not appear in standard index populations.
 
 ## Scoring Improvements
 
@@ -28,6 +30,7 @@
 - Track score stability across multiple lookback windows.
 - Add chart overlays for score components so subscribers can visually compare dislocation, momentum, volume, and moving-average structure.
 - Prepare future `www.greenrockam.com` adaptation by keeping calculator HTML sections semantic and CSS classes product-oriented, without adding external publishing from Atlas OS.
+- Add future report sourcing controls so approved operators can choose latest population scan outputs as upstream candidates without replacing human review or approval gates.
 
 ## Future Options Analysis
 

@@ -16,8 +16,15 @@ from atlas_os.db.database import connect, initialize_database
 from atlas_os.greenrock.market_data import MarketDataProvider
 from atlas_os.greenrock.market_data import get_market_data_provider
 from atlas_os.greenrock.models import MockStock
+from atlas_os.greenrock.population import (
+    MICRO_MOONSHOT_POPULATION,
+    load_population,
+    reset_all_populations,
+    validate_populations,
+)
 from atlas_os.greenrock.sample_data import load_mock_stocks
 from atlas_os.greenrock.score import calculate_score_preview
+from atlas_os.greenrock.scanner import run_population_scan
 from atlas_os.greenrock.screener import run_screen
 from atlas_os.greenrock.universe import LARGE_CAP_TICKERS, MEGA_ROCK_TICKERS, SMALL_MID_CAP_TICKERS, save_ticker_universe
 from atlas_os.greenrock.workflow import run_greenrock_screening_workflow
@@ -316,6 +323,74 @@ class GreenRockMarketDataTests(unittest.TestCase):
         self.assertIn("GreenRock watchlist validation", output)
         self.assertIn("SPCE is Virgin Galactic, not SpaceX.", output)
         self.assertIn("AAPL appears in multiple watchlists", output)
+
+    def test_population_reset_creates_files_and_micro_moonshot_names(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            populations = reset_all_populations(root / "output")
+            micro = load_population(root / "output", MICRO_MOONSHOT_POPULATION)
+            paths_exist = all(population.path.exists() for population in populations.values())
+
+        self.assertEqual(set(populations), {"qqq", "sp500", "russell2000", "micro_moonshot"})
+        self.assertTrue(paths_exist)
+        for ticker in ("GRRR", "PI", "ENPH", "SOFI", "ENVX"):
+            self.assertIn(ticker, micro.tickers)
+
+    def test_population_validate_catches_duplicates(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            reset_all_populations(root / "output")
+            validation = validate_populations(root / "output")
+
+        self.assertIn("AAPL", validation.duplicate_tickers)
+        self.assertTrue(validation.warnings)
+
+    def test_population_scan_with_fake_provider_ranks_tickers(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            reset_all_populations(root / "output")
+            result = run_population_scan(root / "output", "micro_moonshot", provider=FakeMarketDataProvider())
+            results_exists = result.results_path.exists()
+            summary_exists = result.summary_path.exists()
+
+        self.assertTrue(results_exists)
+        self.assertTrue(summary_exists)
+        self.assertTrue(result.rows)
+        self.assertEqual(result.rows[0]["rank"], "1")
+        self.assertIn("greenrock_score", result.rows[0])
+        self.assertIn("greenrock_confidence", result.rows[0])
+        self.assertIn("evidence_agreement", result.rows[0])
+        self.assertIn("fundamental_guardrail", result.rows[0])
+
+    def test_scanner_page_returns_200(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {
+                "ATLAS_DB_PATH": str(root / "atlas.db"),
+                "ATLAS_OUTPUT_DIR": str(root / "output"),
+            }
+            with patch.dict("os.environ", env, clear=False):
+                response = dispatch_request("GET", "/greenrock/scanner")
+
+        self.assertEqual(response.status, 200)
+        self.assertIn("Market Scanner", response.body)
+        self.assertIn("Run Population Scan", response.body)
+
+    def test_population_scan_missing_provider_fails_safely(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {
+                "ATLAS_DB_PATH": str(root / "atlas.db"),
+                "ATLAS_OUTPUT_DIR": str(root / "output"),
+                "ATLAS_MARKET_DATA_PROVIDER": "",
+            }
+            with patch.dict("os.environ", env, clear=False):
+                output, exit_code = _run_cli_raw(["greenrock", "scan", "--population", "qqq"])
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("GreenRock population scan blocked", output)
+        self.assertIn("export ATLAS_MARKET_DATA_PROVIDER=yfinance", output)
+        self.assertEqual(list((root / "output").glob("greenrock/scans/*")), [])
 
 
 def _run_cli_raw(args: list[str]) -> tuple[str, int]:

@@ -27,8 +27,18 @@ from atlas_os.db.database import connect, initialize_database
 from atlas_os.greenrock.lifecycle import cleanup_greenrock_drafts
 from atlas_os.greenrock.market_data import MarketDataConfigurationError
 from atlas_os.greenrock.pdf_export import render_markdown_report_to_pdf
+from atlas_os.greenrock.population import (
+    ALL_POPULATION,
+    GREENROCK_POPULATION_NAMES,
+    add_population_tickers,
+    load_populations,
+    remove_population_tickers,
+    reset_all_populations,
+    validate_populations,
+)
 from atlas_os.greenrock.report import build_sample_report
 from atlas_os.greenrock.score import calculate_score_preview, score_signal
+from atlas_os.greenrock.scanner import run_population_scan
 from atlas_os.greenrock.screener import run_screen
 from atlas_os.greenrock.universe import (
     LARGE_CAP_UNIVERSE,
@@ -230,6 +240,32 @@ def build_parser() -> argparse.ArgumentParser:
     universe_subparsers.add_parser("reset-small-mid", help="Reset local universe to the small/mid-cap default.")
     universe_subparsers.add_parser("reset-all", help="Reset all local GreenRock universes.")
     universe_subparsers.add_parser("validate", help="Validate local GreenRock watchlists.")
+
+    population = greenrock_subparsers.add_parser(
+        "population",
+        help="Manage local GreenRock population scan sources.",
+    )
+    population_subparsers = population.add_subparsers(dest="population_command")
+    population_subparsers.add_parser("list", help="List current GreenRock populations.")
+    population_subparsers.add_parser("reset-all", help="Reset all GreenRock populations.")
+    population_add = population_subparsers.add_parser("add", help="Add tickers to a population.")
+    population_add.add_argument("population", choices=GREENROCK_POPULATION_NAMES)
+    population_add.add_argument("tickers", nargs="+")
+    population_remove = population_subparsers.add_parser("remove", help="Remove tickers from a population.")
+    population_remove.add_argument("population", choices=GREENROCK_POPULATION_NAMES)
+    population_remove.add_argument("tickers", nargs="+")
+    population_subparsers.add_parser("validate", help="Validate local GreenRock populations.")
+
+    scan = greenrock_subparsers.add_parser(
+        "scan",
+        help="Run a real-data GreenRock population scan.",
+    )
+    scan.add_argument(
+        "--population",
+        choices=GREENROCK_POPULATION_NAMES + (ALL_POPULATION,),
+        required=True,
+        help="Population to scan.",
+    )
 
     return parser
 
@@ -570,6 +606,88 @@ def run_greenrock_score(ticker: str, data_mode: str = "real", selection_mode: st
             print(f"  {warning}")
     else:
         print("  none")
+    return 0
+
+
+def run_greenrock_population(command: str | None, population: str | None = None, tickers: list[str] | None = None) -> int:
+    settings = get_settings()
+    if command == "list":
+        populations = load_populations(settings.output_dir)
+        print("GreenRock populations")
+        for item in populations.values():
+            print(f"name: {item.name}")
+            print(f"label: {item.label}")
+            print(f"ticker_count: {len(item.tickers)}")
+            print(f"path: {item.path}")
+            print(f"tickers: {', '.join(item.tickers)}")
+        return 0
+    if command == "reset-all":
+        populations = reset_all_populations(settings.output_dir)
+        print("GreenRock populations reset")
+        for item in populations.values():
+            print(f"{item.name}: {len(item.tickers)} tickers -> {item.path}")
+        return 0
+    if command == "add" and population:
+        item = add_population_tickers(settings.output_dir, population, tuple(tickers or ()))
+        print("GreenRock population updated")
+        print(f"name: {item.name}")
+        print(f"ticker_count: {len(item.tickers)}")
+        print(f"path: {item.path}")
+        return 0
+    if command == "remove" and population:
+        item = remove_population_tickers(settings.output_dir, population, tuple(tickers or ()))
+        print("GreenRock population updated")
+        print(f"name: {item.name}")
+        print(f"ticker_count: {len(item.tickers)}")
+        print(f"path: {item.path}")
+        return 0
+    if command == "validate":
+        validation = validate_populations(settings.output_dir)
+        print("GreenRock population validation")
+        print(f"duplicate_count: {len(validation.duplicate_tickers)}")
+        if validation.duplicate_tickers:
+            print(f"duplicates: {', '.join(validation.duplicate_tickers)}")
+        print("warnings:")
+        if validation.warnings:
+            for warning in validation.warnings:
+                print(f"  {warning}")
+        else:
+            print("  none")
+        return 0
+    print("Choose a population command: list, reset-all, add, remove, or validate.")
+    return 1
+
+
+def run_greenrock_scan(population: str) -> int:
+    settings = get_settings()
+    try:
+        result = run_population_scan(settings.output_dir, population)
+    except (MarketDataConfigurationError, ValueError) as error:
+        print("GreenRock population scan blocked")
+        print(f"population: {population}")
+        print(f"reason: {error}")
+        print("setup: export ATLAS_MARKET_DATA_PROVIDER=yfinance")
+        print('setup: python3 -m pip install -e ".[market-data]"')
+        print("No report, approval, email, publication, or external action was created.")
+        return 1
+    print("GreenRock population scan complete")
+    print(f"scan_id: {result.scan_id}")
+    print(f"population: {result.population}")
+    print(f"data_source: {result.data_source}")
+    print(f"results_csv: {result.results_path}")
+    print(f"summary_md: {result.summary_path}")
+    print(f"ranked_count: {len(result.rows)}")
+    if result.warnings:
+        print("warnings:")
+        for warning in result.warnings:
+            print(f"  {warning}")
+    print("top_ranked:")
+    for row in result.rows[:10]:
+        print(
+            f"  {row['rank']} {row['symbol']} score={row['greenrock_score']} "
+            f"confidence={row['greenrock_confidence']} evidence={row['evidence_agreement']} "
+            f"guardrail={row['fundamental_guardrail']}"
+        )
     return 0
 
 
@@ -1288,6 +1406,14 @@ def main(argv: list[str] | None = None) -> int:
             return run_greenrock_picks_board()
         if args.greenrock_command == "score":
             return run_greenrock_score(args.ticker, args.data, args.selection)
+        if args.greenrock_command == "population":
+            return run_greenrock_population(
+                args.population_command,
+                getattr(args, "population", None),
+                getattr(args, "tickers", None),
+            )
+        if args.greenrock_command == "scan":
+            return run_greenrock_scan(args.population)
         if args.greenrock_command == "review":
             return run_greenrock_review()
         if args.greenrock_command == "open-latest":

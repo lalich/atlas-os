@@ -107,6 +107,27 @@ The local screener writes:
 
 Draft reports remain local, approval-gated, and blocked from client-facing use. Mock mode is the default.
 
+## GreenRock Population Scanner
+
+Population scans are broader research screens, separate from curated watchlists and report picks.
+
+```bash
+atlas greenrock population reset-all
+atlas greenrock population list
+atlas greenrock population add micro_moonshot GRRR PI
+atlas greenrock population validate
+atlas greenrock scan --population micro_moonshot
+```
+
+Populations are stored locally under `.atlas/output/greenrock/populations/`:
+
+- `qqq.csv`
+- `sp500.csv`
+- `russell2000.csv`
+- `micro_moonshot.csv`
+
+Scan outputs are stored under `.atlas/output/greenrock/scans/<scan_id>/` as `scan_results.csv` and `scan_summary.md`. Scans require the configured real provider, fail safely when it is unavailable, and do not create reports, approvals, emails, or publications. Reports do not source from population scans yet; they can eventually use latest population scan results as upstream candidates.
+
 ## GreenRock Score Calculator
 
 The GreenRock Score Calculator is available in the browser at `/greenrock/score` and from the CLI:
@@ -185,7 +206,7 @@ Then open:
 http://127.0.0.1:8000/greenrock/picks
 ```
 
-The board displays one featured Mega Rock pick, eleven large-cap picks, and eleven small/mid-cap picks when available. Current real mode ranks configured watchlists, not the entire U.S. public market; a full-market scanner is planned. It includes ticker, company name, market cap, price, GreenRock Score, Evidence Agreement, top bullish signal, top caution signal, signal label, concise Fundamental Guardrail fields, RSI, 52-week low distance, Bollinger Band status, volume acceleration, screening rationale, and Finviz links. The page is local-only, clearly labels MOCK or REAL data, and does not publish externally.
+The board displays one featured Mega Rock pick, eleven large-cap picks, and eleven small/mid-cap picks when available. Current report mode ranks configured watchlists; population scans are available separately and do not replace the report workflow yet. It includes ticker, company name, market cap, price, GreenRock Score, Evidence Agreement, top bullish signal, top caution signal, signal label, concise Fundamental Guardrail fields, RSI, 52-week low distance, Bollinger Band status, volume acceleration, screening rationale, and Finviz links. The page is local-only, clearly labels MOCK or REAL data, and does not publish externally.
 
 ## GreenRock Score Calculator
 

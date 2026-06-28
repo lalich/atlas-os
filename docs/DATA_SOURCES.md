@@ -90,7 +90,7 @@ Real-data market-cap buckets:
 
 If any section is incomplete, the board and report show a data quality warning.
 
-Current real mode ranks configured watchlists, not the entire U.S. public market. Full-market scanner planned.
+Current report mode ranks configured watchlists. Population scans are available as a broader upstream research source, but report picks do not source from scans yet.
 
 Finviz links are plain outbound reference links in the format:
 
@@ -99,6 +99,26 @@ https://finviz.com/quote.ashx?t=<TICKER>
 ```
 
 The Picks Board does not publish, email, distribute, or bypass approval.
+
+## Population Scanner Data Source
+
+Population = broad scan source. Watchlist = manually curated list. Report picks = final ranked output in the approval-gated report workflow.
+
+Local population files:
+
+- `.atlas/output/greenrock/populations/qqq.csv`
+- `.atlas/output/greenrock/populations/sp500.csv`
+- `.atlas/output/greenrock/populations/russell2000.csv`
+- `.atlas/output/greenrock/populations/micro_moonshot.csv`
+
+The Micro/Moonshot population is editable and includes non-index-style names such as GRRR, PI, ENPH, NIO, SOFI, RKT, AFRM, OPEN, FUBO, CHPT, MARA, RIOT, HOOD, UPST, DKNG, LC, LMND, RUN, STEM, and ENVX.
+
+Population scans use the configured real market-data provider and write:
+
+- `.atlas/output/greenrock/scans/<scan_id>/scan_results.csv`
+- `.atlas/output/greenrock/scans/<scan_id>/scan_summary.md`
+
+Scan rows include GreenRock Score, Confidence, Evidence Agreement, Fundamental Guardrail, Research Priority, market-cap bucket, top bullish signal, top caution signal, data-quality warnings, and Finviz links. Scans are local research outputs and do not create report approvals, emails, publications, or client-facing materials.
 
 ## Score Calculator Data Source
 
