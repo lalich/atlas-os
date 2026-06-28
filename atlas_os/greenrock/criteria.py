@@ -80,6 +80,7 @@ def evaluate_stock(stock: MockStock) -> StockCandidate:
         has_52_week_low=stock.has_52_week_low,
         skipped_reason=stock.skipped_reason,
         selection_label="Strict Pass" if not failed else "Watchlist",
+        fundamentals=stock.fundamentals,
     )
 
 

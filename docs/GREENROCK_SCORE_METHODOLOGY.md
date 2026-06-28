@@ -6,6 +6,7 @@ GreenRock Score and GreenRock Confidence are separate:
 
 - GreenRock Score measures the opportunity/dislocation setup.
 - GreenRock Confidence measures data quality, data depth, signal agreement, and reliability of the score.
+- Fundamental Guardrails measure survivability and recovery support from light balance-sheet and dilution checks.
 - Confidence may be high when Score is moderate if the evidence is clean and complete.
 - Confidence may be low when Score is high if the data is shallow, noisy, incomplete, or internally conflicted.
 
@@ -21,6 +22,18 @@ GreenRock Score and GreenRock Confidence are separate:
 | Bullish / Bearish Evidence | 10 points | Shows explicit setup support and research cautions that affect interpretation of the setup. | Add calibrated evidence weights for missing data, extreme liquidity risk, or stale prices once production controls exist. |
 
 The component total is capped at 100.
+
+Fundamental Guardrails can add a small capped `fundamental_guardrail_adjustment` after the technical component score:
+
+| Guardrail | Score Adjustment |
+|---|---:|
+| Strong Balance Sheet | +2 |
+| Acceptable | +1 |
+| Caution | -2 |
+| Red Flag | -5 |
+| Insufficient Data | 0 |
+
+This adjustment is intentionally small. GreenRock Score remains technical-first; strong fundamentals do not by themselves create a high dislocation score.
 
 ## Signal Labels
 
@@ -69,6 +82,35 @@ Confidence considers:
 - Signal stability: volatile price action and erratic volume reduce confidence.
 - Bucket reliability: missing or borderline market cap lowers confidence.
 - Target reliability: limited target history, missing ATH, or unavailable statistical targets lower confidence.
+- Fundamental Guardrails: net cash, strong quick ratio, stable shares, and complete fundamental data can raise confidence; net debt, weak quick ratio, dilution, and incomplete liquidity metrics can lower confidence.
+
+## Fundamental Guardrails
+
+Fundamental Guardrails are light viability checks, not a full valuation model. They do not produce buy, sell, or hold conclusions and do not replace analyst review.
+
+Fields used where available:
+
+- Cash and equivalents.
+- Total debt.
+- Net cash or net debt.
+- Net cash per share.
+- Quick ratio, or current assets minus inventory divided by current liabilities when the provider supplies the inputs.
+- Current assets, inventory, and current liabilities.
+- Current and prior shares outstanding.
+- Shares outstanding change percent.
+- Fundamental data source and warnings.
+
+Labels:
+
+| Label | Interpretation |
+|---|---|
+| Strong Balance Sheet | Positive net cash, quick ratio at or above 1.5, and stable or declining share count. |
+| Acceptable | Manageable debt, quick ratio at or above 1.0, and no major dilution signal. |
+| Caution | Net debt appears meaningful, quick ratio is below 1.0, or share count is expanding meaningfully. |
+| Red Flag | Liquidity weakness, major dilution, or severe leverage appears in available data. |
+| Insufficient Data | Key inputs are missing; this lowers evidence confidence but does not automatically imply weakness. |
+
+Fundamentals primarily affect GreenRock Confidence because they help assess survivability and recovery support. A ticker can have a high GreenRock Score with low Confidence if the technical setup is attractive but the evidence quality or guardrails are weak. A ticker can also have moderate Score with higher Confidence if data depth, indicator agreement, and guardrails are clean.
 
 ## Current Formula Notes
 
@@ -78,6 +120,7 @@ Confidence considers:
 - Volume acceleration contributes more points as current 10-day average volume improves versus the prior 10-day average.
 - Moving average structure combines short-term dislocation, longer-term trend damage, and early improvement in the 50 DMA rate of change.
 - Bullish Evidence and Bearish Evidence are always explained in the calculator output. Bullish examples include price below the lower 2.5 standard deviation Bollinger Band, strong volume acceleration, and unusually deep dislocation near the 52-week low. Bearish examples include missing data, extreme illiquidity, insufficient price history, weak market-cap data, and moving average structure that is not aligned with GreenRock criteria.
+- Bullish and bearish fundamental evidence is shown separately inside Fundamental Guardrails, including balance-sheet quality, quick ratio context, share-count stability or dilution, confidence impact, and data warnings.
 
 ## Analyst Intelligence Notes
 

@@ -1224,6 +1224,10 @@ def _picks_table(rows: list[dict[str, str]]) -> str:
         f"<td>{_safe(row.get('score', ''))}</td>"
         f"<td><span class='badge signal'>{_safe(_candidate_signal(row))}</span></td>"
         f"<td><span class='badge selection'>{_safe(row.get('selection_label', 'Strict Pass'))}</span></td>"
+        f"<td>{_safe(row.get('guardrail', 'Insufficient Data'))}</td>"
+        f"<td>{_safe(row.get('quick_ratio', 'unavailable'))}</td>"
+        f"<td>{_safe(row.get('net_cash_debt', 'unavailable'))}</td>"
+        f"<td>{_safe(row.get('share_change_percent', 'unavailable'))}</td>"
         f"<td>{_safe(row.get('rsi_14', ''))}</td>"
         f"<td>{_format_percent(row.get('low_proximity', ''))}</td>"
         f"<td>{_safe(_bollinger_status(row))}</td>"
@@ -1234,7 +1238,8 @@ def _picks_table(rows: list[dict[str, str]]) -> str:
     )
     return (
         "<table class='picks-table'><thead><tr><th>Ticker</th><th>Company</th><th>Market Cap</th>"
-        "<th>Price</th><th>GreenRock Score</th><th>Signal</th><th>Selection</th><th>RSI</th><th>52-week Low Distance</th>"
+        "<th>Price</th><th>GreenRock Score</th><th>Signal</th><th>Selection</th><th>Guardrail</th><th>Quick Ratio</th>"
+        "<th>Net Cash / Debt</th><th>Share Change</th><th>RSI</th><th>52-week Low Distance</th>"
         "<th>Bollinger Band Status</th><th>Volume Acceleration</th><th>Why It Screened In</th></tr></thead><tbody>"
         + body
         + "</tbody></table>"
@@ -1251,6 +1256,10 @@ def _score_preview_panel(preview) -> str:
     watch_items = "".join(f"<li>{_safe(item)}</li>" for item in preview.watch_next)
     confidence_driver_items = "".join(f"<li>{_safe(item)}</li>" for item in preview.confidence_drivers)
     confidence_drag_items = "".join(f"<li>{_safe(item)}</li>" for item in preview.confidence_drags)
+    guardrail = preview.fundamental_guardrails
+    fundamental_bullish_items = "".join(f"<li>{_safe(item)}</li>" for item in guardrail.bullish_evidence)
+    fundamental_bearish_items = "".join(f"<li>{_safe(item)}</li>" for item in guardrail.bearish_evidence)
+    fundamental_warning_items = "".join(f"<li>{_safe(item)}</li>" for item in guardrail.warnings) or "<li>none</li>"
     warning_items = "".join(f"<li>{_safe(warning)}</li>" for warning in warnings)
     return f"""
     <section class="panel score-result">
@@ -1307,6 +1316,32 @@ def _score_preview_panel(preview) -> str:
         {_detail_panel("Data Source", preview.data_source)}
         {_detail_panel("Selection Mode", preview.selection_mode)}
       </div>
+      <section class="panel inner-panel fundamental-guardrail-card">
+        <div class="section-head">
+          <h2>Fundamental Guardrails</h2>
+          <span class="badge guardrail-badge">{_safe(guardrail.label)}</span>
+        </div>
+        <div class="detail-grid">
+          {_detail_panel("Net Cash / Debt", _format_net_cash_debt(guardrail.net_cash))}
+          {_detail_panel("Net Cash Per Share", _format_currency(str(guardrail.net_cash_per_share)) if guardrail.net_cash_per_share is not None else "unavailable")}
+          {_detail_panel("Quick Ratio", f"{guardrail.quick_ratio:.2f}" if guardrail.quick_ratio is not None else "unavailable")}
+          {_detail_panel("Share Change", f"{guardrail.shares_outstanding_change_percent:.2%}" if guardrail.shares_outstanding_change_percent is not None else "unavailable")}
+          {_detail_panel("Confidence Impact", f"{guardrail.confidence_impact:+.1f} pts")}
+          {_detail_panel("Score Adjustment", f"{preview.fundamental_guardrail_adjustment:+.1f} pts")}
+        </div>
+        <div class="evidence-grid">
+          <div>
+            <h3>Bullish Fundamental Evidence</h3>
+            <ul class="compact-list">{fundamental_bullish_items}</ul>
+          </div>
+          <div>
+            <h3>Bearish Fundamental Evidence</h3>
+            <ul class="compact-list">{fundamental_bearish_items}</ul>
+          </div>
+        </div>
+        <h3>Fundamental Data Warnings</h3>
+        <ul class="compact-list">{fundamental_warning_items}</ul>
+      </section>
       <div class="evidence-grid">
         <section class="panel inner-panel evidence-card bullish-card">
           <h2>Bullish Evidence</h2>
@@ -1575,6 +1610,13 @@ def _format_currency(value: str) -> str:
     except ValueError:
         return _safe(value)
     return f"${amount:,.2f}"
+
+
+def _format_net_cash_debt(value: float | None) -> str:
+    if value is None:
+        return "unavailable"
+    label = "Net Cash" if value >= 0 else "Net Debt"
+    return f"{label} ${abs(value) / 1_000_000_000:.2f}B"
 
 
 def _format_percent(value: str) -> str:
@@ -2074,7 +2116,7 @@ def _page(title: str, content: str, active: str = "/") -> str:
     .compact-list {{ margin: 0; padding-left: 18px; color: #dfe9e3; }}
     .compact-list li {{ margin: 0 0 4px; }}
     .picks-panel {{ overflow-x: auto; }}
-    .picks-table {{ min-width: 1180px; }}
+    .picks-table {{ min-width: 1460px; }}
     .picks-table th:nth-child(11), .picks-table td:nth-child(11) {{ min-width: 220px; }}
     .calculator-card {{ display: flex; align-items: center; justify-content: space-between; gap: 16px; border-color: rgba(55,214,122,.38); }}
     .score-tool-hero {{ display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, .5fr); gap: 22px; align-items: end; }}
@@ -2098,6 +2140,8 @@ def _page(title: str, content: str, active: str = "/") -> str:
     .confidence-explain-grid {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }}
     .confidence-explain-grid div {{ border: 1px solid rgba(255,255,255,.08); border-radius: 8px; padding: 12px; background: rgba(255,255,255,.035); }}
     .confidence-badge {{ background: rgba(55,214,122,.14); color: #b9ffd3; border: 1px solid rgba(55,214,122,.28); }}
+    .fundamental-guardrail-card {{ border-color: rgba(185,255,240,.24); background: rgba(185,255,240,.045); }}
+    .guardrail-badge {{ background: rgba(185,255,240,.13); color: #d4fff7; border: 1px solid rgba(185,255,240,.28); }}
     .priority-card .priority {{ display: inline-block; margin-bottom: 12px; background: rgba(243,201,105,.16); color: #ffe3a1; border: 1px solid rgba(243,201,105,.32); font-size: 14px; }}
     .analyst-summary {{ border-color: rgba(55,214,122,.28); background: rgba(55,214,122,.06); margin-bottom: 12px; }}
     .analyst-summary p {{ margin-bottom: 0; }}

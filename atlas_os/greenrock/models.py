@@ -14,6 +14,23 @@ class PriceBar:
 
 
 @dataclass(frozen=True)
+class FundamentalSnapshot:
+    cash_and_equivalents: float | None = None
+    total_debt: float | None = None
+    net_cash: float | None = None
+    net_cash_per_share: float | None = None
+    quick_ratio: float | None = None
+    current_assets: float | None = None
+    inventory: float | None = None
+    current_liabilities: float | None = None
+    shares_outstanding_current: float | None = None
+    shares_outstanding_prior: float | None = None
+    shares_outstanding_change_percent: float | None = None
+    fundamental_data_source: str = ""
+    fundamental_data_warnings: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class MockStock:
     symbol: str
     company_name: str
@@ -24,6 +41,7 @@ class MockStock:
     has_volume_data: bool = True
     has_52_week_low: bool = True
     skipped_reason: str = ""
+    fundamentals: FundamentalSnapshot | None = None
 
 
 @dataclass(frozen=True)
@@ -63,6 +81,7 @@ class StockCandidate:
     has_52_week_low: bool = True
     skipped_reason: str = ""
     selection_label: str = "Strict Pass"
+    fundamentals: FundamentalSnapshot | None = None
 
     @property
     def mock_score(self) -> float:

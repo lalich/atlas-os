@@ -15,10 +15,12 @@
 ## Scoring Improvements
 
 - Make the GreenRock Score Calculator the primary operator surface for explaining why a name qualifies before it appears in a report.
-- Keep `/greenrock/score` structured as a reusable product surface: hero score card, confidence card, research priority badge, analyst summary, Bullish Evidence, Bearish Evidence, What to Watch Next, ticker input, rank bands, score breakdown cards, 1-year statistical price targets, Finviz link, real-data badge, save-to-list area, and data-quality warnings.
+- Keep `/greenrock/score` structured as a reusable product surface: hero score card, confidence card, Fundamental Guardrails card, research priority badge, analyst summary, Bullish Evidence, Bearish Evidence, What to Watch Next, ticker input, rank bands, score breakdown cards, 1-year statistical price targets, Finviz link, real-data badge, save-to-list area, and data-quality warnings.
 - Preserve preview-only behavior for score calculation. It must not create reports, approvals, artifacts, emails, publications, or client-facing files. Saving a ticker writes only to local GreenRock list CSVs.
 - Keep analyst intelligence deterministic and template-based. Do not use LLM/API calls for the score calculator summary.
 - Calibrate GreenRock Confidence as evidence reliability, not just data existence. It should vary across tickers based on data depth, signal agreement, volatility/noise, bucket reliability, and target reliability.
+- Keep Fundamental Guardrails light and confidence-weighted. Net cash/debt, quick ratio, and share-count change should support survivability analysis without turning GreenRock into a full valuation model.
+- Keep GreenRock Score technical-first. Fundamental Guardrails may add only a small capped score adjustment, while materially affecting Confidence when evidence is strong, weak, incomplete, or conflicted.
 - Calibrate GreenRock Score against historical mock fixtures first, then approved historical data later.
 - Add sub-scores for trend, dislocation, participation, volatility, and liquidity.
 - Track score stability across multiple lookback windows.

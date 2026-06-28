@@ -17,7 +17,7 @@ from atlas_os.core.artifacts import list_artifacts
 from atlas_os.core.workflow_runs import list_workflow_runs
 from atlas_os.db.database import connect, initialize_database
 from atlas_os.greenrock.market_data import MarketDataProvider
-from atlas_os.greenrock.models import PriceBar
+from atlas_os.greenrock.models import FundamentalSnapshot, PriceBar
 from atlas_os.greenrock.sample_data import load_mock_stocks
 from atlas_os.greenrock.score import calculate_score_preview, confidence_band
 from atlas_os.web_app import dispatch_request
@@ -163,6 +163,11 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("Moving average structure does not yet fully support the setup.", result.body)
         self.assertIn("Watch for price reclaiming", result.body)
         self.assertIn("Atlas flags LC01", result.body)
+        self.assertIn("Fundamental Guardrails", result.body)
+        self.assertIn(preview.fundamental_guardrails.label, result.body)
+        self.assertIn("Bullish Fundamental Evidence", result.body)
+        self.assertIn("Bearish Fundamental Evidence", result.body)
+        self.assertIn("Confidence Impact", result.body)
         self.assertIn("1-Year Statistical Price Targets", result.body)
         self.assertIn("Historical lookback", result.body)
         self.assertIn("5 years", result.body)
@@ -194,6 +199,36 @@ class CommandCenterTests(unittest.TestCase):
         self.assertTrue(preview.bearish_evidence)
         self.assertTrue(preview.watch_next)
         self.assertIn("Atlas flags LC01", preview.analyst_summary)
+
+    def test_fundamental_guardrails_weight_confidence_more_than_score(self) -> None:
+        strong = calculate_score_preview("LC01", provider=StrongFundamentalsProvider())
+        weak = calculate_score_preview("LC01", provider=WeakFundamentalsProvider())
+
+        self.assertEqual(strong.fundamental_guardrails.label, "Strong Balance Sheet")
+        self.assertEqual(strong.fundamental_guardrail_adjustment, 2.0)
+        self.assertGreater(strong.confidence_score, weak.confidence_score)
+        self.assertLessEqual(
+            abs(strong.candidate.score - weak.candidate.score),
+            7.0,
+        )
+        self.assertGreater(
+            abs(strong.confidence_score - weak.confidence_score),
+            abs(strong.candidate.score - weak.candidate.score),
+        )
+
+    def test_missing_and_weak_fundamentals_lower_confidence(self) -> None:
+        strong = calculate_score_preview("LC01", provider=StrongFundamentalsProvider())
+        missing = calculate_score_preview("LC01", provider=MissingFundamentalsProvider())
+        low_quick = calculate_score_preview("LC01", provider=LowQuickRatioProvider())
+        dilution = calculate_score_preview("LC01", provider=DilutionProvider())
+
+        self.assertEqual(missing.fundamental_guardrails.label, "Insufficient Data")
+        self.assertLess(missing.confidence_score, strong.confidence_score)
+        self.assertEqual(low_quick.fundamental_guardrails.label, "Red Flag")
+        self.assertLess(low_quick.confidence_score, strong.confidence_score)
+        self.assertEqual(dilution.fundamental_guardrails.label, "Caution")
+        self.assertLess(dilution.confidence_score, strong.confidence_score)
+        self.assertLessEqual(abs(low_quick.fundamental_guardrail_adjustment), 5.0)
 
     def test_confidence_calibration_drags(self) -> None:
         complete = calculate_score_preview("LC01", provider=FullHistoryProvider())
@@ -499,6 +534,91 @@ class FullHistoryProvider(MarketDataProvider):
                 )
             )
         return (replace(stock, prices=tuple(bars)),)
+
+
+class StrongFundamentalsProvider(FullHistoryProvider):
+    source_name = "strong_fundamentals_fixture"
+
+    def fetch_stocks(self):
+        stock = super().fetch_stocks()[0]
+        return (
+            replace(
+                stock,
+                fundamentals=FundamentalSnapshot(
+                    cash_and_equivalents=8_000_000_000,
+                    total_debt=2_000_000_000,
+                    net_cash=6_000_000_000,
+                    net_cash_per_share=12.0,
+                    quick_ratio=1.8,
+                    current_assets=12_000_000_000,
+                    inventory=1_000_000_000,
+                    current_liabilities=6_100_000_000,
+                    shares_outstanding_current=500_000_000,
+                    shares_outstanding_prior=505_000_000,
+                    shares_outstanding_change_percent=-0.0099,
+                    fundamental_data_source="fixture",
+                    fundamental_data_warnings=(),
+                ),
+            ),
+        )
+
+
+class WeakFundamentalsProvider(FullHistoryProvider):
+    source_name = "weak_fundamentals_fixture"
+
+    def fetch_stocks(self):
+        stock = super().fetch_stocks()[0]
+        return (
+            replace(
+                stock,
+                fundamentals=FundamentalSnapshot(
+                    cash_and_equivalents=500_000_000,
+                    total_debt=15_000_000_000,
+                    net_cash=-14_500_000_000,
+                    net_cash_per_share=-29.0,
+                    quick_ratio=0.82,
+                    current_assets=3_000_000_000,
+                    inventory=900_000_000,
+                    current_liabilities=2_560_000_000,
+                    shares_outstanding_current=560_000_000,
+                    shares_outstanding_prior=500_000_000,
+                    shares_outstanding_change_percent=0.12,
+                    fundamental_data_source="fixture",
+                    fundamental_data_warnings=(),
+                ),
+            ),
+        )
+
+
+class MissingFundamentalsProvider(FullHistoryProvider):
+    source_name = "missing_fundamentals_fixture"
+
+    def fetch_stocks(self):
+        stock = super().fetch_stocks()[0]
+        return (replace(stock, fundamentals=None),)
+
+
+class LowQuickRatioProvider(FullHistoryProvider):
+    source_name = "low_quick_ratio_fixture"
+
+    def fetch_stocks(self):
+        stock = StrongFundamentalsProvider().fetch_stocks()[0]
+        fundamentals = replace(stock.fundamentals, quick_ratio=0.6)
+        return (replace(stock, fundamentals=fundamentals),)
+
+
+class DilutionProvider(FullHistoryProvider):
+    source_name = "dilution_fixture"
+
+    def fetch_stocks(self):
+        stock = StrongFundamentalsProvider().fetch_stocks()[0]
+        fundamentals = replace(
+            stock.fundamentals,
+            shares_outstanding_current=560_000_000,
+            shares_outstanding_prior=500_000_000,
+            shares_outstanding_change_percent=0.12,
+        )
+        return (replace(stock, fundamentals=fundamentals),)
 
 
 class MissingMarketCapProvider(FullHistoryProvider):

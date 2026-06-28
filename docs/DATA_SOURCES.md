@@ -125,6 +125,16 @@ Score components:
 - Moving average structure.
 - Bullish / Bearish Evidence for setup support and research cautions.
 
+Fundamental Guardrails:
+
+- Strong Balance Sheet.
+- Acceptable.
+- Caution.
+- Red Flag.
+- Insufficient Data.
+
+Guardrails use available cash and equivalents, total debt, net cash/debt, quick ratio or liquidity inputs, and current versus prior shares outstanding. They are light viability checks, not full valuation analysis. They primarily affect GreenRock Confidence; the GreenRock Score remains technical-first with only a small capped guardrail adjustment. Strong fundamentals can support a recovery thesis, but they do not guarantee reversion. Missing fundamental data lowers evidence confidence but does not automatically imply weakness.
+
 Do not commit real credentials or private data. The yfinance scaffold does not require an API key, but any future paid provider settings must stay local.
 
 ## Safety Rules

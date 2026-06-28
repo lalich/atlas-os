@@ -38,6 +38,10 @@ CSV_HEADERS = [
     "has_52_week_low",
     "skipped_reason",
     "selection_label",
+    "guardrail",
+    "quick_ratio",
+    "net_cash_debt",
+    "share_change_percent",
     "note",
 ]
 
@@ -211,6 +215,7 @@ def _with_selection_label(candidate: StockCandidate, selection_mode: str) -> Sto
         has_52_week_low=candidate.has_52_week_low,
         skipped_reason=candidate.skipped_reason,
         selection_label=label,
+        fundamentals=candidate.fundamentals,
     )
 
 
@@ -272,5 +277,47 @@ def _candidate_to_row(candidate: StockCandidate) -> dict[str, str | float]:
         "has_52_week_low": str(candidate.has_52_week_low),
         "skipped_reason": candidate.skipped_reason,
         "selection_label": candidate.selection_label,
+        "guardrail": _guardrail_label(candidate),
+        "quick_ratio": _candidate_quick_ratio(candidate),
+        "net_cash_debt": _candidate_net_cash_debt(candidate),
+        "share_change_percent": _candidate_share_change(candidate),
         "note": candidate.note,
     }
+
+
+def _guardrail_label(candidate: StockCandidate) -> str:
+    fundamentals = candidate.fundamentals
+    if fundamentals is None:
+        return "Insufficient Data"
+    quick_ratio = fundamentals.quick_ratio
+    net_cash = fundamentals.net_cash
+    share_change = fundamentals.shares_outstanding_change_percent
+    if quick_ratio is None or net_cash is None or share_change is None:
+        return "Insufficient Data"
+    if quick_ratio < 0.75 or share_change >= 0.20:
+        return "Red Flag"
+    if quick_ratio < 1.0 or share_change >= 0.10 or (candidate.market_cap > 0 and net_cash < -candidate.market_cap * 0.25):
+        return "Caution"
+    if net_cash > 0 and quick_ratio >= 1.5 and share_change <= 0.02:
+        return "Strong Balance Sheet"
+    return "Acceptable"
+
+
+def _candidate_quick_ratio(candidate: StockCandidate) -> str:
+    if candidate.fundamentals is None or candidate.fundamentals.quick_ratio is None:
+        return "unavailable"
+    return f"{candidate.fundamentals.quick_ratio:.2f}"
+
+
+def _candidate_net_cash_debt(candidate: StockCandidate) -> str:
+    if candidate.fundamentals is None or candidate.fundamentals.net_cash is None:
+        return "unavailable"
+    value = candidate.fundamentals.net_cash
+    label = "Net Cash" if value >= 0 else "Net Debt"
+    return f"{label} ${abs(value) / 1_000_000_000:.2f}B"
+
+
+def _candidate_share_change(candidate: StockCandidate) -> str:
+    if candidate.fundamentals is None or candidate.fundamentals.shares_outstanding_change_percent is None:
+        return "unavailable"
+    return f"{candidate.fundamentals.shares_outstanding_change_percent:.2%}"

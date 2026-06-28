@@ -490,6 +490,27 @@ def run_greenrock_score(ticker: str, data_mode: str = "real", selection_mode: st
     print(f"52_week_low_distance: {indicators.low_proximity:.2%}")
     print(f"volume_acceleration: {_score_volume_acceleration(candidate)}")
     print(f"moving_average_structure: {_score_moving_average_structure(candidate)}")
+    guardrail = preview.fundamental_guardrails
+    print("fundamental_guardrails:")
+    print(f"  label: {guardrail.label}")
+    print(f"  net_cash_debt: {_format_cli_net_cash_debt(guardrail.net_cash)}")
+    print(f"  net_cash_per_share: {_format_cli_price(guardrail.net_cash_per_share)}")
+    print(f"  quick_ratio: {_format_cli_ratio(guardrail.quick_ratio)}")
+    print(f"  share_count_change_percent: {_format_cli_percent(guardrail.shares_outstanding_change_percent)}")
+    print(f"  confidence_impact: {guardrail.confidence_impact:+.2f}")
+    print(f"  score_adjustment: {preview.fundamental_guardrail_adjustment:+.2f}")
+    print("  bullish_fundamental_evidence:")
+    for item in guardrail.bullish_evidence:
+        print(f"    {item}")
+    print("  bearish_fundamental_evidence:")
+    for item in guardrail.bearish_evidence:
+        print(f"    {item}")
+    print("  warnings:")
+    if guardrail.warnings:
+        for warning in guardrail.warnings:
+            print(f"    {warning}")
+    else:
+        print("    none")
     print(f"all_time_high: {_format_cli_price(preview.all_time_high)}")
     print("one_year_statistical_price_targets:")
     print(f"  historical_lookback: {preview.price_target_lookback}")
@@ -552,6 +573,25 @@ def _format_cli_price(value: float | None) -> str:
     if value is None:
         return "unavailable"
     return f"{value:.2f}"
+
+
+def _format_cli_ratio(value: float | None) -> str:
+    if value is None:
+        return "unavailable"
+    return f"{value:.2f}"
+
+
+def _format_cli_percent(value: float | None) -> str:
+    if value is None:
+        return "unavailable"
+    return f"{value:.2%}"
+
+
+def _format_cli_net_cash_debt(value: float | None) -> str:
+    if value is None:
+        return "unavailable"
+    label = "net_cash" if value >= 0 else "net_debt"
+    return f"{label}:{abs(value):.2f}"
 
 
 def _score_component_label(name: str) -> str:

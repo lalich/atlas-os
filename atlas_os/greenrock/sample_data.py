@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from atlas_os.greenrock.models import MockStock, PriceBar, StockCandidate
+from atlas_os.greenrock.models import FundamentalSnapshot, MockStock, PriceBar, StockCandidate
 
 
 SAMPLE_CANDIDATES: tuple[StockCandidate, ...] = ()
@@ -99,5 +99,19 @@ def _build_mock_stock(
         company_name=company_name,
         market_cap=market_cap,
         prices=tuple(prices),
+        fundamentals=FundamentalSnapshot(
+            cash_and_equivalents=market_cap * 0.08,
+            total_debt=market_cap * 0.03,
+            net_cash=market_cap * 0.05,
+            net_cash_per_share=2.50,
+            quick_ratio=1.6 if not force_fail else 0.95,
+            current_assets=market_cap * 0.12,
+            inventory=market_cap * 0.02,
+            current_liabilities=market_cap * 0.0625,
+            shares_outstanding_current=100_000_000,
+            shares_outstanding_prior=99_500_000 if not force_fail else 88_000_000,
+            shares_outstanding_change_percent=0.005 if not force_fail else 0.1364,
+            fundamental_data_source="mock_sample_data",
+            fundamental_data_warnings=(),
+        ),
     )
-

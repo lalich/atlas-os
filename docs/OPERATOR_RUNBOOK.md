@@ -111,9 +111,11 @@ Browser:
 http://127.0.0.1:8000/greenrock/score
 ```
 
-The score calculator is real-data-only for operators and preview-only unless you explicitly save the ticker to a local GreenRock list. It shows GreenRock Score, GreenRock Confidence, signal label, research priority, analyst summary, Bullish Evidence, Bearish Evidence, What to Watch Next, data quality warnings, explained component scores, All-Time High, +2/+3/+5/+7 one-year statistical price targets, and a Finviz link. The methodology is documented in `docs/GREENROCK_SCORE_METHODOLOGY.md`. Calculating a score does not create a report, approval, artifact, email, publication, or external distribution action.
+The score calculator is real-data-only for operators and preview-only unless you explicitly save the ticker to a local GreenRock list. It shows GreenRock Score, GreenRock Confidence, Fundamental Guardrails, signal label, research priority, analyst summary, Bullish Evidence, Bearish Evidence, What to Watch Next, data quality warnings, explained component scores, All-Time High, +2/+3/+5/+7 one-year statistical price targets, and a Finviz link. The methodology is documented in `docs/GREENROCK_SCORE_METHODOLOGY.md`. Calculating a score does not create a report, approval, artifact, email, publication, or external distribution action.
 
 GreenRock Score measures opportunity/dislocation. GreenRock Confidence measures evidence reliability using data completeness, data depth, indicator agreement, volatility/noise, bucket reliability, and target reliability. Confidence can be high when Score is moderate, and it can be low when Score is high but the evidence is shallow or conflicted. Research Priority is a local review label only: Immediate Review, This Week, Interesting, Monitor, or Ignore.
+
+Fundamental Guardrails are light survivability checks. They use available net cash/debt, quick ratio, and share-count change data to label Strong Balance Sheet, Acceptable, Caution, Red Flag, or Insufficient Data. Fundamentals primarily affect Confidence; the technical GreenRock Score receives only a small capped adjustment. Missing fundamental data lowers evidence confidence but is not treated as automatic business weakness.
 
 The browser page includes a separate Save Ticker to List control for Watchlist, Ranked Candidates, Strict Review, Mega Rock Candidate Pool, Large Cap Watchlist, and Small/Mid Watchlist. Saving is local only, ignores duplicate tickers in the same list, and shows a warning when available market cap does not fit the selected bucket.
 

@@ -15,7 +15,7 @@ from atlas_os.greenrock.market_data import (
     MockMarketDataProvider,
     YFinanceMarketDataProvider,
 )
-from atlas_os.greenrock.models import StockCandidate
+from atlas_os.greenrock.models import FundamentalSnapshot, StockCandidate
 from atlas_os.greenrock.scoring import greenrock_score_breakdown, signal_label
 
 
@@ -45,6 +45,21 @@ class ConfidenceAnalysis:
 
 
 @dataclass(frozen=True)
+class FundamentalGuardrailAnalysis:
+    label: str
+    net_cash: float | None
+    net_cash_per_share: float | None
+    quick_ratio: float | None
+    shares_outstanding_change_percent: float | None
+    confidence_impact: float
+    score_adjustment: float
+    bullish_evidence: tuple[str, ...]
+    bearish_evidence: tuple[str, ...]
+    warnings: tuple[str, ...]
+    data_source: str
+
+
+@dataclass(frozen=True)
 class ScorePreview:
     candidate: StockCandidate
     data_mode: str
@@ -58,6 +73,8 @@ class ScorePreview:
     analyst_summary: str
     bullish_evidence: tuple[str, ...]
     bearish_evidence: tuple[str, ...]
+    fundamental_guardrails: FundamentalGuardrailAnalysis
+    fundamental_guardrail_adjustment: float
     watch_next: tuple[str, ...]
     component_scores: dict[str, float]
     component_explanations: tuple[ScoreComponentExplanation, ...]
@@ -90,6 +107,26 @@ def calculate_score_preview(
         raise ValueError(f"Ticker {symbol} was not found in {market_data_provider.source_name}.")
 
     candidate = evaluate_stock(stock)
+    fundamental_guardrails = _fundamental_guardrails(candidate)
+    adjusted_score = round(max(0.0, min(100.0, candidate.score + fundamental_guardrails.score_adjustment)), 2)
+    candidate = StockCandidate(
+        symbol=candidate.symbol,
+        company_name=candidate.company_name,
+        market_cap_bucket=candidate.market_cap_bucket,
+        market_cap=candidate.market_cap,
+        score=adjusted_score,
+        indicators=candidate.indicators,
+        passed_rules=candidate.passed_rules,
+        failed_rules=candidate.failed_rules,
+        note=candidate.note,
+        has_price_history=candidate.has_price_history,
+        has_market_cap=candidate.has_market_cap,
+        has_volume_data=candidate.has_volume_data,
+        has_52_week_low=candidate.has_52_week_low,
+        skipped_reason=candidate.skipped_reason,
+        selection_label=candidate.selection_label,
+        fundamentals=candidate.fundamentals,
+    )
     if passes_core_criteria(candidate):
         selection_label = "Strict Pass"
     elif resolved_selection_mode == "ranked" and candidate.score >= 55:
@@ -112,17 +149,33 @@ def calculate_score_preview(
         has_52_week_low=candidate.has_52_week_low,
         skipped_reason=candidate.skipped_reason,
         selection_label=selection_label,
+        fundamentals=candidate.fundamentals,
     )
     component_scores = greenrock_score_breakdown(candidate.indicators, _rule_results(candidate))
     all_time_high, price_targets, price_target_warnings, price_target_lookback = _price_targets(stock.prices, candidate.has_price_history)
     bonus_penalty_explanations = _bonus_penalty_explanations(candidate)
-    data_quality_warnings = _data_quality_warnings(candidate) + price_target_warnings
-    confidence = _confidence_analysis(candidate, stock.prices, all_time_high, price_target_lookback, price_target_warnings, price_targets)
+    data_quality_warnings = _data_quality_warnings(candidate) + price_target_warnings + fundamental_guardrails.warnings
+    confidence = _confidence_analysis(
+        candidate,
+        stock.prices,
+        all_time_high,
+        price_target_lookback,
+        price_target_warnings,
+        price_targets,
+        fundamental_guardrails,
+    )
     research_priority = _research_priority(candidate, confidence.score)
-    bullish_evidence = _bullish_evidence(candidate, price_targets)
-    bearish_evidence = _bearish_evidence(candidate, data_quality_warnings)
+    bullish_evidence = _bullish_evidence(candidate, price_targets) + fundamental_guardrails.bullish_evidence
+    bearish_evidence = _bearish_evidence(candidate, data_quality_warnings) + fundamental_guardrails.bearish_evidence
     watch_next = _watch_next(candidate, all_time_high, price_targets)
-    analyst_summary = _analyst_summary(candidate, confidence.score, research_priority, bullish_evidence, bearish_evidence)
+    analyst_summary = _analyst_summary(
+        candidate,
+        confidence.score,
+        research_priority,
+        bullish_evidence,
+        bearish_evidence,
+        fundamental_guardrails,
+    )
     return ScorePreview(
         candidate=candidate,
         data_mode=market_data_provider.data_mode,
@@ -136,6 +189,8 @@ def calculate_score_preview(
         analyst_summary=analyst_summary,
         bullish_evidence=bullish_evidence,
         bearish_evidence=bearish_evidence,
+        fundamental_guardrails=fundamental_guardrails,
+        fundamental_guardrail_adjustment=fundamental_guardrails.score_adjustment,
         watch_next=watch_next,
         component_scores=component_scores,
         component_explanations=_component_explanations(candidate, component_scores, bonus_penalty_explanations),
@@ -280,6 +335,113 @@ def _bonus_penalty_explanations(candidate: StockCandidate) -> tuple[str, ...]:
     return tuple(explanations)
 
 
+def _fundamental_guardrails(candidate: StockCandidate) -> FundamentalGuardrailAnalysis:
+    fundamentals = candidate.fundamentals
+    if fundamentals is None:
+        return FundamentalGuardrailAnalysis(
+            label="Insufficient Data",
+            net_cash=None,
+            net_cash_per_share=None,
+            quick_ratio=None,
+            shares_outstanding_change_percent=None,
+            confidence_impact=-8.0,
+            score_adjustment=0.0,
+            bullish_evidence=(),
+            bearish_evidence=("Fundamental data is incomplete or unavailable.",),
+            warnings=("Fundamental guardrails unavailable: missing fundamental data.",),
+            data_source="unavailable",
+        )
+
+    net_cash = fundamentals.net_cash
+    quick_ratio = fundamentals.quick_ratio
+    share_change = fundamentals.shares_outstanding_change_percent
+    warnings = list(fundamentals.fundamental_data_warnings)
+    missing_keys = sum(
+        1
+        for value in (
+            fundamentals.cash_and_equivalents,
+            fundamentals.total_debt,
+            quick_ratio,
+            fundamentals.shares_outstanding_current,
+            fundamentals.shares_outstanding_prior,
+        )
+        if value is None
+    )
+    if missing_keys:
+        warnings.append(f"Fundamental data incomplete: {missing_keys} key input(s) missing.")
+
+    market_cap = candidate.market_cap if candidate.has_market_cap and candidate.market_cap > 0 else None
+    leverage_ratio = abs(net_cash) / market_cap if net_cash is not None and net_cash < 0 and market_cap else None
+    severe_leverage = leverage_ratio is not None and leverage_ratio >= 0.50
+    meaningful_debt = leverage_ratio is not None and leverage_ratio >= 0.25
+    major_dilution = share_change is not None and share_change >= 0.20
+    meaningful_dilution = share_change is not None and share_change >= 0.10
+    stable_shares = share_change is not None and share_change <= 0.02
+
+    bullish: list[str] = []
+    bearish: list[str] = []
+    if net_cash is not None and net_cash > 0:
+        bullish.append("Balance sheet appears net cash positive.")
+    elif net_cash is not None and net_cash < 0:
+        bearish.append("Net debt is present and should be reviewed for recovery support.")
+    if quick_ratio is not None and quick_ratio >= 1.5:
+        bullish.append("Quick ratio supports near-term liquidity.")
+    elif quick_ratio is not None and quick_ratio < 1.0:
+        bearish.append("Quick ratio below 1.0 signals liquidity caution.")
+    if stable_shares:
+        bullish.append("Share count appears stable or declining.")
+    elif meaningful_dilution:
+        bearish.append("Share count appears to be expanding.")
+
+    if missing_keys >= 3:
+        label = "Insufficient Data"
+        confidence_impact = -8.0
+        score_adjustment = 0.0
+    elif (quick_ratio is not None and quick_ratio < 0.75) or severe_leverage or major_dilution:
+        label = "Red Flag"
+        confidence_impact = -15.0
+        score_adjustment = -5.0
+    elif (quick_ratio is not None and quick_ratio < 1.0) or meaningful_debt or meaningful_dilution:
+        label = "Caution"
+        confidence_impact = -8.0
+        score_adjustment = -2.0
+    elif net_cash is not None and net_cash > 0 and quick_ratio is not None and quick_ratio >= 1.5 and stable_shares:
+        label = "Strong Balance Sheet"
+        confidence_impact = 10.0
+        score_adjustment = 2.0
+    elif quick_ratio is not None and quick_ratio >= 1.0 and not major_dilution:
+        label = "Acceptable"
+        confidence_impact = 5.0
+        score_adjustment = 1.0
+    else:
+        label = "Insufficient Data"
+        confidence_impact = -6.0
+        score_adjustment = 0.0
+
+    if label in {"Strong Balance Sheet", "Acceptable"} and missing_keys == 0:
+        bullish.append("Fundamental data is complete enough for guardrail review.")
+    if missing_keys:
+        bearish.append("Fundamental data is incomplete.")
+    if not bullish:
+        bullish.append("No bullish fundamental guardrail is confirmed from available data.")
+    if not bearish:
+        bearish.append("No major bearish fundamental guardrail is confirmed from available data.")
+
+    return FundamentalGuardrailAnalysis(
+        label=label,
+        net_cash=net_cash,
+        net_cash_per_share=fundamentals.net_cash_per_share,
+        quick_ratio=quick_ratio,
+        shares_outstanding_change_percent=share_change,
+        confidence_impact=confidence_impact,
+        score_adjustment=score_adjustment,
+        bullish_evidence=tuple(dict.fromkeys(bullish)),
+        bearish_evidence=tuple(dict.fromkeys(bearish)),
+        warnings=tuple(dict.fromkeys(warnings)),
+        data_source=fundamentals.fundamental_data_source or "unavailable",
+    )
+
+
 def _price_targets(
     prices,
     has_price_history: bool,
@@ -327,6 +489,7 @@ def _confidence_analysis(
     price_target_lookback: str,
     data_quality_warnings: tuple[str, ...],
     price_targets: tuple[PriceTarget, ...],
+    fundamental_guardrails: FundamentalGuardrailAnalysis,
 ) -> ConfidenceAnalysis:
     score = 0.0
     drivers: list[str] = []
@@ -452,6 +615,24 @@ def _confidence_analysis(
     if _has_market_data_warning(data_quality_warnings):
         score -= min(10, len(data_quality_warnings) * 2)
 
+    score += fundamental_guardrails.confidence_impact
+    if fundamental_guardrails.label == "Strong Balance Sheet":
+        drivers.append("Strong Balance Sheet guardrail supports survivability and recovery evidence.")
+    elif fundamental_guardrails.label == "Acceptable":
+        drivers.append("Acceptable fundamental guardrail supports baseline recovery evidence.")
+    elif fundamental_guardrails.label == "Caution":
+        drags.append("Fundamental guardrail is Caution.")
+    elif fundamental_guardrails.label == "Red Flag":
+        drags.append("Fundamental guardrail is Red Flag.")
+    else:
+        drags.append("Insufficient fundamental data lowers evidence confidence.")
+    for item in fundamental_guardrails.bullish_evidence:
+        if "No bullish" not in item:
+            drivers.append(item)
+    for item in fundamental_guardrails.bearish_evidence:
+        if "No major bearish" not in item:
+            drags.append(item)
+
     score_cap = 100.0
     if len(valid_prices) < 252:
         score_cap = min(score_cap, 55.0)
@@ -556,15 +737,24 @@ def _analyst_summary(
     research_priority: str,
     bullish_evidence: tuple[str, ...],
     bearish_evidence: tuple[str, ...],
+    fundamental_guardrails: FundamentalGuardrailAnalysis,
 ) -> str:
     confidence_label = _confidence_label(confidence_score)
     signal = signal_label(candidate.score)
     primary_driver = bullish_evidence[0].removesuffix(".").lower() if bullish_evidence else "the current technical setup"
     primary_caution = bearish_evidence[0].removesuffix(".").lower() if bearish_evidence else "normal research review"
+    fundamental_clause = ""
+    if fundamental_guardrails.label in {"Strong Balance Sheet", "Acceptable"}:
+        fundamental_clause = f" Fundamental guardrails are {fundamental_guardrails.label}, supporting survivability evidence."
+    elif fundamental_guardrails.label in {"Caution", "Red Flag"}:
+        fundamental_clause = f" Fundamental guardrails are {fundamental_guardrails.label}, so recovery support needs extra review."
+    elif fundamental_guardrails.warnings:
+        fundamental_clause = " Fundamental data is incomplete, which lowers evidence confidence without automatically implying weakness."
     return (
         f"Atlas flags {candidate.symbol} as {signal} / {candidate.selection_label} with "
         f"{confidence_label} confidence and a {research_priority} research priority. "
         f"The setup is driven primarily by {primary_driver}, while the primary caution is {primary_caution}."
+        f"{fundamental_clause}"
     )
 
 

@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import math
 import os
 from abc import ABC, abstractmethod
 from datetime import date
 from pathlib import Path
 from typing import Iterable
 
-from atlas_os.greenrock.models import MockStock, PriceBar
+from atlas_os.greenrock.models import FundamentalSnapshot, MockStock, PriceBar
 from atlas_os.greenrock.sample_data import load_mock_stocks
 from atlas_os.greenrock.universe import load_greenrock_universes
 
@@ -108,6 +109,7 @@ class YFinanceMarketDataProvider(RealMarketDataProvider):
             raw_market_cap = info.get("marketCap")
             market_cap = float(raw_market_cap or 0)
             company_name = str(info.get("shortName") or info.get("longName") or ticker)
+            fundamentals = _fundamental_snapshot(info, ticker, market_cap)
             stocks.append(
                 MockStock(
                     symbol=ticker,
@@ -119,6 +121,7 @@ class YFinanceMarketDataProvider(RealMarketDataProvider):
                     has_volume_data=any(bar.volume > 0 for bar in bars[-252:]),
                     has_52_week_low=True,
                     skipped_reason="" if raw_market_cap else "missing_market_cap",
+                    fundamentals=fundamentals,
                 )
             )
 
@@ -193,3 +196,73 @@ def _to_date(value) -> date:
     if hasattr(value, "date"):
         return value.date()
     return date.fromisoformat(str(value)[:10])
+
+
+def _fundamental_snapshot(info: dict, ticker: str, market_cap: float) -> FundamentalSnapshot:
+    cash = _number(info.get("totalCash") or info.get("cash") or info.get("cashAndCashEquivalents"))
+    debt = _number(info.get("totalDebt"))
+    current_assets = _number(info.get("totalCurrentAssets") or info.get("currentAssets"))
+    inventory = _number(info.get("inventory"))
+    current_liabilities = _number(info.get("totalCurrentLiabilities") or info.get("currentLiabilities"))
+    shares_current = _number(info.get("sharesOutstanding"))
+    shares_prior = _number(
+        info.get("impliedSharesOutstanding")
+        or info.get("floatShares")
+        or info.get("sharesOutstandingPrior")
+    )
+    quick_ratio = _number(info.get("quickRatio"))
+    if quick_ratio is None and current_assets is not None and current_liabilities not in (None, 0):
+        quick_ratio = ((current_assets or 0) - (inventory or 0)) / current_liabilities
+
+    net_cash = cash - debt if cash is not None and debt is not None else None
+    net_cash_per_share = (
+        net_cash / shares_current
+        if net_cash is not None and shares_current not in (None, 0)
+        else None
+    )
+    share_change = (
+        (shares_current - shares_prior) / shares_prior
+        if shares_current is not None and shares_prior not in (None, 0)
+        else None
+    )
+    warnings: list[str] = []
+    if cash is None:
+        warnings.append("Cash and equivalents unavailable.")
+    if debt is None:
+        warnings.append("Total debt unavailable.")
+    if quick_ratio is None:
+        warnings.append("Quick ratio unavailable.")
+    if shares_current is None:
+        warnings.append("Current shares outstanding unavailable.")
+    if shares_prior is None:
+        warnings.append("Prior shares outstanding unavailable.")
+    if market_cap <= 0:
+        warnings.append("Market cap unavailable for leverage context.")
+
+    return FundamentalSnapshot(
+        cash_and_equivalents=cash,
+        total_debt=debt,
+        net_cash=net_cash,
+        net_cash_per_share=net_cash_per_share,
+        quick_ratio=quick_ratio,
+        current_assets=current_assets,
+        inventory=inventory,
+        current_liabilities=current_liabilities,
+        shares_outstanding_current=shares_current,
+        shares_outstanding_prior=shares_prior,
+        shares_outstanding_change_percent=share_change,
+        fundamental_data_source=f"yfinance:{ticker}",
+        fundamental_data_warnings=tuple(warnings),
+    )
+
+
+def _number(value) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(number) or math.isinf(number):
+        return None
+    return number

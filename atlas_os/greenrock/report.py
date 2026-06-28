@@ -179,8 +179,8 @@ def build_report_draft(
 
 def _candidate_table(candidates: tuple[StockCandidate, ...]) -> str:
     lines = [
-        "| Symbol | Company | Market Cap | GreenRock Score | Signal | Selection | RSI | 52w Low Proximity |",
-        "|---|---|---:|---:|---|---|---:|---:|",
+        "| Symbol | Company | Market Cap | GreenRock Score | Signal | Selection | Guardrail | Quick Ratio | Net Cash / Debt | Share Change | RSI | 52w Low Proximity |",
+        "|---|---|---:|---:|---|---|---|---:|---|---:|---:|---:|",
     ]
     for candidate in candidates:
         indicators = candidate.indicators
@@ -192,11 +192,15 @@ def _candidate_table(candidates: tuple[StockCandidate, ...]) -> str:
             f"{candidate.score:.2f} | "
             f"{signal_label(candidate.score)} | "
             f"{candidate.selection_label} | "
+            f"{_guardrail_label(candidate)} | "
+            f"{_quick_ratio(candidate)} | "
+            f"{_net_cash_debt(candidate)} | "
+            f"{_share_change(candidate)} | "
             f"{indicators.rsi_14:.1f} | "
             f"{indicators.low_proximity:.1%} |"
         )
     if not candidates:
-        lines.append("| No candidates available | - | - | - | - | - | - | - |")
+        lines.append("| No candidates available | - | - | - | - | - | - | - | - | - | - | - |")
     return "\n".join(lines)
 
 
@@ -228,6 +232,10 @@ def _screening_rationale(candidates: tuple[StockCandidate, ...]) -> str:
                     "- Moving average structure remains dislocated, with the 8 EMA below the 10 SMA "
                     "and the 50 DMA below the 150 DMA."
                 ),
+                (
+                    f"- Fundamental guardrail: {_guardrail_label(candidate)}; quick ratio "
+                    f"{_quick_ratio(candidate)}, {_net_cash_debt(candidate)}, share change {_share_change(candidate)}."
+                ),
                 "",
                 "**What Would Invalidate the Setup**",
                 "",
@@ -243,6 +251,45 @@ def _screening_rationale(candidates: tuple[StockCandidate, ...]) -> str:
             ]
         )
     return "\n".join(lines).strip()
+
+
+def _guardrail_label(candidate: StockCandidate) -> str:
+    fundamentals = candidate.fundamentals
+    if fundamentals is None:
+        return "Insufficient Data"
+    if fundamentals.quick_ratio is None or fundamentals.net_cash is None or fundamentals.shares_outstanding_change_percent is None:
+        return "Insufficient Data"
+    if fundamentals.quick_ratio < 0.75 or fundamentals.shares_outstanding_change_percent >= 0.20:
+        return "Red Flag"
+    if (
+        fundamentals.quick_ratio < 1.0
+        or fundamentals.shares_outstanding_change_percent >= 0.10
+        or (candidate.market_cap > 0 and fundamentals.net_cash < -candidate.market_cap * 0.25)
+    ):
+        return "Caution"
+    if fundamentals.net_cash > 0 and fundamentals.quick_ratio >= 1.5 and fundamentals.shares_outstanding_change_percent <= 0.02:
+        return "Strong Balance Sheet"
+    return "Acceptable"
+
+
+def _quick_ratio(candidate: StockCandidate) -> str:
+    if candidate.fundamentals is None or candidate.fundamentals.quick_ratio is None:
+        return "unavailable"
+    return f"{candidate.fundamentals.quick_ratio:.2f}"
+
+
+def _net_cash_debt(candidate: StockCandidate) -> str:
+    if candidate.fundamentals is None or candidate.fundamentals.net_cash is None:
+        return "unavailable"
+    value = candidate.fundamentals.net_cash
+    label = "Net Cash" if value >= 0 else "Net Debt"
+    return f"{label} ${abs(value) / 1_000_000_000:.2f}B"
+
+
+def _share_change(candidate: StockCandidate) -> str:
+    if candidate.fundamentals is None or candidate.fundamentals.shares_outstanding_change_percent is None:
+        return "unavailable"
+    return f"{candidate.fundamentals.shares_outstanding_change_percent:.2%}"
 
 
 def _data_mode_disclaimer(is_mock: bool, data_source: str) -> str:
