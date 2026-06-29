@@ -48,9 +48,12 @@ from atlas_os.greenrock.staging import (
     STAGING_BUCKET_TARGETS,
     add_staged_candidate,
     add_staged_scan_candidate,
+    enrich_staged_candidates,
     load_staged_candidates,
     move_staged_candidate,
     remove_staged_candidate,
+    row_missing_analytics,
+    staging_analytics_status,
     staging_readiness,
     trim_staged_bucket,
     update_staged_notes,
@@ -225,6 +228,10 @@ def create_app():
     @app.post("/greenrock/staging/trim", response_class=HTMLResponse)
     def greenrock_staging_trim(bucket: str = Form("")) -> str:
         return trim_greenrock_staging_bucket(bucket)
+
+    @app.post("/greenrock/staging/enrich", response_class=HTMLResponse)
+    def greenrock_staging_enrich() -> str:
+        return enrich_greenrock_staging_candidates()
 
     @app.post("/greenrock/watchlists/remove", response_class=HTMLResponse)
     def greenrock_watchlists_remove(ticker: str = Form(""), list_key: str = Form("")) -> str:
@@ -469,6 +476,8 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
         return WebResponse(200, save_greenrock_staging_notes(form.get("ticker", ""), form.get("notes", "")))
     if method == "POST" and route == "/greenrock/staging/trim":
         return WebResponse(200, trim_greenrock_staging_bucket(form.get("bucket", "")))
+    if method == "POST" and route == "/greenrock/staging/enrich":
+        return WebResponse(200, enrich_greenrock_staging_candidates())
     if method == "POST" and route == "/greenrock/staging/generate":
         return WebResponse(
             303,
@@ -966,6 +975,7 @@ def render_greenrock_staging(status_message: str | None = None) -> str:
     settings = get_settings()
     rows = load_staged_candidates(settings.output_dir)
     readiness = staging_report_readiness(settings.output_dir, allow_underfilled=True)
+    analytics = staging_analytics_status(settings.output_dir)
     readiness_cards = "".join(_staging_readiness_card(item) for item in staging_readiness(settings.output_dir))
     generation_status = _staging_generation_status(readiness.warnings)
     bucket_sections = "".join(_staging_bucket_section(bucket, label, rows) for bucket, label in STAGING_BUCKET_LABELS.items())
@@ -978,7 +988,17 @@ def render_greenrock_staging(status_message: str | None = None) -> str:
       <p>Stage names into the final report slate. Staging alone creates no reports, approvals, PDFs, emails, or publication artifacts.</p>
       <p><a class="button secondary" href="/greenrock/discovery">Discovery Workflow</a></p>
     </section>
-    <section class="board-meta">{readiness_cards}</section>
+    <section class="board-meta">{readiness_cards}{_staging_analytics_card(analytics)}</section>
+    <section class="panel enrichment-panel">
+      <div class="section-head">
+        <h2>Staging Analytics Enrichment</h2>
+        <span class="badge">{_safe(analytics.label)}</span>
+      </div>
+      {_staging_enrichment_status(analytics)}
+      <form method="post" action="/greenrock/staging/enrich" onsubmit="return confirm('Refresh staged candidates with current GreenRock analytics?');">
+        <button type="submit">Refresh / Enrich Staged Candidates</button>
+      </form>
+    </section>
     <section class="panel warning-panel">
       <div class="section-head">
         <h2>Generate Draft From Staging</h2>
@@ -1152,6 +1172,21 @@ def trim_greenrock_staging_bucket(bucket: str) -> str:
         status = f"{label} trimmed to top ranked staged candidates."
     except ValueError as error:
         status = f"Trim blocked: {error}"
+    return render_greenrock_staging(status)
+
+
+def enrich_greenrock_staging_candidates() -> str:
+    settings = get_settings()
+    try:
+        result = enrich_staged_candidates(settings.output_dir)
+    except MarketDataConfigurationError as error:
+        return render_greenrock_staging(f"Provider required: {error}")
+    status = f"Enrichment complete: {len(result.enriched)} enriched."
+    if result.skipped:
+        status += f" Skipped: {', '.join(result.skipped)}."
+    if result.errors:
+        status += " Warnings: " + " ".join(result.errors)
+    status += " No report, approval, PDF, email, publication, or external action was created."
     return render_greenrock_staging(status)
 
 
@@ -2262,6 +2297,12 @@ def _staging_readiness_card(item) -> str:
     """
 
 
+def _staging_analytics_card(status) -> str:
+    color = "green" if status.complete else "yellow"
+    detail = "All staged candidates have analytics." if status.complete else f"{status.missing_count} candidate(s) missing analytics."
+    return _attention_card(color, status.label, "Analytics Completeness", detail)
+
+
 def _trim_bucket_form(bucket: str) -> str:
     return f"""
     <form method="post" action="/greenrock/staging/trim" class="inline-trim-form" onsubmit="return confirm('Trim this bucket to the top ranked staged candidates?');">
@@ -2279,6 +2320,19 @@ def _staging_generation_status(warnings: tuple[str, ...]) -> str:
     <div class="setup-box">
       <p>Readiness warnings will be included in the draft if generated.</p>
       <ul class="compact-list">{items}</ul>
+    </div>
+    """
+
+
+def _staging_enrichment_status(status) -> str:
+    if status.complete:
+        return "<p class='subtle'>Complete: staged candidates have Score, Confidence, Evidence Agreement, Guardrail, Research Priority, and signal fields.</p>"
+    tickers = ", ".join(status.missing_tickers) if status.missing_tickers else "none"
+    return f"""
+    <div class="setup-box">
+      <p>Missing analytics: {status.missing_count} of {status.total} staged candidate(s).</p>
+      <p class="subtle">Provider required when fields are missing. Configure real market data or run <code>atlas greenrock staging enrich</code>.</p>
+      <p class="path">{_safe(tickers)}</p>
     </div>
     """
 
@@ -2330,9 +2384,10 @@ def _staging_candidate_row(row: dict[str, str]) -> str:
     source = _safe(row.get("source_list", "") or "manual")
     if row.get("source_scan_id"):
         source = f"{source}<br><span class='subtle'>{_safe(row.get('source_scan_id', ''))}</span>"
+    missing_badge = "<br><span class='badge pending'>Missing analytics</span>" if row_missing_analytics(row) else "<br><span class='badge approved'>Analytics complete</span>"
     return (
         "<tr>"
-        f"<td><strong>{_safe(ticker)}</strong><br>{_finviz_link(ticker)}</td>"
+        f"<td><strong>{_safe(ticker)}</strong><br>{_finviz_link(ticker)}{missing_badge}</td>"
         f"<td>{_safe(row.get('greenrock_score', ''))}</td>"
         f"<td>{_safe(row.get('confidence', ''))}</td>"
         f"<td>{_safe(row.get('evidence_agreement', ''))}</td>"

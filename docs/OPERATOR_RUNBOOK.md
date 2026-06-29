@@ -153,11 +153,17 @@ Report Candidate Staging stores local rows at `.atlas/output/greenrock/staging/r
 To generate from staging, use `/greenrock/staging`, confirm the staging draft, and review the pending approval from `/greenrock/reports/<run_id>/review`. CLI equivalent:
 
 ```bash
+atlas greenrock staging ready
+atlas greenrock staging enrich
 atlas greenrock report-from-staging
 atlas greenrock report-from-staging --allow-underfilled
 ```
 
 Without `--allow-underfilled`, Atlas blocks underfilled staging buckets. With it, Atlas creates a normal approval-gated draft and includes readiness warnings. Overfilled staging buckets show guidance to select the final 1/11/11 and include a confirmed trim-to-top-ranked helper. Scanner populations do not automatically feed reports; staged candidates are the curated bridge.
+
+Missing analytics are a separate readiness issue from underfilled sections. Manually staged names or list-sourced names may need Score, Confidence, Evidence Agreement, Guardrail, Research Priority, and signal fields refreshed before report generation. Run `atlas greenrock staging enrich` or use the browser **Refresh / Enrich Staged Candidates** button. If the real provider is missing, enrichment fails cleanly with setup instructions and creates no report, approval, artifact, PDF, email, or publication.
+
+`atlas greenrock report-from-staging` blocks when analytics are missing unless `--allow-missing-analytics` is explicitly supplied. That override should only be used for intentional drafts that include data warnings.
 
 The GreenRock Report Review Center shows run metadata, data mode, selection mode, candidate source, source lists, scan IDs, candidate tables, evidence notes, approval status, and PDF status in one browser page. Approve/reject controls still open a confirmation page, and PDF export remains blocked until approval.
 

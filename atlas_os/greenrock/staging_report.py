@@ -19,8 +19,12 @@ from atlas_os.greenrock.staging import (
     LARGE_BUCKET,
     MEGA_BUCKET,
     SMALL_MID_BUCKET,
+    STAGING_ANALYTIC_FIELDS,
     STAGING_BUCKET_LABELS,
+    enrich_staged_candidates,
     load_staged_candidates,
+    row_missing_analytics,
+    staging_analytics_status,
     staging_readiness,
 )
 
@@ -51,20 +55,37 @@ def staging_report_readiness(output_dir: Path, allow_underfilled: bool = False) 
     return StagingReportReadiness(can_generate=not blocking, warnings=warnings)
 
 
+def staging_report_analytics_readiness(output_dir: Path) -> StagingReportReadiness:
+    status = staging_analytics_status(output_dir)
+    warnings = tuple(f"{ticker} is missing analytics." for ticker in status.missing_tickers)
+    return StagingReportReadiness(can_generate=status.complete, warnings=warnings)
+
+
 def run_greenrock_staging_report_workflow(
     connection: Connection,
     output_dir: Path,
     allow_underfilled: bool = False,
+    allow_missing_analytics: bool = False,
 ) -> tuple[WorkflowRun, tuple[Artifact, ...], ApprovalRequest | None]:
     readiness = staging_report_readiness(output_dir, allow_underfilled=allow_underfilled)
     if not readiness.can_generate:
         raise ValueError("Staging report is underfilled. Re-run with allow_underfilled=True to draft anyway.")
+    analytics_readiness = staging_report_analytics_readiness(output_dir)
+    analytics_warnings = analytics_readiness.warnings
+    if not analytics_readiness.can_generate and not allow_missing_analytics:
+        enrichment = enrich_staged_candidates(output_dir)
+        analytics_readiness = staging_report_analytics_readiness(output_dir)
+        analytics_warnings = analytics_readiness.warnings + enrichment.errors
+        if not analytics_readiness.can_generate:
+            raise ValueError(
+                "Staging candidates need enrichment. Run atlas greenrock staging enrich or configure market data provider."
+            )
     runner = WorkflowRunner(
         connection=connection,
         division="greenrock",
         workflow_name="greenrock.staging-report",
         steps=(
-            WorkflowStep("stage_candidates", _stage_candidates_step(output_dir, readiness.warnings)),
+            WorkflowStep("stage_candidates", _stage_candidates_step(output_dir, readiness.warnings + analytics_warnings)),
             WorkflowStep("draft_report", _draft_staging_report),
         ),
         output_dir=output_dir,
@@ -231,6 +252,10 @@ def build_staging_report_markdown(run_id: str, rows: tuple[dict[str, str], ...],
         lines.extend(f"- {warning}" for warning in warnings)
     else:
         lines.append("- Staging targets are ready.")
+    data_warnings = _staging_data_warnings(rows)
+    if data_warnings:
+        lines.extend(["", "## Staging Data Warnings", ""])
+        lines.extend(f"- {warning}" for warning in data_warnings)
     lines.extend(
         [
             "",
@@ -313,6 +338,15 @@ def _candidate_signal_summaries(rows: tuple[dict[str, str], ...]) -> str:
             ]
         )
     return "\n".join(lines).strip()
+
+
+def _staging_data_warnings(rows: tuple[dict[str, str], ...]) -> tuple[str, ...]:
+    warnings = []
+    for row in rows:
+        missing = [field.replace("_", " ") for field in STAGING_ANALYTIC_FIELDS if not row.get(field, "").strip()]
+        if row_missing_analytics(row):
+            warnings.append(f"{row.get('ticker', '')}: missing {', '.join(missing)}.")
+    return tuple(warnings)
 
 
 def _logo_lines() -> list[str]:

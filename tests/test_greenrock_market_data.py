@@ -31,10 +31,12 @@ from atlas_os.greenrock.scanner import load_promotion_metadata, run_population_s
 from atlas_os.greenrock.screener import run_screen
 from atlas_os.greenrock.staging import (
     add_staged_candidate,
+    enrich_staged_candidates,
     load_staged_candidates,
     move_staged_candidate,
     remove_staged_candidate,
     save_staged_candidates,
+    staging_analytics_status,
     staging_readiness,
 )
 from atlas_os.greenrock.staging_report import run_greenrock_staging_report_workflow
@@ -626,6 +628,8 @@ class GreenRockMarketDataTests(unittest.TestCase):
         self.assertIn("Small/Mid Candidate", response.body)
         self.assertIn("Generate Draft From Staging", response.body)
         self.assertIn("/greenrock/staging/generate/confirm", response.body)
+        self.assertIn("Analytics Completeness", response.body)
+        self.assertIn("Refresh / Enrich Staged Candidates", response.body)
 
     def test_staging_stores_candidate_metadata_from_scan(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -662,6 +666,77 @@ class GreenRockMarketDataTests(unittest.TestCase):
         self.assertEqual(moved["staged_bucket"], "mega")
         self.assertTrue(removed)
         self.assertEqual(remaining, ())
+
+    def test_manual_staged_ticker_starts_with_missing_analytics(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            row = add_staged_candidate(root / "output", "LC01", "research")
+            status = staging_analytics_status(root / "output")
+
+        self.assertEqual(row["greenrock_score"], "")
+        self.assertEqual(row["confidence"], "")
+        self.assertEqual(row["evidence_agreement"], "")
+        self.assertEqual(row["guardrail"], "")
+        self.assertEqual(row["research_priority"], "")
+        self.assertEqual(status.missing_count, 1)
+        self.assertEqual(status.missing_tickers, ("LC01",))
+
+    def test_staging_enrichment_fills_missing_analytics_with_fake_provider(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            add_staged_candidate(root / "output", "LC01", "research")
+            result = enrich_staged_candidates(root / "output", provider=FakeMarketDataProvider())
+            staged = load_staged_candidates(root / "output")[0]
+
+        self.assertEqual(result.enriched, ("LC01",))
+        self.assertEqual(result.skipped, ())
+        self.assertNotEqual(staged["greenrock_score"], "")
+        self.assertNotEqual(staged["confidence"], "")
+        self.assertNotEqual(staged["evidence_agreement"], "")
+        self.assertNotEqual(staged["guardrail"], "")
+        self.assertNotEqual(staged["research_priority"], "")
+        self.assertNotEqual(staged["top_bullish_signal"], "")
+        self.assertNotEqual(staged["top_caution_signal"], "")
+
+    def test_cli_staging_enrich_fails_safely_without_provider(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {
+                "ATLAS_DB_PATH": str(root / "atlas.db"),
+                "ATLAS_OUTPUT_DIR": str(root / "output"),
+                "ATLAS_MARKET_DATA_PROVIDER": "",
+            }
+            with patch.dict("os.environ", env, clear=False):
+                add_staged_candidate(root / "output", "LC01", "research")
+                output, exit_code = _run_cli_raw(["greenrock", "staging", "enrich"])
+                with connect(initialize_database(root / "atlas.db")) as connection:
+                    approvals = list_approvals(connection)
+                    artifacts = list_artifacts(connection)
+                    runs = list_workflow_runs(connection)
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("GreenRock staging enrichment", output)
+        self.assertIn("skipped_tickers: LC01", output)
+        self.assertIn("setup: export ATLAS_MARKET_DATA_PROVIDER=yfinance", output)
+        self.assertEqual(approvals, ())
+        self.assertEqual(artifacts, ())
+        self.assertEqual(runs, ())
+
+    def test_browser_staging_page_shows_missing_analytics_status(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {
+                "ATLAS_DB_PATH": str(root / "atlas.db"),
+                "ATLAS_OUTPUT_DIR": str(root / "output"),
+            }
+            with patch.dict("os.environ", env, clear=False):
+                add_staged_candidate(root / "output", "LC01", "research")
+                response = dispatch_request("GET", "/greenrock/staging")
+
+        self.assertEqual(response.status, 200)
+        self.assertIn("Missing analytics", response.body)
+        self.assertIn("Provider required", response.body)
+        self.assertIn("LC01", response.body)
 
     def test_staging_readiness_detects_underfilled_ready_and_overfilled(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -760,6 +835,8 @@ class GreenRockMarketDataTests(unittest.TestCase):
         self.assertIn("GreenRock staging candidate moved", move_output)
         self.assertIn("bucket: Large Cap Candidate", move_output)
         self.assertIn("GreenRock staging readiness", ready_output)
+        self.assertIn("analytics_completeness:", ready_output)
+        self.assertIn("missing_count: 1", ready_output)
         self.assertIn("AAPL large", list_output)
         self.assertIn("GreenRock staging candidate removed", remove_output)
 
@@ -773,6 +850,7 @@ class GreenRockMarketDataTests(unittest.TestCase):
                     connection,
                     root / "output",
                     allow_underfilled=True,
+                    allow_missing_analytics=True,
                 )
                 approvals = list_approvals(connection)
                 stored_artifacts = list_artifacts(connection)
@@ -792,6 +870,7 @@ class GreenRockMarketDataTests(unittest.TestCase):
         self.assertIn("**Candidate Source:** Staging-sourced", markdown)
         self.assertIn("SOFI", markdown)
         self.assertIn("review note", markdown)
+        self.assertIn("## Staging Data Warnings", markdown)
 
     def test_staging_draft_generation_blocks_underfilled_without_allow(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -815,6 +894,28 @@ class GreenRockMarketDataTests(unittest.TestCase):
         self.assertEqual(artifacts, ())
         self.assertEqual(runs, ())
 
+    def test_report_from_staging_blocks_when_analytics_missing_without_override(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {
+                "ATLAS_DB_PATH": str(root / "atlas.db"),
+                "ATLAS_OUTPUT_DIR": str(root / "output"),
+            }
+            with patch.dict("os.environ", env, clear=False):
+                add_staged_candidate(root / "output", "SOFI", "small_mid")
+                output, exit_code = _run_cli_raw(["greenrock", "report-from-staging", "--allow-underfilled"])
+                with connect(initialize_database(root / "atlas.db")) as connection:
+                    approvals = list_approvals(connection)
+                    artifacts = list_artifacts(connection)
+                    runs = list_workflow_runs(connection)
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("reason: staging candidates need enrichment", output)
+        self.assertIn("atlas greenrock staging enrich", output)
+        self.assertEqual(approvals, ())
+        self.assertEqual(artifacts, ())
+        self.assertEqual(runs, ())
+
     def test_cli_report_from_staging_allow_underfilled(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -824,7 +925,7 @@ class GreenRockMarketDataTests(unittest.TestCase):
             }
             with patch.dict("os.environ", env, clear=False):
                 add_staged_candidate(root / "output", "SOFI", "small_mid")
-                output = _run_cli(["greenrock", "report-from-staging", "--allow-underfilled"])
+                output = _run_cli(["greenrock", "report-from-staging", "--allow-underfilled", "--allow-missing-analytics"])
 
         self.assertIn("GreenRock staging report draft created", output)
         self.assertIn("selection_mode: STAGING", output)
@@ -838,7 +939,26 @@ class GreenRockMarketDataTests(unittest.TestCase):
                 "ATLAS_OUTPUT_DIR": str(root / "output"),
             }
             with patch.dict("os.environ", env, clear=False):
-                add_staged_candidate(root / "output", "SOFI", "small_mid")
+                save_staged_candidates(
+                    root / "output",
+                    (
+                        {
+                            "ticker": "SOFI",
+                            "staged_bucket": "small_mid",
+                            "source_list": "manual",
+                            "source_scan_id": "",
+                            "greenrock_score": "81.2",
+                            "confidence": "74.5",
+                            "evidence_agreement": "79.0",
+                            "guardrail": "Mixed",
+                            "research_priority": "This Week",
+                            "top_bullish_signal": "Volume acceleration",
+                            "top_caution_signal": "Mixed technical signals",
+                            "staged_at": "2026-06-28T00:00:00+00:00",
+                            "notes": "review",
+                        },
+                    ),
+                )
                 confirmation = dispatch_request("GET", "/greenrock/staging/generate/confirm")
                 response = dispatch_request("POST", "/greenrock/staging/generate", "allow_underfilled=yes")
                 with connect(initialize_database(root / "atlas.db")) as connection:

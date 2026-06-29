@@ -43,12 +43,18 @@ from atlas_os.greenrock.screener import run_screen
 from atlas_os.greenrock.staging import (
     STAGING_BUCKET_LABELS,
     add_staged_candidate,
+    enrich_staged_candidates,
     load_staged_candidates,
     move_staged_candidate,
     remove_staged_candidate,
+    staging_analytics_status,
     staging_readiness,
 )
-from atlas_os.greenrock.staging_report import run_greenrock_staging_report_workflow, staging_report_readiness
+from atlas_os.greenrock.staging_report import (
+    run_greenrock_staging_report_workflow,
+    staging_report_analytics_readiness,
+    staging_report_readiness,
+)
 from atlas_os.greenrock.universe import (
     LARGE_CAP_UNIVERSE,
     MEGA_ROCK_UNIVERSE,
@@ -159,6 +165,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--allow-underfilled",
         action="store_true",
         help="Allow a staging-sourced draft when report buckets are underfilled.",
+    )
+    report_from_staging.add_argument(
+        "--allow-missing-analytics",
+        action="store_true",
+        help="Allow a staging-sourced draft when staged candidate analytics are still missing.",
     )
     latest_report = greenrock_subparsers.add_parser(
         "latest-report",
@@ -314,6 +325,9 @@ def build_parser() -> argparse.ArgumentParser:
     staging_remove = staging_subparsers.add_parser("remove", help="Remove a ticker from staging.")
     staging_remove.add_argument("ticker")
     staging_subparsers.add_parser("ready", help="Show staging readiness versus report slot targets.")
+    staging_enrich = staging_subparsers.add_parser("enrich", help="Refresh staged candidates with current GreenRock analytics.")
+    staging_enrich.add_argument("--ticker", default=None, help="Only enrich one staged ticker.")
+    staging_enrich.add_argument("--bucket", choices=("mega", "large", "small_mid", "research", "excluded"), default=None)
 
     return parser
 
@@ -413,7 +427,7 @@ def run_greenrock_report_draft(data_mode: str = "mock", selection_mode: str | No
     return 0
 
 
-def run_greenrock_report_from_staging(allow_underfilled: bool = False) -> int:
+def run_greenrock_report_from_staging(allow_underfilled: bool = False, allow_missing_analytics: bool = False) -> int:
     settings = get_settings()
     readiness = staging_report_readiness(settings.output_dir, allow_underfilled=allow_underfilled)
     if not readiness.can_generate:
@@ -425,12 +439,24 @@ def run_greenrock_report_from_staging(allow_underfilled: bool = False) -> int:
         print("Run with --allow-underfilled to create an approval-gated draft anyway.")
         print("No report, approval, PDF, email, publication, or external action was created.")
         return 1
+    analytics_readiness = staging_report_analytics_readiness(settings.output_dir)
+    if not analytics_readiness.can_generate and not allow_missing_analytics:
+        print("GreenRock staging report blocked")
+        print("reason: staging candidates need enrichment")
+        print("warnings:")
+        for warning in analytics_readiness.warnings:
+            print(f"  {warning}")
+        print("Run atlas greenrock staging enrich or configure market data provider.")
+        print("Use --allow-missing-analytics only for an intentional draft with explicit data warnings.")
+        print("No report, approval, PDF, email, publication, or external action was created.")
+        return 1
     db_path = initialize_database(settings.db_path)
     with connect(db_path) as connection:
         workflow_run, artifacts, approval = run_greenrock_staging_report_workflow(
             connection,
             settings.output_dir,
             allow_underfilled=allow_underfilled,
+            allow_missing_analytics=allow_missing_analytics,
         )
     print("GreenRock staging report draft created")
     print(f"run_id: {workflow_run.run_id}")
@@ -844,13 +870,36 @@ def run_greenrock_staging(command: str | None, ticker: str | None = None, bucket
             for item in staging_readiness(settings.output_dir):
                 target = item.target if item.target is not None else "review"
                 print(f"{item.label}: {item.count}/{target} {item.status}")
+            analytics = staging_analytics_status(settings.output_dir)
+            print("analytics_completeness:")
+            print(f"  status: {analytics.label}")
+            print(f"  missing_count: {analytics.missing_count}")
+            print(f"  missing_tickers: {', '.join(analytics.missing_tickers) if analytics.missing_tickers else 'none'}")
+            return 0
+        if command == "enrich":
+            result = enrich_staged_candidates(settings.output_dir, ticker=ticker, bucket=bucket)
+            print("GreenRock staging enrichment")
+            print(f"enriched_count: {len(result.enriched)}")
+            print(f"enriched_tickers: {', '.join(result.enriched) if result.enriched else 'none'}")
+            print(f"skipped_tickers: {', '.join(result.skipped) if result.skipped else 'none'}")
+            print("reasons:")
+            if result.errors:
+                for error in result.errors:
+                    print(f"  {error}")
+            else:
+                print("  none")
+            print("No report, approval, PDF, email, publication, or external action was created.")
+            if result.errors and not result.enriched:
+                print("setup: export ATLAS_MARKET_DATA_PROVIDER=yfinance")
+                print('setup: python3 -m pip install -e ".[market-data]"')
+                return 1
             return 0
     except ValueError as error:
         print("GreenRock staging blocked")
         print(f"reason: {error}")
         print("No report, approval, PDF, email, publication, or external action was created.")
         return 1
-    print("Choose a staging command: list, add, move, remove, or ready.")
+    print("Choose a staging command: list, add, move, remove, ready, or enrich.")
     return 1
 
 
@@ -1573,7 +1622,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.greenrock_command == "report-draft":
             return run_greenrock_report_draft(args.data, args.selection)
         if args.greenrock_command == "report-from-staging":
-            return run_greenrock_report_from_staging(args.allow_underfilled)
+            return run_greenrock_report_from_staging(args.allow_underfilled, args.allow_missing_analytics)
         if args.greenrock_command == "latest-report":
             return run_greenrock_latest_report(args.print_contents)
         if args.greenrock_command == "latest-run":

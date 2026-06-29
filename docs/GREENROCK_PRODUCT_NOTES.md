@@ -19,6 +19,9 @@
 - Keep `/greenrock/watchlists` focused on curated research queues: ticker counts, tickers, Finviz links, promotion source, latest promoted timestamp when promotion metadata exists, and confirmed manual removal.
 - Store promotion metadata as a sidecar CSV so existing watchlist/universe CSV files remain simple ticker lists.
 - Keep `/greenrock/staging` as the final human curation layer before approval-gated report generation. It should allow bucket moves, removals, notes, readiness checks, and source context without creating report runs, approvals, PDFs, emails, publications, or client-facing artifacts.
+- Require staged candidates to have current analytics before clean staging-sourced report generation. Manual and list-sourced staged names may need enrichment for Score, Confidence, Evidence Agreement, Guardrail, Research Priority, and top signal fields.
+- Keep staging enrichment preview-only and local-only. `atlas greenrock staging enrich` and the browser refresh button may update the local staging CSV but must not create workflow runs, reports, approvals, PDFs, emails, publications, or client-facing artifacts.
+- Keep underfilled section readiness separate from missing analytics readiness. Underfilled buckets are slot-count warnings; missing analytics are data-quality warnings and should block clean report generation unless explicitly overridden.
 - Keep staging buckets explicit: Mega Rock Candidate, Large Cap Candidate, Small/Mid Candidate, Research Only, and Excluded. Count targets should remain visible for the three report candidate buckets.
 - Staging-sourced report generation may create normal workflow runs, report artifacts, and pending approvals only after explicit operator confirmation. It must not publish, email, or export a PDF automatically.
 - Scanner populations should not automatically feed reports. Staging is the preferred curated bridge into approval-gated draft generation.

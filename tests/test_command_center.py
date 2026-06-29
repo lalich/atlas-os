@@ -559,7 +559,7 @@ class CommandCenterTests(unittest.TestCase):
     def test_greenrock_report_review_page_renders_staging_evidence_notes(self) -> None:
         with _isolated_env() as root:
             add_staged_candidate(root / "output", "SOFI", "small_mid", notes="operator staging note")
-            main(["greenrock", "report-from-staging", "--allow-underfilled"])
+            main(["greenrock", "report-from-staging", "--allow-underfilled", "--allow-missing-analytics"])
             with connect(root / "atlas.db") as connection:
                 run_id = list_workflow_runs(connection)[0].run_id
             response = dispatch_request("GET", f"/greenrock/reports/{run_id}/review")

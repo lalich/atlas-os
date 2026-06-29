@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from atlas_os.greenrock.market_data import MarketDataConfigurationError, MarketDataProvider
+from atlas_os.greenrock.score import calculate_score_preview
 from atlas_os.greenrock.scanner import latest_scan, load_promotion_metadata, load_scan
 from atlas_os.greenrock.universe import LARGE_CAP_UNIVERSE, MEGA_ROCK_UNIVERSE, SMALL_MID_CAP_UNIVERSE
 
@@ -47,6 +49,16 @@ STAGING_HEADERS = [
     "notes",
 ]
 
+STAGING_ANALYTIC_FIELDS = (
+    "greenrock_score",
+    "confidence",
+    "evidence_agreement",
+    "guardrail",
+    "research_priority",
+    "top_bullish_signal",
+    "top_caution_signal",
+)
+
 
 @dataclass(frozen=True)
 class StagingReadiness:
@@ -55,6 +67,28 @@ class StagingReadiness:
     count: int
     target: int | None
     status: str
+
+
+@dataclass(frozen=True)
+class StagingAnalyticsStatus:
+    total: int
+    missing_count: int
+    missing_tickers: tuple[str, ...]
+
+    @property
+    def complete(self) -> bool:
+        return self.missing_count == 0
+
+    @property
+    def label(self) -> str:
+        return "Complete" if self.complete else "Missing analytics"
+
+
+@dataclass(frozen=True)
+class StagingEnrichmentResult:
+    enriched: tuple[str, ...]
+    skipped: tuple[str, ...]
+    errors: tuple[str, ...]
 
 
 def staging_path(output_dir: Path) -> Path:
@@ -230,6 +264,72 @@ def staging_readiness(output_dir: Path) -> tuple[StagingReadiness, ...]:
     return tuple(statuses)
 
 
+def staging_analytics_status(
+    output_dir: Path,
+    ticker: str | None = None,
+    bucket: str | None = None,
+) -> StagingAnalyticsStatus:
+    rows = _filtered_rows(load_staged_candidates(output_dir), ticker=ticker, bucket=bucket)
+    missing = tuple(row["ticker"] for row in rows if row_missing_analytics(row))
+    return StagingAnalyticsStatus(total=len(rows), missing_count=len(missing), missing_tickers=missing)
+
+
+def row_missing_analytics(row: dict[str, str]) -> bool:
+    return any(not row.get(field, "").strip() for field in STAGING_ANALYTIC_FIELDS)
+
+
+def enrich_staged_candidates(
+    output_dir: Path,
+    ticker: str | None = None,
+    bucket: str | None = None,
+    provider: MarketDataProvider | None = None,
+) -> StagingEnrichmentResult:
+    rows = list(load_staged_candidates(output_dir))
+    targets = {
+        row["ticker"]
+        for row in _filtered_rows(tuple(rows), ticker=ticker, bucket=bucket)
+        if row_missing_analytics(row)
+    }
+    enriched: list[str] = []
+    skipped: list[str] = []
+    errors: list[str] = []
+    if not targets:
+        return StagingEnrichmentResult((), (), ())
+
+    provider_cache = provider
+    for index, row in enumerate(rows):
+        symbol = row["ticker"]
+        if symbol not in targets:
+            continue
+        try:
+            preview = calculate_score_preview(
+                symbol,
+                data_mode="real",
+                output_dir=output_dir,
+                provider=provider_cache,
+            )
+        except (MarketDataConfigurationError, ValueError) as error:
+            skipped.append(symbol)
+            errors.append(f"{symbol}: {error}")
+            continue
+        rows[index] = _normalize_row(
+            dict(row)
+            | {
+                "greenrock_score": f"{preview.candidate.score:.2f}",
+                "confidence": f"{preview.confidence_score:.2f}",
+                "evidence_agreement": f"{preview.evidence_agreement_score:.2f}",
+                "guardrail": preview.fundamental_guardrails.label,
+                "research_priority": preview.research_priority,
+                "top_bullish_signal": preview.bullish_evidence[0] if preview.bullish_evidence else "none",
+                "top_caution_signal": preview.bearish_evidence[0] if preview.bearish_evidence else "none",
+            }
+        )
+        enriched.append(symbol)
+    if enriched:
+        save_staged_candidates(output_dir, tuple(rows))
+    return StagingEnrichmentResult(tuple(enriched), tuple(skipped), tuple(errors))
+
+
 def _candidate_metadata(output_dir: Path, ticker: str, source_list: str) -> dict[str, str]:
     metadata = _metadata_from_latest_scan(output_dir, ticker)
     if metadata:
@@ -329,6 +429,21 @@ def _float(value: str) -> float:
         return float(value)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _filtered_rows(
+    rows: tuple[dict[str, str], ...],
+    ticker: str | None = None,
+    bucket: str | None = None,
+) -> tuple[dict[str, str], ...]:
+    normalized_ticker = _normalize_ticker(ticker or "")
+    normalized_bucket = _normalize_bucket(bucket) if bucket else ""
+    return tuple(
+        row
+        for row in rows
+        if (not normalized_ticker or row["ticker"] == normalized_ticker)
+        and (not normalized_bucket or row["staged_bucket"] == normalized_bucket)
+    )
 
 
 def _normalize_bucket(bucket: str) -> str:

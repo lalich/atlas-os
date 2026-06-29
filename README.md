@@ -144,12 +144,15 @@ atlas greenrock staging add SOFI --bucket small_mid
 atlas greenrock staging move SOFI --bucket research
 atlas greenrock staging remove SOFI
 atlas greenrock staging ready
+atlas greenrock staging enrich
 atlas greenrock report-from-staging --allow-underfilled
 ```
 
 Staging stores candidates locally at `.atlas/output/greenrock/staging/report_candidates.csv` with bucket, source, score, confidence, Evidence Agreement, Guardrail, Research Priority, top signals, timestamp, and operator notes. Staging does not create reports, approvals, PDFs, emails, publications, or client-facing artifacts.
 
-`atlas greenrock report-from-staging` creates the preferred approval-gated GreenRock draft from staged candidates. It blocks underfilled sections by default; use `--allow-underfilled` to generate a draft that clearly shows readiness warnings. Scanner populations do not automatically feed reports: staged candidates are the curated bridge. Browser review is available at `/greenrock/reports/<run_id>/review`.
+Staged candidates should have analytics before clean report generation. Use `atlas greenrock staging enrich` to refresh missing Score, Confidence, Evidence Agreement, Guardrail, Research Priority, and top signal fields from the configured real provider. `atlas greenrock staging ready` reports both section fill status and analytics completeness.
+
+`atlas greenrock report-from-staging` creates the preferred approval-gated GreenRock draft from staged candidates. It blocks underfilled sections by default; use `--allow-underfilled` to generate a draft that clearly shows readiness warnings. Missing analytics are a separate gate: run `atlas greenrock staging enrich` first, or use `--allow-missing-analytics` only for an intentional draft with explicit data warnings. Scanner populations do not automatically feed reports: staged candidates are the curated bridge. Browser review is available at `/greenrock/reports/<run_id>/review`.
 
 GreenRock branding uses the local asset path `atlas_os/static/greenrock_logo.png`. If the logo file is missing, web pages and report/PDF generation continue without failing.
 
@@ -261,7 +264,7 @@ Real-data market-cap sections are:
 - Large Cap: $10B to below $1T.
 - Small/Mid: below $10B.
 
-Reports clearly state `Data Mode: MOCK` or `Data Mode: REAL` and show the data source, such as `yfinance:greenrock_watchlists`. Real-data reports are still draft-only and blocked until human approval. If a section produces fewer than its target picks, the report and Picks Board show a data quality warning.
+Reports clearly state `Data Mode: MOCK` or `Data Mode: REAL` and show the data source, such as `yfinance:greenrock_watchlists`. Real-data reports are still draft-only and blocked until human approval. If a section produces fewer than its target picks, the report and Picks Board show a data quality warning. For staging-sourced reports, missing analytics are treated separately from underfilled sections and should be resolved with `atlas greenrock staging enrich`.
 
 ## Approval Queue
 

@@ -5,6 +5,8 @@ Use this checklist for the local GreenRock monthly report workflow. Preferred pa
 ## 1. Generate Draft
 
 ```bash
+atlas greenrock staging ready
+atlas greenrock staging enrich
 atlas greenrock report-from-staging
 atlas greenrock report-from-staging --allow-underfilled
 ```
@@ -16,6 +18,7 @@ atlas greenrock report-draft
 ```
 
 - Confirm the command completed successfully.
+- Confirm staged analytics are complete before report generation. Underfilled sections and missing analytics are different warnings.
 - Record the `run_id` and `approval_id`.
 - Confirm the report path is run-specific.
 - Confirm the Candidate Source Disclosure identifies staging, watchlist, scanner/population, mock, or real-data sourcing as applicable.
@@ -33,6 +36,7 @@ atlas greenrock latest-report --print
 - Confirm data mode and data source are clearly labeled.
 - Confirm candidate source, selection mode, source lists, and scan IDs are clearly labeled where applicable.
 - If using staging mode, confirm readiness warnings, staging notes, source lists, and scan IDs appear only where available.
+- If using `--allow-missing-analytics`, confirm each affected ticker has an explicit staging data warning.
 - Confirm the main report tables stay readable and move long bullish/caution signals into candidate notes or an appendix.
 - Confirm empty staged buckets show a clean sentence rather than placeholder rows.
 - Confirm green-filled table headers render with yellow text in Markdown/HTML/PDF views where styling applies.
