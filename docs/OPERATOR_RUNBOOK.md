@@ -115,6 +115,7 @@ atlas greenrock scan --population all
 atlas greenrock scan-promote <scan_id> SOFI --list watchlist
 atlas greenrock staging add SOFI --bucket small_mid
 atlas greenrock staging ready
+atlas greenrock report-from-staging --allow-underfilled
 ```
 
 Browser:
@@ -148,6 +149,15 @@ Promotion saves only to local GreenRock list CSVs. It is duplicate-safe and bloc
 GreenRock branding expects the local logo at `atlas_os/static/greenrock_logo.png`. If it is missing, browser pages and report/PDF generation continue without failing.
 
 Report Candidate Staging stores local rows at `.atlas/output/greenrock/staging/report_candidates.csv`. Buckets are Mega Rock Candidate, Large Cap Candidate, Small/Mid Candidate, Research Only, and Excluded. The readiness indicators compare staged counts against the current report targets: Mega Rock 1, Large Cap 11, Small/Mid 11. Staging alone does not create report runs, approvals, PDFs, emails, or publication artifacts.
+
+To generate from staging, use `/greenrock/staging`, confirm the staging draft, and review the pending approval. CLI equivalent:
+
+```bash
+atlas greenrock report-from-staging
+atlas greenrock report-from-staging --allow-underfilled
+```
+
+Without `--allow-underfilled`, Atlas blocks underfilled staging buckets. With it, Atlas creates a normal approval-gated draft and includes readiness warnings. Scanner populations do not automatically feed reports; promoted and staged candidates are the curated bridge.
 
 ## Score Any Ticker
 

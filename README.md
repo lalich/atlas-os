@@ -143,9 +143,12 @@ atlas greenrock staging add SOFI --bucket small_mid
 atlas greenrock staging move SOFI --bucket research
 atlas greenrock staging remove SOFI
 atlas greenrock staging ready
+atlas greenrock report-from-staging --allow-underfilled
 ```
 
 Staging stores candidates locally at `.atlas/output/greenrock/staging/report_candidates.csv` with bucket, source, score, confidence, Evidence Agreement, Guardrail, Research Priority, top signals, timestamp, and operator notes. Staging does not create reports, approvals, PDFs, emails, publications, or client-facing artifacts.
+
+`atlas greenrock report-from-staging` creates a normal approval-gated draft from staged candidates. It blocks underfilled sections by default; use `--allow-underfilled` to generate a draft that clearly shows readiness warnings. Scanner populations do not automatically feed reports: promoted and staged candidates are the curated bridge.
 
 GreenRock branding uses the local asset path `atlas_os/static/greenrock_logo.png`. If the logo file is missing, web pages and report/PDF generation continue without failing.
 
@@ -261,10 +264,11 @@ Reports clearly state `Data Mode: MOCK` or `Data Mode: REAL` and show the data s
 
 ## Approval Queue
 
-GreenRock screening and report-draft commands persist a local workflow run to SQLite, store artifact records, and create a pending approval for the draft report.
+GreenRock screening, report-draft, and staging-sourced report commands persist a local workflow run to SQLite, store artifact records, and create a pending approval for the draft report.
 
 ```bash
 atlas greenrock report-draft
+atlas greenrock report-from-staging --allow-underfilled
 atlas approvals list
 atlas approvals show <id>
 atlas approvals approve <id>

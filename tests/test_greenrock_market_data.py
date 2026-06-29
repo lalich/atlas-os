@@ -36,6 +36,7 @@ from atlas_os.greenrock.staging import (
     remove_staged_candidate,
     staging_readiness,
 )
+from atlas_os.greenrock.staging_report import run_greenrock_staging_report_workflow
 from atlas_os.greenrock.universe import LARGE_CAP_TICKERS, MEGA_ROCK_TICKERS, SMALL_MID_CAP_TICKERS, save_ticker_universe
 from atlas_os.greenrock.workflow import run_greenrock_screening_workflow
 from atlas_os.web_app import dispatch_request
@@ -587,7 +588,7 @@ class GreenRockMarketDataTests(unittest.TestCase):
         self.assertIn("Large Cap Candidate", response.body)
         self.assertIn("Small/Mid Candidate", response.body)
         self.assertIn("Generate Draft From Staging", response.body)
-        self.assertIn("disabled", response.body)
+        self.assertIn("/greenrock/staging/generate/confirm", response.body)
 
     def test_staging_stores_candidate_metadata_from_scan(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -685,6 +686,98 @@ class GreenRockMarketDataTests(unittest.TestCase):
         self.assertIn("GreenRock staging readiness", ready_output)
         self.assertIn("AAPL large", list_output)
         self.assertIn("GreenRock staging candidate removed", remove_output)
+
+    def test_staging_draft_generation_creates_run_artifacts_and_pending_approval(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            db_path = initialize_database(root / "atlas.db")
+            add_staged_candidate(root / "output", "SOFI", "small_mid", notes="review note")
+            with connect(db_path) as connection:
+                workflow_run, artifacts, approval = run_greenrock_staging_report_workflow(
+                    connection,
+                    root / "output",
+                    allow_underfilled=True,
+                )
+                approvals = list_approvals(connection)
+                stored_artifacts = list_artifacts(connection)
+                runs = list_workflow_runs(connection)
+            report_path = Path(workflow_run.output_paths["report_draft"])
+            markdown = report_path.read_text(encoding="utf-8")
+
+        self.assertEqual(workflow_run.status, "awaiting_approval")
+        self.assertEqual(workflow_run.data_mode, "real")
+        self.assertIsNotNone(approval)
+        self.assertEqual(approval.status.value, "pending")
+        self.assertEqual(len(artifacts), 5)
+        self.assertEqual(len(approvals), 1)
+        self.assertEqual(len(stored_artifacts), 5)
+        self.assertEqual(len(runs), 1)
+        self.assertNotIn("report_final_pdf", {artifact.artifact_type for artifact in stored_artifacts})
+        self.assertIn("**Candidate Source:** Staging-sourced", markdown)
+        self.assertIn("SOFI", markdown)
+        self.assertIn("review note", markdown)
+
+    def test_staging_draft_generation_blocks_underfilled_without_allow(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {
+                "ATLAS_DB_PATH": str(root / "atlas.db"),
+                "ATLAS_OUTPUT_DIR": str(root / "output"),
+            }
+            with patch.dict("os.environ", env, clear=False):
+                add_staged_candidate(root / "output", "SOFI", "small_mid")
+                output, exit_code = _run_cli_raw(["greenrock", "report-from-staging"])
+                with connect(initialize_database(root / "atlas.db")) as connection:
+                    approvals = list_approvals(connection)
+                    artifacts = list_artifacts(connection)
+                    runs = list_workflow_runs(connection)
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("GreenRock staging report blocked", output)
+        self.assertIn("--allow-underfilled", output)
+        self.assertEqual(approvals, ())
+        self.assertEqual(artifacts, ())
+        self.assertEqual(runs, ())
+
+    def test_cli_report_from_staging_allow_underfilled(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {
+                "ATLAS_DB_PATH": str(root / "atlas.db"),
+                "ATLAS_OUTPUT_DIR": str(root / "output"),
+            }
+            with patch.dict("os.environ", env, clear=False):
+                add_staged_candidate(root / "output", "SOFI", "small_mid")
+                output = _run_cli(["greenrock", "report-from-staging", "--allow-underfilled"])
+
+        self.assertIn("GreenRock staging report draft created", output)
+        self.assertIn("selection_mode: STAGING", output)
+        self.assertIn("Draft is blocked until approved by a human", output)
+
+    def test_browser_staging_generation_confirmation_and_post(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {
+                "ATLAS_DB_PATH": str(root / "atlas.db"),
+                "ATLAS_OUTPUT_DIR": str(root / "output"),
+            }
+            with patch.dict("os.environ", env, clear=False):
+                add_staged_candidate(root / "output", "SOFI", "small_mid")
+                confirmation = dispatch_request("GET", "/greenrock/staging/generate/confirm")
+                response = dispatch_request("POST", "/greenrock/staging/generate", "allow_underfilled=yes")
+                with connect(initialize_database(root / "atlas.db")) as connection:
+                    approvals = list_approvals(connection)
+                    artifacts = list_artifacts(connection)
+                    runs = list_workflow_runs(connection)
+
+        self.assertEqual(confirmation.status, 200)
+        self.assertIn("Generate Draft From Staging?", confirmation.body)
+        self.assertIn("Allow underfilled sections", confirmation.body)
+        self.assertEqual(response.status, 303)
+        self.assertIn("/greenrock/staging?status=", response.location)
+        self.assertEqual(len(runs), 1)
+        self.assertEqual(len(approvals), 1)
+        self.assertEqual(len(artifacts), 5)
 
     def test_population_scan_missing_provider_fails_safely(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

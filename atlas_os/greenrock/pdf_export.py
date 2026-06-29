@@ -158,7 +158,7 @@ def _markdown_to_story(markdown: str, styles, colors) -> list:
                     TableStyle(
                         [
                             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#174C3C")),
-                            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                            ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#F3C969")),
                             ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
                             ("FONTSIZE", (0, 0), (-1, -1), 7 if column_count >= 7 else 8),
                             ("LEADING", (0, 0), (-1, -1), 8),

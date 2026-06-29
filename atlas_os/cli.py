@@ -48,6 +48,7 @@ from atlas_os.greenrock.staging import (
     remove_staged_candidate,
     staging_readiness,
 )
+from atlas_os.greenrock.staging_report import run_greenrock_staging_report_workflow, staging_report_readiness
 from atlas_os.greenrock.universe import (
     LARGE_CAP_UNIVERSE,
     MEGA_ROCK_UNIVERSE,
@@ -149,6 +150,15 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("strict", "ranked"),
         default=None,
         help="Selection mode. Defaults to strict for mock and ranked for real.",
+    )
+    report_from_staging = greenrock_subparsers.add_parser(
+        "report-from-staging",
+        help="Generate an approval-gated GreenRock report draft from staged candidates.",
+    )
+    report_from_staging.add_argument(
+        "--allow-underfilled",
+        action="store_true",
+        help="Allow a staging-sourced draft when report buckets are underfilled.",
     )
     latest_report = greenrock_subparsers.add_parser(
         "latest-report",
@@ -400,6 +410,42 @@ def run_greenrock_report_draft(data_mode: str = "mock", selection_mode: str | No
     print(f"artifacts: {len(artifacts)}")
     print(f"approval_id: {approval.id if approval else 'none'}")
     print("Draft is blocked until approved by a human.")
+    return 0
+
+
+def run_greenrock_report_from_staging(allow_underfilled: bool = False) -> int:
+    settings = get_settings()
+    readiness = staging_report_readiness(settings.output_dir, allow_underfilled=allow_underfilled)
+    if not readiness.can_generate:
+        print("GreenRock staging report blocked")
+        print("reason: staged report buckets are underfilled")
+        print("warnings:")
+        for warning in readiness.warnings:
+            print(f"  {warning}")
+        print("Run with --allow-underfilled to create an approval-gated draft anyway.")
+        print("No report, approval, PDF, email, publication, or external action was created.")
+        return 1
+    db_path = initialize_database(settings.db_path)
+    with connect(db_path) as connection:
+        workflow_run, artifacts, approval = run_greenrock_staging_report_workflow(
+            connection,
+            settings.output_dir,
+            allow_underfilled=allow_underfilled,
+        )
+    print("GreenRock staging report draft created")
+    print(f"run_id: {workflow_run.run_id}")
+    print(f"status: {workflow_run.status}")
+    print(f"data_mode: {workflow_run.data_mode.upper()}")
+    print("selection_mode: STAGING")
+    print(f"artifacts: {len(artifacts)}")
+    print(f"approval_id: {approval.id if approval else 'none'}")
+    print("warnings:")
+    if readiness.warnings:
+        for warning in readiness.warnings:
+            print(f"  {warning}")
+    else:
+        print("  none")
+    print("Draft is blocked until approved by a human. No email, publication, or PDF export was created.")
     return 0
 
 
@@ -1526,6 +1572,8 @@ def main(argv: list[str] | None = None) -> int:
             return run_greenrock_candidates()
         if args.greenrock_command == "report-draft":
             return run_greenrock_report_draft(args.data, args.selection)
+        if args.greenrock_command == "report-from-staging":
+            return run_greenrock_report_from_staging(args.allow_underfilled)
         if args.greenrock_command == "latest-report":
             return run_greenrock_latest_report(args.print_contents)
         if args.greenrock_command == "latest-run":

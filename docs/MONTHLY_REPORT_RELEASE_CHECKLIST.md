@@ -8,9 +8,17 @@ Use this checklist for the local GreenRock monthly report workflow. Atlas OS def
 atlas greenrock report-draft
 ```
 
+For a staging-sourced report:
+
+```bash
+atlas greenrock report-from-staging
+atlas greenrock report-from-staging --allow-underfilled
+```
+
 - Confirm the command completed successfully.
 - Record the `run_id` and `approval_id`.
 - Confirm the report path is run-specific.
+- Confirm the Candidate Source Disclosure identifies watchlist, mock, or staging-sourced candidates as applicable.
 
 ## 2. Review Report
 
@@ -21,7 +29,9 @@ atlas greenrock latest-report --print
 
 - Review executive summary, methodology, tables, rationale, risks, and disclaimers.
 - Confirm data mode and data source are clearly labeled.
+- Confirm candidate source, selection mode, source lists, and scan IDs are clearly labeled where applicable.
 - If using real mode, confirm the Source Watchlists section is present and notes that full-market scanner is planned.
+- If using staging mode, confirm readiness warnings and staging notes are present.
 - Confirm data-mode and human-approval disclaimers are present.
 - Confirm no personalized recommendations, guarantees, or promissory language are present.
 

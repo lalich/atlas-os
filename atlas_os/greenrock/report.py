@@ -72,6 +72,7 @@ def build_report_draft(
         f"**Data Mode:** {resolved_data_mode}",
         f"**Data Source:** {resolved_data_source}",
         f"**Selection Mode:** {screening.selection_mode.upper()}",
+        f"**Candidate Source:** {_candidate_source_label(resolved_data_mode, resolved_data_source)}",
         "",
         (
             "> Draft only. This report requires human approval before any client-facing use. "
@@ -106,6 +107,8 @@ def build_report_draft(
         ),
         "",
         "## Source Watchlists",
+        "",
+        _source_disclosure(resolved_data_mode, resolved_data_source, screening.selection_mode),
         "",
         _mega_rock_section(resolved_data_mode, resolved_data_source, len(screening.all_candidates)),
         "",
@@ -211,6 +214,33 @@ def _candidate_table(candidates: tuple[StockCandidate, ...]) -> str:
     if not candidates:
         lines.append("| No candidates available | - | - | - | - | - | - | - | - | - | - | - |")
     return "\n".join(lines)
+
+
+def _candidate_source_label(data_mode: str, data_source: str) -> str:
+    if data_mode == "MOCK":
+        return "Mock data"
+    if "population" in data_source:
+        return "Scanner/population-sourced"
+    if "staging" in data_source:
+        return "Staging-sourced"
+    return "Watchlist-sourced"
+
+
+def _source_disclosure(data_mode: str, data_source: str, selection_mode: str) -> str:
+    source_type = _candidate_source_label(data_mode, data_source)
+    return "\n".join(
+        [
+            "## Candidate Source Disclosure",
+            "",
+            f"- Source type: {source_type}",
+            f"- Data mode: {data_mode}",
+            f"- Selection mode: {selection_mode.upper()}",
+            f"- Data source: {data_source}",
+            "- Source population: not applicable",
+            "- Staged candidate source: not applicable",
+            "- Scan ID: not applicable",
+        ]
+    )
 
 
 def _screening_rationale(candidates: tuple[StockCandidate, ...]) -> str:

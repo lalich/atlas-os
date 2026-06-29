@@ -53,6 +53,7 @@ from atlas_os.greenrock.staging import (
     staging_readiness,
     update_staged_notes,
 )
+from atlas_os.greenrock.staging_report import run_greenrock_staging_report_workflow, staging_report_readiness
 from atlas_os.greenrock.universe import (
     GREENROCK_PLACEMENT_LABELS,
     add_ticker_to_greenrock_list,
@@ -180,6 +181,15 @@ def create_app():
     @app.get("/greenrock/staging", response_class=HTMLResponse)
     def greenrock_staging() -> str:
         return render_greenrock_staging()
+
+    @app.get("/greenrock/staging/generate/confirm", response_class=HTMLResponse)
+    def greenrock_staging_generate_confirm() -> str:
+        return render_greenrock_staging_generation_confirmation()
+
+    @app.post("/greenrock/staging/generate")
+    def greenrock_staging_generate(allow_underfilled: str = Form("")):
+        message = generate_greenrock_staging_report(allow_underfilled == "yes")
+        return RedirectResponse(_with_status("/greenrock/staging", message), status_code=303)
 
     @app.post("/greenrock/staging/add", response_class=HTMLResponse)
     def greenrock_staging_add(
@@ -331,6 +341,8 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
         return WebResponse(200, render_greenrock_watchlists(_first(query, "status")))
     if method == "GET" and route == "/greenrock/staging":
         return WebResponse(200, render_greenrock_staging(_first(query, "status")))
+    if method == "GET" and route == "/greenrock/staging/generate/confirm":
+        return WebResponse(200, render_greenrock_staging_generation_confirmation(_first(query, "status")))
     if method == "GET" and route == "/greenrock/score":
         return WebResponse(200, render_greenrock_score())
     if method == "GET" and route == "/greenrock/final-reports":
@@ -415,6 +427,12 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
         return WebResponse(200, remove_greenrock_staging_candidate(form.get("ticker", "")))
     if method == "POST" and route == "/greenrock/staging/notes":
         return WebResponse(200, save_greenrock_staging_notes(form.get("ticker", ""), form.get("notes", "")))
+    if method == "POST" and route == "/greenrock/staging/generate":
+        return WebResponse(
+            303,
+            "",
+            location=_with_status("/greenrock/staging", generate_greenrock_staging_report(form.get("allow_underfilled") == "yes")),
+        )
     if method == "POST" and route == "/greenrock/watchlists/remove":
         return WebResponse(200, remove_greenrock_watchlist_ticker(form.get("ticker", ""), form.get("list_key", "")))
     if method == "POST" and route == "/greenrock/score":
@@ -904,7 +922,9 @@ def render_greenrock_watchlists(status_message: str | None = None) -> str:
 def render_greenrock_staging(status_message: str | None = None) -> str:
     settings = get_settings()
     rows = load_staged_candidates(settings.output_dir)
+    readiness = staging_report_readiness(settings.output_dir, allow_underfilled=True)
     readiness_cards = "".join(_staging_readiness_card(item) for item in staging_readiness(settings.output_dir))
+    generation_status = _staging_generation_status(readiness.warnings)
     bucket_sections = "".join(_staging_bucket_section(bucket, label, rows) for bucket, label in STAGING_BUCKET_LABELS.items())
     source_sections = _staging_source_sections(settings.output_dir)
     content = f"""
@@ -919,10 +939,11 @@ def render_greenrock_staging(status_message: str | None = None) -> str:
     <section class="panel warning-panel">
       <div class="section-head">
         <h2>Generate Draft From Staging</h2>
-        <span class="badge">Experimental</span>
+        <span class="badge">Approval-gated</span>
       </div>
-      <p class="subtle">This button is intentionally disabled for now. Staging is a local review layer; the existing report workflow remains the approval-gated path for creating draft reports, artifacts, and approvals.</p>
-      <button type="button" disabled>Generate Draft From Staging</button>
+      {generation_status}
+      <p class="subtle">Creates a normal local workflow run, report artifacts, and a pending approval. It does not publish, email, or export a PDF automatically.</p>
+      <a class="button" href="/greenrock/staging/generate/confirm">Generate Draft From Staging</a>
     </section>
     <section class="panel">
       <div class="section-head">
@@ -939,6 +960,42 @@ def render_greenrock_staging(status_message: str | None = None) -> str:
     </section>
     """
     return _page("GreenRock Staging", content, active="/greenrock/staging")
+
+
+def render_greenrock_staging_generation_confirmation(status_message: str | None = None) -> str:
+    settings = get_settings()
+    readiness = staging_report_readiness(settings.output_dir, allow_underfilled=True)
+    warnings = "".join(f"<li>{_safe(warning)}</li>" for warning in readiness.warnings) or "<li>No readiness warnings.</li>"
+    underfilled = any("underfilled" in warning for warning in readiness.warnings)
+    allow_control = (
+        """
+        <label class="checkbox-line">
+          <input type="checkbox" name="allow_underfilled" value="yes">
+          Allow underfilled sections and show warnings in the draft
+        </label>
+        """
+        if underfilled
+        else "<input type='hidden' name='allow_underfilled' value='yes'>"
+    )
+    content = f"""
+    {_status_banner(status_message)}
+    <section class="hero compact greenrock-hero">
+      {_greenrock_brand_block()}
+      <p class="eyebrow">Confirm Staging Draft</p>
+      <h1>Generate Draft From Staging?</h1>
+      <p>This creates a local GreenRock workflow run, report artifacts, and a pending approval. It does not publish, email, or export a PDF.</p>
+    </section>
+    <section class="panel warning-panel">
+      <h2>Readiness Review</h2>
+      <ul class="compact-list">{warnings}</ul>
+      <form method="post" action="/greenrock/staging/generate" class="confirm-form">
+        {allow_control}
+        <button type="submit">Create Approval-Gated Draft</button>
+        <a class="button secondary" href="/greenrock/staging">Cancel</a>
+      </form>
+    </section>
+    """
+    return _page("Confirm Staging Draft", content, active="/greenrock/staging")
 
 
 def run_greenrock_scan_from_browser(population: str) -> str:
@@ -1026,6 +1083,28 @@ def save_greenrock_staging_notes(ticker: str, notes: str) -> str:
     return render_greenrock_staging(status)
 
 
+def generate_greenrock_staging_report(allow_underfilled: bool = False) -> str:
+    settings = get_settings()
+    readiness = staging_report_readiness(settings.output_dir, allow_underfilled=allow_underfilled)
+    if not readiness.can_generate:
+        return "Staging draft blocked: sections are underfilled. Confirm allow-underfilled to generate with warnings."
+    db_path = initialize_database(settings.db_path)
+    try:
+        with connect(db_path) as connection:
+            workflow_run, _, approval = run_greenrock_staging_report_workflow(
+                connection,
+                settings.output_dir,
+                allow_underfilled=allow_underfilled,
+            )
+    except ValueError as error:
+        return f"Staging draft blocked: {error}"
+    return (
+        f"Staging-sourced draft created for {workflow_run.run_id}; "
+        f"approval {approval.id if approval else 'none'} is pending. "
+        "Open /greenrock or /approvals to review."
+    )
+
+
 def remove_greenrock_watchlist_ticker(ticker: str, list_key: str) -> str:
     settings = get_settings()
     try:
@@ -1079,7 +1158,6 @@ def render_greenrock_score(
         <input name="ticker" value="{_safe(cleaned_ticker)}" placeholder="Ticker" required>
         <button type="submit" class="logo-score-button" aria-label="Calculate GreenRock Score">
           {_greenrock_logo("score-button-logo")}
-          <span>Calculate Score</span>
         </button>
       </form>
     </section>
@@ -1870,6 +1948,18 @@ def _staging_readiness_card(item) -> str:
         "Needs Review": "neutral",
     }.get(item.status, "neutral")
     return _attention_card(color, f"{item.count}/{target}", item.label, item.status)
+
+
+def _staging_generation_status(warnings: tuple[str, ...]) -> str:
+    if not warnings:
+        return "<p class='subtle'>Staging targets are ready for an approval-gated draft.</p>"
+    items = "".join(f"<li>{_safe(warning)}</li>" for warning in warnings)
+    return f"""
+    <div class="setup-box">
+      <p>Readiness warnings will be included in the draft if generated.</p>
+      <ul class="compact-list">{items}</ul>
+    </div>
+    """
 
 
 def _staging_add_form(ticker: str = "", source_list: str = "manual", compact: bool = False) -> str:
@@ -3035,8 +3125,9 @@ def _page(title: str, content: str, active: str = "/") -> str:
     .score-tool-hero {{ display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, .5fr); gap: 22px; align-items: end; }}
     .score-tool-hero .score-form {{ margin: 0; }}
     .score-form {{ display: grid; grid-template-columns: minmax(150px, 1fr) auto; gap: 10px; }}
-    .logo-score-button {{ display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-width: 176px; }}
-    .score-button-logo {{ width: 30px; height: 30px; object-fit: contain; }}
+    .logo-score-button {{ display: inline-flex; align-items: center; justify-content: center; width: 54px; min-width: 54px; height: 44px; padding: 6px; }}
+    .logo-score-button:hover, .logo-score-button:focus {{ transform: translateY(-1px); box-shadow: 0 0 0 3px rgba(55,214,122,.22); outline: none; }}
+    .score-button-logo {{ width: 32px; height: 32px; object-fit: contain; }}
     .save-list-panel {{ border-color: rgba(55,214,122,.28); }}
     .save-list-form {{ display: grid; grid-template-columns: minmax(150px, .6fr) minmax(220px, 1fr) auto; gap: 10px; }}
     .inline-promote-form {{ display: grid; grid-template-columns: minmax(170px, 1fr) auto; gap: 8px; min-width: 300px; }}

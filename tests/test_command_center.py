@@ -123,6 +123,9 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("/static/greenrock_logo.png", page.body)
         self.assertIn("logo-score-button", page.body)
         self.assertIn("aria-label=\"Calculate GreenRock Score\"", page.body)
+        score_form = page.body.split('<form method="post" action="/greenrock/score" class="score-form">', maxsplit=1)[1].split("</form>", maxsplit=1)[0]
+        self.assertIn("score-button-logo", score_form)
+        self.assertNotIn("<span>Calculate Score</span>", score_form)
         self.assertIn("Score any ticker against the GreenRock technical dislocation framework.", page.body)
         self.assertNotIn('name="data_mode"', page.body)
         self.assertNotIn(">Mock<", page.body)

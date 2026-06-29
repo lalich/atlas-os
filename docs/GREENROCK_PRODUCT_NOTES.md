@@ -20,6 +20,8 @@
 - Store promotion metadata as a sidecar CSV so existing watchlist/universe CSV files remain simple ticker lists.
 - Keep `/greenrock/staging` as the final human curation layer before approval-gated report generation. It should allow bucket moves, removals, notes, readiness checks, and source context without creating report runs, approvals, PDFs, emails, publications, or client-facing artifacts.
 - Keep staging buckets explicit: Mega Rock Candidate, Large Cap Candidate, Small/Mid Candidate, Research Only, and Excluded. Count targets should remain visible for the three report candidate buckets.
+- Staging-sourced report generation may create normal workflow runs, report artifacts, and pending approvals only after explicit operator confirmation. It must not publish, email, or export a PDF automatically.
+- Scanner populations should not automatically feed reports. Promotion plus staging is the curated bridge into approval-gated draft generation.
 - Keep bucket-list guardrails firm. If market-cap bucket data conflicts with Mega Rock, Large Cap, or Small/Mid destinations, block the save and suggest the proper list or Personal Watchlist.
 
 ## Scoring Improvements
