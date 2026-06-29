@@ -149,7 +149,7 @@ atlas greenrock report-from-staging --allow-underfilled
 
 Staging stores candidates locally at `.atlas/output/greenrock/staging/report_candidates.csv` with bucket, source, score, confidence, Evidence Agreement, Guardrail, Research Priority, top signals, timestamp, and operator notes. Staging does not create reports, approvals, PDFs, emails, publications, or client-facing artifacts.
 
-`atlas greenrock report-from-staging` creates the preferred approval-gated GreenRock draft from staged candidates. It blocks underfilled sections by default; use `--allow-underfilled` to generate a draft that clearly shows readiness warnings. Scanner populations do not automatically feed reports: staged candidates are the curated bridge.
+`atlas greenrock report-from-staging` creates the preferred approval-gated GreenRock draft from staged candidates. It blocks underfilled sections by default; use `--allow-underfilled` to generate a draft that clearly shows readiness warnings. Scanner populations do not automatically feed reports: staged candidates are the curated bridge. Browser review is available at `/greenrock/reports/<run_id>/review`.
 
 GreenRock branding uses the local asset path `atlas_os/static/greenrock_logo.png`. If the logo file is missing, web pages and report/PDF generation continue without failing.
 
@@ -392,6 +392,7 @@ Command Center pages:
 - `/` Atlas Inbox with attention counters, actionable cards, recent workflow feed, and navigation.
 - `/projects` project directory for GreenRock Analysts, Variance Capital / The Bat Signal, GreenRock Insurance, and Atlas Core.
 - `/greenrock` report review console with the preferred Generate Draft From Staging path, legacy/sample report buttons, latest run/report/PDF status, candidate summaries, approval actions, local artifact open links, and PDF export after approval.
+- `/greenrock/reports/<run_id>/review` GreenRock Report Review Center with report metadata, source disclosure, candidate tables, evidence notes, approval controls, and approved-only PDF controls.
 - `/greenrock/discovery` guided GreenRock discovery workflow showing Discovery Scan, Review Results, Stage Candidates, Generate Draft Report, Human Approval, and Export PDF.
 - `/greenrock/picks` GreenRock Picks Board with the featured Mega Rock pick, 11 large-cap picks, 11 small/mid-cap picks, Evidence Agreement, top signals, Fundamental Guardrail fields, Finviz links, and explicit data-mode labeling.
 - `/greenrock/scanner` GreenRock Market Scanner for population scans, latest scan metadata, quick filters, ranked results, Finviz links, deliberate promote-to-list review, and direct scan-to-staging.
@@ -401,7 +402,7 @@ Command Center pages:
 - `/greenrock/final-reports` final PDF archive for approved exported GreenRock PDFs.
 - `/tasks` local kanban-style manual task board with backlog, in progress, awaiting review, and completed columns.
 - `/agents` planned agent HUD with inactive/planned status labels.
-- `/reports` local report and artifact index.
+- `/reports` local report and artifact index with links into the GreenRock Report Review Center.
 
 Browser approval/rejection actions require a confirmation page before updating local SQLite records. PDF export remains blocked until the linked report approval is approved.
 
@@ -413,7 +414,7 @@ The web app is local development mode only. It uses mock data, keeps the human a
 atlas serve
 ```
 
-Open `http://127.0.0.1:8000`, review the Atlas Inbox, then use the GreenRock page to inspect report status, approve/reject pending drafts, open local Markdown/PDF artifacts, or export an approved PDF. Use `http://127.0.0.1:8000/greenrock/discovery` for the preferred Scan, Stage, Generate Draft, Approve, Export PDF workflow, `http://127.0.0.1:8000/greenrock/scanner` for population discovery, `http://127.0.0.1:8000/greenrock/watchlists` for local research queues, `http://127.0.0.1:8000/greenrock/staging` for report candidate staging and approval-gated draft generation, and `http://127.0.0.1:8000/greenrock/picks` for the GreenRock Picks Board. Use the task board for manual operator tasks only; it does not trigger autonomous execution.
+Open `http://127.0.0.1:8000`, review the Atlas Inbox, then use the GreenRock Report Review Center at `/greenrock/reports/<run_id>/review` to inspect draft metadata, source disclosure, candidates, approval state, and PDF controls. Use `http://127.0.0.1:8000/greenrock/discovery` for the preferred Scan, Stage, Generate Draft, Approve, Export PDF workflow, `http://127.0.0.1:8000/greenrock/scanner` for population discovery, `http://127.0.0.1:8000/greenrock/watchlists` for local research queues, `http://127.0.0.1:8000/greenrock/staging` for report candidate staging and approval-gated draft generation, and `http://127.0.0.1:8000/greenrock/picks` for the GreenRock Picks Board. Use the task board for manual operator tasks only; it does not trigger autonomous execution.
 
 ## Operator Docs
 

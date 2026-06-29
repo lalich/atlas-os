@@ -27,6 +27,8 @@ atlas greenrock review
 atlas greenrock latest-report --print
 ```
 
+- Open `/greenrock/reports/<run_id>/review` in the browser.
+- Confirm the review page shows report metadata, source disclosure, candidate tables, evidence notes, approval status, and PDF status.
 - Review executive summary, methodology, tables, rationale, risks, and disclaimers.
 - Confirm data mode and data source are clearly labeled.
 - Confirm candidate source, selection mode, source lists, and scan IDs are clearly labeled where applicable.
@@ -59,6 +61,8 @@ Reject instead if the report should not advance:
 atlas approvals reject <approval_id>
 ```
 
+In the browser, use the approve/reject controls on `/greenrock/reports/<run_id>/review`; each action still requires confirmation and returns to the same review page.
+
 ## 5. Export Final PDF
 
 ```bash
@@ -72,6 +76,8 @@ atlas greenrock export-pdf <approval_id> --open
 ```
 
 PDF export is approved-only and idempotent for the run.
+
+In the browser, export from `/greenrock/reports/<run_id>/review` only after approval. Before approval, the PDF control should show a blocked state.
 
 ## 6. Verify Final Packet
 

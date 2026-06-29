@@ -150,7 +150,7 @@ GreenRock branding expects the local logo at `atlas_os/static/greenrock_logo.png
 
 Report Candidate Staging stores local rows at `.atlas/output/greenrock/staging/report_candidates.csv`. Buckets are Mega Rock Candidate, Large Cap Candidate, Small/Mid Candidate, Research Only, and Excluded. The readiness indicators compare staged counts against the current report targets: Mega Rock 1, Large Cap 11, Small/Mid 11. Staging alone does not create report runs, approvals, PDFs, emails, or publication artifacts.
 
-To generate from staging, use `/greenrock/staging`, confirm the staging draft, and review the pending approval. CLI equivalent:
+To generate from staging, use `/greenrock/staging`, confirm the staging draft, and review the pending approval from `/greenrock/reports/<run_id>/review`. CLI equivalent:
 
 ```bash
 atlas greenrock report-from-staging
@@ -158,6 +158,8 @@ atlas greenrock report-from-staging --allow-underfilled
 ```
 
 Without `--allow-underfilled`, Atlas blocks underfilled staging buckets. With it, Atlas creates a normal approval-gated draft and includes readiness warnings. Overfilled staging buckets show guidance to select the final 1/11/11 and include a confirmed trim-to-top-ranked helper. Scanner populations do not automatically feed reports; staged candidates are the curated bridge.
+
+The GreenRock Report Review Center shows run metadata, data mode, selection mode, candidate source, source lists, scan IDs, candidate tables, evidence notes, approval status, and PDF status in one browser page. Approve/reject controls still open a confirmation page, and PDF export remains blocked until approval.
 
 ## Score Any Ticker
 
@@ -321,21 +323,21 @@ export ATLAS_GREENROCK_REAL_TICKERS=
 atlas serve
 ```
 
-Open `http://127.0.0.1:8000/greenrock/staging`, then click **Generate Draft From Staging** and confirm. Legacy real watchlist drafts remain available from `http://127.0.0.1:8000/greenrock`. With `ATLAS_GREENROCK_REAL_TICKERS` blank, the legacy path uses local GreenRock watchlists. If the provider is not configured, the browser shows a blocked message and no run, artifact, report, or approval is created.
+Open `http://127.0.0.1:8000/greenrock/staging`, then click **Generate Draft From Staging** and confirm. Use the generated `/greenrock/reports/<run_id>/review` link to review the draft, approve or reject through confirmation, and export PDF only after approval. Legacy real watchlist drafts remain available from `http://127.0.0.1:8000/greenrock`. With `ATLAS_GREENROCK_REAL_TICKERS` blank, the legacy path uses local GreenRock watchlists. If the provider is not configured, the browser shows a blocked message and no run, artifact, report, or approval is created.
 
 Open `http://127.0.0.1:8000/greenrock/final-reports` to review the final PDF archive.
 
 ## Approve or Reject in Browser
 
-Open `http://127.0.0.1:8000/greenrock`.
+Open `http://127.0.0.1:8000/greenrock` or the run-specific review page at `http://127.0.0.1:8000/greenrock/reports/<run_id>/review`.
 
-Pending report approvals show approve/reject buttons. Each button opens a confirmation page before any local record is changed. Approval only updates the local approval queue and unlocks local final packet/PDF work; it does not publish, send, email, or distribute anything.
+Pending report approvals show approve/reject buttons. Each button opens a confirmation page before any local record is changed. Approval only updates the local approval queue and unlocks local final packet/PDF work; it does not publish, send, email, or distribute anything. The review page returns you to the same run after approval or rejection.
 
 PDF export from the browser is available only after approval. It creates or reuses the run-specific `greenrock_report_final.pdf`.
 
 ## Open Reports and PDFs
 
-On the GreenRock and Reports pages, use the local open links for Markdown reports, CSV artifacts, and approved PDFs. On macOS, Atlas attempts to open the file locally. On unsupported systems, keep using the displayed path.
+On the GreenRock, Reports, and run-specific review pages, use the local open links for Markdown reports, CSV artifacts, and approved PDFs. On macOS, Atlas attempts to open the file locally. On unsupported systems, keep using the displayed path.
 
 ## Manage Manual Tasks
 

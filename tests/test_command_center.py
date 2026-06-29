@@ -22,6 +22,7 @@ from atlas_os.greenrock.pdf_export import render_markdown_report_to_pdf
 from atlas_os.greenrock.report import build_sample_report
 from atlas_os.greenrock.sample_data import load_mock_stocks
 from atlas_os.greenrock.score import calculate_score_preview, confidence_band
+from atlas_os.greenrock.staging import add_staged_candidate
 from atlas_os.web_app import dispatch_request
 
 
@@ -528,6 +529,65 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("1</strong><h2>Pending Approvals", response.body)
         self.assertIn("Review GreenRock Report", response.body)
         self.assertIn("Latest Data Source", response.body)
+        self.assertIn("/greenrock/reports/", response.body)
+
+    def test_greenrock_report_review_page_renders_metadata_candidates_and_controls(self) -> None:
+        with _isolated_env() as root:
+            main(["greenrock", "report-draft"])
+            with connect(root / "atlas.db") as connection:
+                run_id = list_workflow_runs(connection)[0].run_id
+            response = dispatch_request("GET", f"/greenrock/reports/{run_id}/review")
+
+        self.assertEqual(response.status, 200)
+        self.assertIn("GreenRock Report Review Center", response.body)
+        self.assertIn(run_id, response.body)
+        self.assertIn("Data Mode", response.body)
+        self.assertIn("MOCK", response.body)
+        self.assertIn("Selection Mode", response.body)
+        self.assertIn("Candidate Source", response.body)
+        self.assertIn("Approval Status", response.body)
+        self.assertIn("PDF Status", response.body)
+        self.assertIn("Source Disclosure", response.body)
+        self.assertIn("Mega Rock", response.body)
+        self.assertIn("Large Cap", response.body)
+        self.assertIn("Small/Mid", response.body)
+        self.assertIn("LC04", response.body)
+        self.assertIn("Approve pending report", response.body)
+        self.assertIn("Reject pending report", response.body)
+        self.assertIn("PDF export blocked until approval", response.body)
+
+    def test_greenrock_report_review_page_renders_staging_evidence_notes(self) -> None:
+        with _isolated_env() as root:
+            add_staged_candidate(root / "output", "SOFI", "small_mid", notes="operator staging note")
+            main(["greenrock", "report-from-staging", "--allow-underfilled"])
+            with connect(root / "atlas.db") as connection:
+                run_id = list_workflow_runs(connection)[0].run_id
+            response = dispatch_request("GET", f"/greenrock/reports/{run_id}/review")
+
+        self.assertEqual(response.status, 200)
+        self.assertIn("Staging-sourced", response.body)
+        self.assertIn("SOFI", response.body)
+        self.assertIn("operator staging note", response.body)
+        self.assertIn("Candidate Evidence Notes", response.body)
+        self.assertIn("Top bullish signal", response.body)
+        self.assertIn("Top caution signal", response.body)
+
+    def test_greenrock_report_review_approval_redirects_back_to_review_and_unlocks_pdf(self) -> None:
+        with _isolated_env() as root:
+            main(["greenrock", "report-draft"])
+            with connect(root / "atlas.db") as connection:
+                run_id = list_workflow_runs(connection)[0].run_id
+            review_path = f"/greenrock/reports/{run_id}/review"
+            confirm = dispatch_request("GET", f"/approvals/1/confirm?action=approve&return_to={review_path}")
+            decided = dispatch_request("POST", "/approvals/1/decide", f"action=approve&return_to={review_path}")
+            review = dispatch_request("GET", review_path)
+
+        self.assertEqual(confirm.status, 200)
+        self.assertIn(review_path, confirm.body)
+        self.assertEqual(decided.status, 303)
+        self.assertIn(review_path, decided.location)
+        self.assertIn("Export PDF", review.body)
+        self.assertNotIn("PDF export blocked until approval", review.body)
 
     def test_greenrock_browser_pdf_export_works_for_approved_report(self) -> None:
         with _isolated_env() as root:

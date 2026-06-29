@@ -247,13 +247,17 @@ def create_app():
     def final_reports() -> str:
         return render_greenrock_final_reports()
 
+    @app.get("/greenrock/reports/{run_id}/review", response_class=HTMLResponse)
+    def greenrock_report_review(run_id: str) -> str:
+        return render_greenrock_report_review(run_id)
+
     @app.get("/approvals/{approval_id}", response_class=HTMLResponse)
     def approval_detail(approval_id: int) -> str:
         return render_approval_detail(approval_id)
 
     @app.get("/approvals/{approval_id}/confirm", response_class=HTMLResponse)
-    def approval_confirm(approval_id: int, action: str = "approve") -> str:
-        return render_approval_confirmation(approval_id, action)
+    def approval_confirm(approval_id: int, action: str = "approve", return_to: str = "/greenrock") -> str:
+        return render_approval_confirmation(approval_id, action, return_to)
 
     @app.post("/approvals/{approval_id}/decide")
     def approval_decide(approval_id: int, action: str = Form(...), return_to: str = Form("/greenrock")):
@@ -261,9 +265,9 @@ def create_app():
         return RedirectResponse(_with_status(return_to, f"Approval {approval_id} {action}d."), status_code=303)
 
     @app.post("/greenrock/approvals/{approval_id}/export-pdf")
-    def export_pdf(approval_id: int):
+    def export_pdf(approval_id: int, return_to: str = Form("/greenrock")):
         export_greenrock_pdf(approval_id)
-        return RedirectResponse(_with_status("/greenrock", f"PDF exported for approval {approval_id}."), status_code=303)
+        return RedirectResponse(_with_status(return_to, f"PDF exported for approval {approval_id}."), status_code=303)
 
     @app.get("/tasks", response_class=HTMLResponse)
     def tasks() -> str:
@@ -361,6 +365,12 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
         return WebResponse(200, render_greenrock_score())
     if method == "GET" and route == "/greenrock/final-reports":
         return WebResponse(200, render_greenrock_final_reports(_first(query, "status")))
+    if method == "GET" and route.startswith("/greenrock/reports/") and route.endswith("/review"):
+        run_id = unquote(route.removeprefix("/greenrock/reports/").removesuffix("/review"))
+        try:
+            return WebResponse(200, render_greenrock_report_review(run_id, _first(query, "status")))
+        except KeyError:
+            return _error_response(404, "Report Not Found", f"No GreenRock report exists for run {run_id}.")
     if method == "GET" and route == "/tasks":
         return WebResponse(200, render_tasks(_first(query, "status")))
     if method == "GET" and route == "/agents":
@@ -387,7 +397,14 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
         if approval_id is None:
             return _error_response(400, "Invalid Approval", "Approval ID must be a number.")
         try:
-            return WebResponse(200, render_approval_confirmation(approval_id, _first(query, "action") or "approve"))
+            return WebResponse(
+                200,
+                render_approval_confirmation(
+                    approval_id,
+                    _first(query, "action") or "approve",
+                    _first(query, "return_to") or "/greenrock",
+                ),
+            )
         except KeyError:
             return _error_response(404, "Approval Not Found", f"No approval exists for ID {approval_id}.")
     if method == "GET" and route.startswith("/approvals/"):
@@ -510,7 +527,7 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
             return _error_response(404, "Approval Not Found", f"No approval exists for ID {approval_id}.")
         except ValueError as error:
             return _error_response(400, "PDF Export Blocked", str(error))
-        return WebResponse(303, "", location=_with_status("/greenrock", f"PDF exported for approval {approval_id}."))
+        return WebResponse(303, "", location=_with_status(form.get("return_to", "/greenrock"), f"PDF exported for approval {approval_id}."))
 
     return WebResponse(404, _page("Not Found", "<section class='panel'><h1>Not Found</h1></section>"))
 
@@ -659,6 +676,7 @@ def render_greenrock(status_message: str | None = None) -> str:
         <a class="button secondary" href="/greenrock/watchlists">Watchlists</a>
         <a class="button secondary" href="/greenrock/staging">Report Candidate Staging</a>
         <a class="button secondary" href="/greenrock/score">Score Any Ticker</a>
+        {_review_report_action(latest_report)}
         {_path_action(latest_report.content_path if latest_report else None, "View Markdown report")}
         {_path_action(latest_pdf.path if latest_pdf else None, "Open PDF")}
         {_approval_button(latest_approval, "approve", "/greenrock")}
@@ -1155,7 +1173,7 @@ def generate_greenrock_staging_report(allow_underfilled: bool = False) -> str:
     return (
         f"Staging-sourced draft created for {workflow_run.run_id}; "
         f"approval {approval.id if approval else 'none'} is pending. "
-        "Open /greenrock or /approvals to review."
+        f"Review at /greenrock/reports/{workflow_run.run_id}/review."
     )
 
 
@@ -1366,7 +1384,65 @@ def render_greenrock_final_reports(status_message: str | None = None) -> str:
     return _page("GreenRock Final Reports", content, active="/reports")
 
 
-def render_approval_confirmation(approval_id: int, action: str) -> str:
+def render_greenrock_report_review(run_id: str, status_message: str | None = None) -> str:
+    context = _load_context()
+    run = get_workflow_run(context["connection"], run_id)
+    report = next((item for item in context["reports"] if item.run_id == run_id), None)
+    if report is None:
+        raise KeyError(f"Unknown GreenRock report: {run_id}")
+    approval = next((item for item in context["approvals"] if item.id == report.approval_id), None)
+    if approval is None:
+        approval = next((item for item in context["approvals"] if item.run_id == run_id), None)
+    pdf_artifact = _latest_pdf_for_run(context["connection"], run_id)
+    markdown = _read_report_markdown(report.content_path)
+    metadata = _report_review_metadata(markdown, run, report, approval, pdf_artifact)
+    content = f"""
+    {_status_banner(status_message)}
+    <section class="hero compact greenrock-hero">
+      {_greenrock_brand_block()}
+      <p class="eyebrow">GreenRock Report Review Center</p>
+      <h1>Review Report Draft</h1>
+      <p>One local review surface for the draft, source disclosure, staged evidence, approval status, and PDF controls.</p>
+    </section>
+    <section class="detail-grid report-review-meta">
+      {_detail_panel("Run ID", run.run_id)}
+      {_detail_panel("Data Mode", metadata["data_mode"])}
+      {_detail_panel("Selection Mode", metadata["selection_mode"])}
+      {_detail_panel("Candidate Source", metadata["candidate_source"])}
+      {_detail_panel("Approval Status", metadata["approval_status"])}
+      {_detail_panel("PDF Status", metadata["pdf_status"])}
+    </section>
+    <section class="panel">
+      <div class="section-head">
+        <h2>Source Disclosure</h2>
+        <span class="subtle">Scan IDs and source lists appear only when available</span>
+      </div>
+      {_source_disclosure_html(markdown, metadata)}
+    </section>
+    <section class="panel">
+      <div class="section-head">
+        <h2>Review Controls</h2>
+        <span class="subtle">Local only. No publishing, email, or external distribution.</span>
+      </div>
+      <div class="action-row">
+        {_review_approval_controls(approval, run.run_id)}
+        {_review_pdf_controls(approval, pdf_artifact, run.run_id)}
+        {_path_action(report.content_path, "Open Markdown")}
+      </div>
+    </section>
+    {_review_candidate_section("Mega Rock", _extract_report_section(markdown, ("## Mega Rock Candidate", "## Mega Rock Pick")))}
+    {_review_candidate_section("Large Cap", _extract_report_section(markdown, ("## Large Cap Candidates", "## Top Large-Cap Candidates")))}
+    {_review_candidate_section("Small/Mid", _extract_report_section(markdown, ("## Small/Mid Candidates", "## Top Small/Mid-Cap Candidates")))}
+    {_review_candidate_section("Research Only / Excluded", _extract_report_section(markdown, ("## Research Only / Excluded",)))}
+    <section class="panel disclosure-panel">
+      <h2>Review Boundary</h2>
+      <p>This page reviews a local draft only. Approval updates local records; PDF export remains blocked until approval; nothing is published or emailed.</p>
+    </section>
+    """
+    return _page("GreenRock Report Review", content, active="/greenrock")
+
+
+def render_approval_confirmation(approval_id: int, action: str, return_to: str = "/greenrock") -> str:
     context = _load_context()
     approval = get_approval(context["connection"], approval_id)
     action = action if action in {"approve", "reject"} else "approve"
@@ -1381,9 +1457,9 @@ def render_approval_confirmation(approval_id: int, action: str) -> str:
       {_approval_detail_block(approval)}
       <form method="post" action="/approvals/{approval.id}/decide" class="confirm-form">
         <input type="hidden" name="action" value="{action}">
-        <input type="hidden" name="return_to" value="/greenrock">
+        <input type="hidden" name="return_to" value="{_safe(_local_return_to(return_to))}">
         <button type="submit">{verb} locally</button>
-        <a class="button secondary" href="/greenrock">Cancel</a>
+        <a class="button secondary" href="{_safe(_local_return_to(return_to))}">Cancel</a>
       </form>
     </section>
     """
@@ -1446,6 +1522,173 @@ def render_artifact_detail(artifact_id: int) -> str:
     <section class="panel">{_path_block(artifact.path, "Open local artifact")}</section>
     """
     return _page(f"Artifact {artifact.id}", content, active="/reports")
+
+
+def _read_report_markdown(content_path: str | None) -> str:
+    if not content_path:
+        return ""
+    path = Path(content_path)
+    if not path.exists():
+        return ""
+    return path.read_text(encoding="utf-8")
+
+
+def _report_review_metadata(markdown: str, run, report, approval, pdf_artifact) -> dict[str, str]:
+    source_lists = _markdown_field(markdown, "Source lists") or _markdown_field(markdown, "Staged Candidate Source")
+    scan_ids = _markdown_field(markdown, "Scan IDs") or _markdown_field(markdown, "Source Scan ID")
+    return {
+        "data_mode": _markdown_field(markdown, "Data Mode") or run.data_mode.upper(),
+        "selection_mode": _markdown_field(markdown, "Selection Mode") or "-",
+        "candidate_source": _markdown_field(markdown, "Candidate Source") or "-",
+        "approval_status": approval.status.value if approval else "none",
+        "pdf_status": "exported" if pdf_artifact else "not exported",
+        "source_lists": source_lists or "not listed",
+        "scan_ids": scan_ids or "not listed",
+        "report_status": report.status,
+    }
+
+
+def _source_disclosure_html(markdown: str, metadata: dict[str, str]) -> str:
+    disclosure = _extract_report_section(markdown, ("## Candidate Source Disclosure",))
+    rendered = _markdown_fragment_to_html(disclosure) if disclosure else ""
+    fallback = f"""
+    <dl class="detail-list">
+      <div><dt>Candidate Source</dt><dd>{_safe(metadata["candidate_source"])}</dd></div>
+      <div><dt>Source Lists</dt><dd>{_safe(metadata["source_lists"])}</dd></div>
+      <div><dt>Scan IDs</dt><dd>{_safe(metadata["scan_ids"])}</dd></div>
+    </dl>
+    """
+    return rendered or fallback
+
+
+def _review_approval_controls(approval, run_id: str) -> str:
+    review_path = f"/greenrock/reports/{quote(run_id)}/review"
+    if not approval:
+        return "<span class='button disabled'>No approval linked</span>"
+    if approval.status != ApprovalStatus.PENDING:
+        return f"<span class='button disabled'>Approval {approval.status.value}</span>"
+    return (
+        f"<a class='button' href='/approvals/{approval.id}/confirm?action=approve&return_to={quote(review_path)}'>Approve pending report</a>"
+        f"<a class='button secondary' href='/approvals/{approval.id}/confirm?action=reject&return_to={quote(review_path)}'>Reject pending report</a>"
+    )
+
+
+def _review_pdf_controls(approval, pdf_artifact, run_id: str) -> str:
+    review_path = f"/greenrock/reports/{quote(run_id)}/review"
+    if pdf_artifact:
+        return _open_link(pdf_artifact.path, "Open PDF")
+    if not approval or approval.status != ApprovalStatus.APPROVED:
+        return "<span class='button disabled'>PDF export blocked until approval</span>"
+    return f"""
+    <form method="post" action="/greenrock/approvals/{approval.id}/export-pdf" onsubmit="return confirm('Export approved report PDF locally?');">
+      <input type="hidden" name="return_to" value="{_safe(review_path)}">
+      <button type="submit">Export PDF</button>
+    </form>
+    """
+
+
+def _review_candidate_section(title: str, section_markdown: str) -> str:
+    if not section_markdown.strip():
+        return f"""
+        <section class="panel report-review-section">
+          <h2>{_safe(title)}</h2>
+          <p class="empty">No report section available.</p>
+        </section>
+        """
+    return f"""
+    <section class="panel report-review-section">
+      <div class="section-head">
+        <h2>{_safe(title)}</h2>
+        <span class="subtle">Candidate table and evidence notes</span>
+      </div>
+      {_markdown_fragment_to_html(section_markdown)}
+    </section>
+    """
+
+
+def _extract_report_section(markdown: str, headings: tuple[str, ...]) -> str:
+    lines = markdown.splitlines()
+    start = None
+    for index, line in enumerate(lines):
+        if line.strip() in headings:
+            start = index + 1
+            break
+    if start is None:
+        return ""
+    end = len(lines)
+    for index in range(start, len(lines)):
+        line = lines[index].strip()
+        if line.startswith("## ") and line not in headings:
+            end = index
+            break
+    return "\n".join(lines[start:end]).strip()
+
+
+def _markdown_fragment_to_html(markdown: str) -> str:
+    lines = markdown.splitlines()
+    parts: list[str] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index].strip()
+        if not line:
+            index += 1
+            continue
+        if line.startswith("|"):
+            table_lines: list[str] = []
+            while index < len(lines) and lines[index].strip().startswith("|"):
+                table_lines.append(lines[index].strip())
+                index += 1
+            parts.append(_markdown_table_html(table_lines))
+            continue
+        if line.startswith("### "):
+            parts.append(f"<h3>{_safe(line[4:])}</h3>")
+        elif line.startswith("- "):
+            items = []
+            while index < len(lines) and lines[index].strip().startswith("- "):
+                items.append(f"<li>{_clean_markdown_inline(lines[index].strip()[2:])}</li>")
+                index += 1
+            parts.append(f"<ul class='compact-list'>{''.join(items)}</ul>")
+            continue
+        elif line.startswith("> "):
+            parts.append(f"<p class='subtle'><em>{_clean_markdown_inline(line[2:])}</em></p>")
+        else:
+            parts.append(f"<p>{_clean_markdown_inline(line)}</p>")
+        index += 1
+    return "".join(parts) or "<p class='empty'>No content available.</p>"
+
+
+def _markdown_table_html(table_lines: list[str]) -> str:
+    rows: list[list[str]] = []
+    for raw in table_lines:
+        cells = [cell.strip() for cell in raw.strip("|").split("|")]
+        if all(set(cell) <= {"-", ":"} for cell in cells):
+            continue
+        rows.append(cells)
+    if not rows:
+        return ""
+    header = "".join(f"<th>{_clean_markdown_inline(cell)}</th>" for cell in rows[0])
+    body = "".join(
+        "<tr>" + "".join(f"<td>{_clean_markdown_inline(cell)}</td>" for cell in row) + "</tr>"
+        for row in rows[1:]
+    )
+    return f"<div class='review-table-wrap'><table class='review-table'><thead><tr>{header}</tr></thead><tbody>{body}</tbody></table></div>"
+
+
+def _markdown_field(markdown: str, label: str) -> str:
+    for line in markdown.splitlines():
+        stripped = line.strip()
+        bold_prefix = f"**{label}:**"
+        bullet_prefix = f"- {label}:"
+        if stripped.startswith(bold_prefix):
+            return stripped.removeprefix(bold_prefix).strip()
+        if stripped.startswith(bullet_prefix):
+            return stripped.removeprefix(bullet_prefix).strip()
+    return ""
+
+
+def _clean_markdown_inline(text: str) -> str:
+    cleaned = text.replace("**", "")
+    return _safe(cleaned)
 
 
 def decide_approval(approval_id: int, decision: str) -> None:
@@ -1636,7 +1879,7 @@ def _build_inbox_items(context, pending_approvals, reports_ready, failed_runs) -
             {
                 "title": "Review GreenRock Report",
                 "detail": f"Approval {approval.id} is pending human review.",
-                "href": f"/approvals/{approval.id}/confirm?action=approve",
+                "href": f"/greenrock/reports/{quote(approval.run_id)}/review" if approval.run_id else f"/approvals/{approval.id}/confirm?action=approve",
                 "status": "attention",
                 "label": "pending approval",
             }
@@ -1646,7 +1889,7 @@ def _build_inbox_items(context, pending_approvals, reports_ready, failed_runs) -
             {
                 "title": "Approve PDF Export",
                 "detail": f"Run {report.run_id} is approved and missing final PDF.",
-                "href": f"/greenrock",
+                "href": f"/greenrock/reports/{quote(report.run_id)}/review" if report.run_id else "/greenrock",
                 "status": "ready",
                 "label": "ready for PDF",
             }
@@ -2702,9 +2945,10 @@ def _workflow_feed(runs, context) -> str:
         pdf_status = "exported" if _latest_pdf_for_run(context["connection"], run.run_id) else "not exported"
         report = next((item for item in context["reports"] if item.run_id == run.run_id), None)
         data_source = _latest_report_data_source(report) or "-"
+        run_href = f"/greenrock/reports/{quote(run.run_id)}/review" if report else f"/runs/{quote(run.run_id)}"
         rows.append(
             "<tr>"
-            f"<td><a href='/runs/{quote(run.run_id)}'>{_safe(run.run_id)}</a></td>"
+            f"<td><a href='{run_href}'>{_safe(run.run_id)}</a></td>"
             f"<td>{_safe(run.workflow_name)}</td>"
             f"<td><span class='badge {run.status}'>{_safe(run.status)}</span></td>"
             f"<td>{_safe(run.started_at)}</td>"
@@ -2752,7 +2996,7 @@ def _approvals_table(approvals, actions: bool) -> str:
         "<tr>"
         f"<td><a href='/approvals/{approval.id}'>{approval.id}</a></td>"
         f"<td><span class='badge {_safe(approval.status.value)}'>{_safe(approval.status.value)}</span></td>"
-        f"<td>{_safe(approval.artifact_type)}</td><td>{_safe(approval.run_id or '-')}</td>"
+        f"<td>{_safe(approval.artifact_type)}</td><td>{_review_run_link(approval.run_id)}</td>"
         f"<td class='path'>{_safe(approval.artifact_path or '-')}</td>"
         f"{_approval_actions(approval) if actions else ''}"
         "</tr>"
@@ -2766,11 +3010,13 @@ def _approvals_table(approvals, actions: bool) -> str:
 
 def _approval_actions(approval) -> str:
     if approval.status != ApprovalStatus.PENDING:
-        return "<td class='subtle'>decision recorded</td>"
+        return f"<td>{_review_run_button(approval.run_id, 'Review Report')}</td>"
+    review_path = f"/greenrock/reports/{quote(approval.run_id)}/review" if approval.run_id else "/greenrock"
     return f"""
     <td class="actions">
-      <a class="button" href="/approvals/{approval.id}/confirm?action=approve">Approve</a>
-      <a class="button secondary" href="/approvals/{approval.id}/confirm?action=reject">Reject</a>
+      <a class="button" href="/approvals/{approval.id}/confirm?action=approve&return_to={quote(review_path)}">Approve</a>
+      <a class="button secondary" href="/approvals/{approval.id}/confirm?action=reject&return_to={quote(review_path)}">Reject</a>
+      {_review_run_button(approval.run_id, 'Review')}
     </td>
     """
 
@@ -2781,11 +3027,12 @@ def _reports_table(reports) -> str:
     rows = "".join(
         "<tr>"
         f"<td>{report.id}</td><td>{_safe(report.title)}</td><td>{_safe(report.status)}</td>"
-        f"<td>{_safe(report.run_id or '-')}</td><td class='path'>{_safe(report.content_path or '-')}</td>"
+        f"<td>{_review_run_link(report.run_id)}</td><td class='path'>{_safe(report.content_path or '-')}</td>"
+        f"<td>{_review_run_button(report.run_id, 'Review')}</td>"
         "</tr>"
         for report in reports[:30]
     )
-    return "<table><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Run</th><th>Path</th></tr></thead><tbody>" + rows + "</tbody></table>"
+    return "<table><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Run</th><th>Path</th><th>Review</th></tr></thead><tbody>" + rows + "</tbody></table>"
 
 
 def _final_reports_table(rows: tuple[dict[str, str], ...]) -> str:
@@ -2907,6 +3154,24 @@ def _path_action(path: str | None, label: str) -> str:
     return _open_link(path, label)
 
 
+def _review_report_action(report) -> str:
+    if not report or not report.run_id:
+        return "<span class='button disabled'>Review Report unavailable</span>"
+    return _review_run_button(report.run_id, "Review Report")
+
+
+def _review_run_link(run_id: str | None) -> str:
+    if not run_id:
+        return "-"
+    return f"<a href='/greenrock/reports/{quote(run_id)}/review'>{_safe(run_id)}</a>"
+
+
+def _review_run_button(run_id: str | None, label: str) -> str:
+    if not run_id:
+        return f"<span class='button disabled'>{_safe(label)} unavailable</span>"
+    return f"<a class='button secondary' href='/greenrock/reports/{quote(run_id)}/review'>{_safe(label)}</a>"
+
+
 def _open_link(path: str, label: str) -> str:
     if not path:
         return ""
@@ -2972,6 +3237,13 @@ def _with_status(path: str, message: str) -> str:
     query = parse_qs(parsed.query)
     query["status"] = [message]
     return parsed.path + "?" + urlencode({key: values[0] for key, values in query.items()})
+
+
+def _local_return_to(path: str) -> str:
+    parsed = urlparse(path or "/greenrock")
+    if parsed.scheme or parsed.netloc:
+        return "/greenrock"
+    return parsed.path + (f"?{parsed.query}" if parsed.query else "")
 
 
 def _safe(value: object) -> str:
@@ -3239,6 +3511,12 @@ def _page(title: str, content: str, active: str = "/") -> str:
     .staging-actions, .staging-actions form {{ display: grid; gap: 8px; }}
     .staging-notes-form {{ display: grid; gap: 8px; min-width: 220px; }}
     .staging-notes-form textarea {{ min-height: 76px; }}
+    .report-review-meta .detail-panel p {{ overflow-wrap: anywhere; }}
+    .report-review-section {{ overflow-x: auto; }}
+    .review-table-wrap {{ overflow-x: auto; margin: 10px 0 16px; }}
+    .review-table {{ min-width: 760px; }}
+    .review-table th {{ color: var(--gold); background: rgba(23,76,60,.82); }}
+    .review-table td, .review-table th {{ vertical-align: top; }}
     .save-status {{ color: #c9ffdc; font-weight: 700; }}
     .setup-box {{ border: 1px solid rgba(243,201,105,.32); border-radius: 8px; padding: 12px; background: rgba(0,0,0,.18); margin: 12px 0; }}
     .setup-box pre {{ margin: 8px 0 0; white-space: pre-wrap; color: #ffe5a3; }}
