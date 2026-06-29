@@ -13,15 +13,16 @@
 - Store raw input snapshots for reproducibility.
 - Maintain separate concepts for population scans, curated watchlists, and report picks. Population scans broaden the source universe but should not bypass report approval gates.
 - Keep Micro/Moonshot population storage editable for non-index-style names that may not appear in standard index populations.
-- Keep scanner promotion local-only and duplicate-safe. Promotion should write selected scan tickers into GreenRock list CSVs without creating reports, approvals, PDFs, emails, publications, or client-facing files.
-- Treat the discovery workflow as Population -> Scanner -> Promote -> Watchlists -> Stage -> Report. The `/greenrock/discovery` page should help operators understand which stage they are in and what the next local action is.
-- Keep `/greenrock/scanner` focused on discovery: latest scan metadata, quick filters, ranked candidates, batch promotion, Finviz links, data-quality warnings, and clear no-report/no-approval language.
+- Keep scanner promotion and direct scan-to-staging local-only and duplicate-safe. Promotion should write selected scan tickers into GreenRock list CSVs, and staging should write only to the report candidate staging CSV without creating reports, approvals, PDFs, emails, publications, or client-facing files.
+- Treat the discovery workflow as Scan, Stage, Generate Draft, Approve, Export PDF. The `/greenrock/discovery` page should help operators understand which stage they are in and what the next local action is.
+- Keep `/greenrock/scanner` focused on discovery: latest scan metadata, quick filters, ranked candidates, direct scan-to-staging, batch promotion, Finviz links, data-quality warnings, and clear no-report/no-approval language.
 - Keep `/greenrock/watchlists` focused on curated research queues: ticker counts, tickers, Finviz links, promotion source, latest promoted timestamp when promotion metadata exists, and confirmed manual removal.
 - Store promotion metadata as a sidecar CSV so existing watchlist/universe CSV files remain simple ticker lists.
 - Keep `/greenrock/staging` as the final human curation layer before approval-gated report generation. It should allow bucket moves, removals, notes, readiness checks, and source context without creating report runs, approvals, PDFs, emails, publications, or client-facing artifacts.
 - Keep staging buckets explicit: Mega Rock Candidate, Large Cap Candidate, Small/Mid Candidate, Research Only, and Excluded. Count targets should remain visible for the three report candidate buckets.
 - Staging-sourced report generation may create normal workflow runs, report artifacts, and pending approvals only after explicit operator confirmation. It must not publish, email, or export a PDF automatically.
-- Scanner populations should not automatically feed reports. Promotion plus staging is the curated bridge into approval-gated draft generation.
+- Scanner populations should not automatically feed reports. Staging is the preferred curated bridge into approval-gated draft generation.
+- Keep staging-sourced report tables editorial and readable: compact main columns, clean empty-bucket sentences, long bullish/caution signals moved into candidate notes or an appendix, and green table headers with yellow text.
 - Keep bucket-list guardrails firm. If market-cap bucket data conflicts with Mega Rock, Large Cap, or Small/Mid destinations, block the save and suggest the proper list or Personal Watchlist.
 
 ## Scoring Improvements
@@ -51,7 +52,7 @@
 
 ## Future PDF/Graphics/Branding
 
-- Add branded PDF export after Markdown report quality stabilizes.
+- Keep branded PDF export readable as report quality stabilizes.
 - Use the local GreenRock logo at `atlas_os/static/greenrock_logo.png` across browser pages and report/PDF output when available; missing logos must not break report generation.
 - Consider charts for price versus moving averages, Bollinger Bands, RSI, and volume trend.
 - Add GreenRock visual styling, cover page, section dividers, and score legends.

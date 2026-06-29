@@ -118,7 +118,9 @@ def _render_with_reportlab(markdown_path: Path, pdf_path: Path) -> None:
         title="GreenRock Analysts Monthly Opportunity Report",
         author="Atlas OS",
     )
-    story = _markdown_to_story(markdown_path.read_text(encoding="utf-8"), styles, colors)
+    markdown = markdown_path.read_text(encoding="utf-8")
+    doc.greenrock_data_mode = _markdown_data_mode(markdown)
+    story = _markdown_to_story(markdown, styles, colors)
     doc.build(story, onFirstPage=_footer, onLaterPages=_footer)
 
 
@@ -209,13 +211,17 @@ def _clean_inline(text: str) -> str:
     return text
 
 
-def _footer(canvas, doc) -> None:
-    from reportlab.lib.units import inch
+def _markdown_data_mode(markdown: str) -> str:
+    return "Real" if re.search(r"\*\*Data Mode:\*\*\s*REAL|Data Mode:\s*REAL", markdown) else "Mock"
 
+
+def _footer(canvas, doc) -> None:
+    inch = 72
+    data_mode = getattr(doc, "greenrock_data_mode", "Mock")
     canvas.saveState()
     canvas.setFont("Helvetica", 7)
     canvas.setFillColorRGB(0.35, 0.42, 0.38)
-    canvas.drawString(doc.leftMargin, 0.32 * inch, "GreenRock Analysts - Mock data draft/export")
+    canvas.drawString(doc.leftMargin, 0.32 * inch, f"GreenRock Analysts - {data_mode} data draft/export")
     canvas.drawRightString(7.95 * inch, 0.32 * inch, f"Page {doc.page}")
     canvas.restoreState()
 

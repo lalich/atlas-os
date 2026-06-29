@@ -47,10 +47,12 @@ from atlas_os.greenrock.staging import (
     STAGING_BUCKET_LABELS,
     STAGING_BUCKET_TARGETS,
     add_staged_candidate,
+    add_staged_scan_candidate,
     load_staged_candidates,
     move_staged_candidate,
     remove_staged_candidate,
     staging_readiness,
+    trim_staged_bucket,
     update_staged_notes,
 )
 from atlas_os.greenrock.staging_report import run_greenrock_staging_report_workflow, staging_report_readiness
@@ -174,6 +176,14 @@ def create_app():
     ) -> str:
         return promote_greenrock_scan_tickers(scan_id, tuple(tickers), list_key)
 
+    @app.post("/greenrock/scanner/stage-batch", response_class=HTMLResponse)
+    def greenrock_scanner_stage_batch(
+        scan_id: str = Form(""),
+        tickers: list[str] = Form(default=[]),
+        bucket: str = Form("research"),
+    ) -> str:
+        return stage_greenrock_scan_tickers(scan_id, tuple(tickers), bucket)
+
     @app.get("/greenrock/watchlists", response_class=HTMLResponse)
     def greenrock_watchlists() -> str:
         return render_greenrock_watchlists()
@@ -211,6 +221,10 @@ def create_app():
     @app.post("/greenrock/staging/notes", response_class=HTMLResponse)
     def greenrock_staging_notes(ticker: str = Form(""), notes: str = Form("")) -> str:
         return save_greenrock_staging_notes(ticker, notes)
+
+    @app.post("/greenrock/staging/trim", response_class=HTMLResponse)
+    def greenrock_staging_trim(bucket: str = Form("")) -> str:
+        return trim_greenrock_staging_bucket(bucket)
 
     @app.post("/greenrock/watchlists/remove", response_class=HTMLResponse)
     def greenrock_watchlists_remove(ticker: str = Form(""), list_key: str = Form("")) -> str:
@@ -411,6 +425,15 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
                 list_key=form.get("list_key", ""),
             ),
         )
+    if method == "POST" and route == "/greenrock/scanner/stage-batch":
+        return WebResponse(
+            200,
+            stage_greenrock_scan_tickers(
+                scan_id=form.get("scan_id", ""),
+                tickers=tuple(value for value in form_values.get("tickers", ()) if value),
+                bucket=form.get("bucket", "research"),
+            ),
+        )
     if method == "POST" and route == "/greenrock/staging/add":
         return WebResponse(
             200,
@@ -427,6 +450,8 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
         return WebResponse(200, remove_greenrock_staging_candidate(form.get("ticker", "")))
     if method == "POST" and route == "/greenrock/staging/notes":
         return WebResponse(200, save_greenrock_staging_notes(form.get("ticker", ""), form.get("notes", "")))
+    if method == "POST" and route == "/greenrock/staging/trim":
+        return WebResponse(200, trim_greenrock_staging_bucket(form.get("bucket", "")))
     if method == "POST" and route == "/greenrock/staging/generate":
         return WebResponse(
             303,
@@ -605,7 +630,7 @@ def render_greenrock(status_message: str | None = None) -> str:
       {_greenrock_brand_block()}
       <p class="eyebrow">GreenRock Analysts</p>
       <h1>Report Review Console</h1>
-      <p>Mock-data screening output, approval queue, and local final packet controls.</p>
+      <p>Discovery Scan, Review Results, Stage Candidates, Generate Draft Report, Human Approval, Export PDF.</p>
     </section>
     <section class="attention-grid">
       {_attention_card("neutral", _safe(latest_run.status if latest_run else "none"), "Latest Report Status", _safe(latest_run.run_id if latest_run else "No run yet"))}
@@ -621,12 +646,13 @@ def render_greenrock(status_message: str | None = None) -> str:
       <div class="action-row">
         <form method="post" action="/greenrock/run-report" onsubmit="return confirm('Run a new local MOCK GreenRock report draft?');">
           <input type="hidden" name="data_mode" value="mock">
-          <button type="submit">Run Mock Report</button>
+          <button type="submit">Run Sample/Mock Report</button>
         </form>
         <form method="post" action="/greenrock/run-report" onsubmit="return confirm('Run a new local REAL GreenRock report draft using the configured provider?');">
           <input type="hidden" name="data_mode" value="real">
-          <button class="secondary" type="submit">Run Real Report</button>
+          <button class="secondary" type="submit">Run Legacy Watchlist Report</button>
         </form>
+        <a class="button" href="/greenrock/staging">Generate Draft From Staging</a>
         <a class="button secondary" href="/greenrock/picks">GreenRock Picks Board</a>
         <a class="button secondary" href="/greenrock/discovery">Discovery Workflow</a>
         <a class="button secondary" href="/greenrock/scanner">Market Scanner</a>
@@ -657,7 +683,7 @@ def render_greenrock(status_message: str | None = None) -> str:
         <h2>GreenRock Watchlists</h2>
         <span class="subtle">Mega Rock candidate pool, large-cap watchlist, and small/mid-cap watchlist</span>
       </div>
-      <p class="subtle">Real report mode uses environment tickers first. When blank, Atlas ranks these configured local watchlists. Population scans are available separately and do not replace report sourcing yet.</p>
+      <p class="subtle">Preferred report path: run a population scan, stage final candidates, then generate an approval-gated draft from staging. Legacy watchlist reports remain available for continuity.</p>
       {_universe_panels(universes)}
     </section>
     <section class="panel">
@@ -767,13 +793,12 @@ def render_greenrock_discovery(status_message: str | None = None) -> str:
         else "No population scan has been run yet."
     )
     steps = (
-        ("1", "Select Population", "Choose a broad scan source such as QQQ, S&P 500, Russell 2000, or Micro/Moonshot."),
-        ("2", "Run Scan", "Use the scanner as the discovery engine. It writes local scan CSV and summary output only."),
-        ("3", "Review Ranked Results", "Compare Score, Confidence, Evidence Agreement, Guardrail, and Research Priority."),
-        ("4", "Promote Selected Names", "Save promising names to a local GreenRock list for future review."),
-        ("5", "View Updated Watchlists", "Use watchlists as curated research queues with promotion metadata and Finviz links."),
-        ("6", "Stage Report Candidates", "Move names into Mega Rock, Large Cap, Small/Mid, Research Only, or Excluded buckets."),
-        ("7", "Generate Report Later", "Reports remain separate, local, and human approval-gated."),
+        ("1", "Discovery Scan", "Choose a broad population and run the local scanner."),
+        ("2", "Review Results", "Compare Score, Confidence, Evidence Agreement, Guardrail, and Research Priority."),
+        ("3", "Stage Candidates", "Send selected scan names directly into the final report slate."),
+        ("4", "Generate Draft Report", "Use staging as the preferred source for GreenRock report drafts."),
+        ("5", "Human Approval", "Every report draft stays blocked until explicit human approval."),
+        ("6", "Export PDF", "Export happens only after approval and remains local."),
     )
     step_cards = "".join(
         f"""
@@ -791,7 +816,7 @@ def render_greenrock_discovery(status_message: str | None = None) -> str:
       {_greenrock_brand_block()}
       <p class="eyebrow">GreenRock Discovery Workflow</p>
       <h1>GreenRock Discovery Flow</h1>
-      <p>Guide broad market discovery into curated local research queues and report candidate staging without publishing or bypassing approvals.</p>
+      <p>Guide broad market discovery into staged report candidates without publishing or bypassing approvals.</p>
     </section>
     <section class="panel discovery-flow-panel">
       <div class="section-head">
@@ -799,7 +824,7 @@ def render_greenrock_discovery(status_message: str | None = None) -> str:
         <span class="subtle">Local research workflow</span>
       </div>
       <div class="workflow-stepper" aria-label="GreenRock discovery workflow">
-        <span>Population</span><span>Scan</span><span>Promote</span><span>Watchlist</span><span>Stage</span><span>Report</span>
+        <span>Discovery Scan</span><span>Review Results</span><span>Stage</span><span>Draft</span><span>Approve</span><span>Export PDF</span>
       </div>
       <div class="workflow-grid">{step_cards}</div>
     </section>
@@ -815,7 +840,7 @@ def render_greenrock_discovery(status_message: str | None = None) -> str:
         <a class="button secondary" href="/greenrock/picks">Picks Board</a>
         <a class="button secondary" href="/greenrock/score">Score Calculator</a>
       </div>
-      <p class="subtle">Population = broad scan source. Scanner = discovery engine. Promote = save a promising name for future review/report consideration. Watchlist = curated research queue. Report = approval-gated publication draft.</p>
+      <p class="subtle">Scanner = discovery. Watchlists = saved research queues. Staging = final report slate. Report = approval-gated output. Picks Board = latest published or draft picks display.</p>
     </section>
     """
     return _page("GreenRock Discovery", content, active="/greenrock/discovery")
@@ -878,7 +903,7 @@ def render_greenrock_scanner(status_message: str | None = None, query: dict[str,
     <section class="hero compact greenrock-hero">
       <p class="eyebrow">GreenRock Analysts</p>
       <h1>Market Scanner</h1>
-      <p>Scanner = discovery engine. Review broad populations, then promote selected names into local research queues.</p>
+      <p>Scanner = discovery engine. Review broad populations, then stage selected names into the final report slate or save them to local research queues.</p>
       <p><a class="button secondary" href="/greenrock/discovery">Discovery Workflow</a></p>
     </section>
     <section class="panel">
@@ -887,7 +912,7 @@ def render_greenrock_scanner(status_message: str | None = None, query: dict[str,
         <span class="subtle">Real provider required. Local output only.</span>
       </div>
       <div class="action-row">{population_buttons}</div>
-      <p class="subtle">Population = broad scan source. Watchlist = manually curated list. Report picks = final ranked output after approval-gated report workflow.</p>
+      <p class="subtle">Primary workflow: Discovery Scan, Review Results, Stage Candidates, Generate Draft Report, Human Approval, Export PDF.</p>
     </section>
     {latest}
     <section class="panel">
@@ -932,7 +957,7 @@ def render_greenrock_staging(status_message: str | None = None) -> str:
     <section class="hero compact greenrock-hero">
       <p class="eyebrow">GreenRock Report Candidate Staging</p>
       <h1>Final Human Curation Before Reports</h1>
-      <p>Stage promoted names into report candidate buckets without creating reports, approvals, PDFs, emails, or publication artifacts.</p>
+      <p>Stage names into the final report slate. Staging alone creates no reports, approvals, PDFs, emails, or publication artifacts.</p>
       <p><a class="button secondary" href="/greenrock/discovery">Discovery Workflow</a></p>
     </section>
     <section class="board-meta">{readiness_cards}</section>
@@ -956,7 +981,7 @@ def render_greenrock_staging(status_message: str | None = None) -> str:
     <section class="staging-grid">{bucket_sections}</section>
     <section class="panel">
       <h2>Report Flow Clarity</h2>
-      <p class="subtle">Scan -> Promote -> Watchlist -> Stage -> Report. Staging is the final local curation layer before an approval-gated report draft. It is not publication and not a personalized recommendation.</p>
+      <p class="subtle">Preferred workflow: Scan, Stage, Generate Draft, Approve, Export PDF. Staging is the final local curation layer before an approval-gated report draft. It is not publication and not a personalized recommendation.</p>
     </section>
     """
     return _page("GreenRock Staging", content, active="/greenrock/staging")
@@ -1046,6 +1071,24 @@ def promote_greenrock_scan_tickers(scan_id: str, tickers: tuple[str, ...], list_
     return render_greenrock_scanner(summary)
 
 
+def stage_greenrock_scan_tickers(scan_id: str, tickers: tuple[str, ...], bucket: str) -> str:
+    settings = get_settings()
+    if not tickers:
+        return render_greenrock_scanner("Staging blocked: choose at least one ticker.")
+    statuses: list[str] = []
+    warnings: list[str] = []
+    for ticker in tickers:
+        try:
+            row = add_staged_scan_candidate(settings.output_dir, scan_id, ticker, bucket)
+            statuses.append(f"{row['ticker']} staged as {STAGING_BUCKET_LABELS[row['staged_bucket']]}")
+        except ValueError as error:
+            warnings.append(str(error))
+    summary = f"Stage summary: {len(statuses)} staged. " + "; ".join(statuses)
+    if warnings:
+        summary += " Warnings: " + " ".join(dict.fromkeys(warnings))
+    return render_greenrock_scanner(summary)
+
+
 def stage_greenrock_candidate(ticker: str, bucket: str, source_list: str = "manual", notes: str = "") -> str:
     settings = get_settings()
     try:
@@ -1080,6 +1123,17 @@ def save_greenrock_staging_notes(ticker: str, notes: str) -> str:
         status = f"Notes updated for {row['ticker']}."
     except ValueError as error:
         status = f"Notes update blocked: {error}"
+    return render_greenrock_staging(status)
+
+
+def trim_greenrock_staging_bucket(bucket: str) -> str:
+    settings = get_settings()
+    try:
+        trim_staged_bucket(settings.output_dir, bucket)
+        label = STAGING_BUCKET_LABELS.get(bucket, bucket)
+        status = f"{label} trimmed to top ranked staged candidates."
+    except ValueError as error:
+        status = f"Trim blocked: {error}"
     return render_greenrock_staging(status)
 
 
@@ -1947,7 +2001,31 @@ def _staging_readiness_card(item) -> str:
         "Overfilled": "red",
         "Needs Review": "neutral",
     }.get(item.status, "neutral")
-    return _attention_card(color, f"{item.count}/{target}", item.label, item.status)
+    guidance = ""
+    if item.status == "Overfilled" and item.target is not None:
+        guidance = (
+            f"<p class='subtle'>Select final {item.target}. "
+            f"{_trim_bucket_form(item.bucket)}</p>"
+        )
+    elif item.status == "Underfilled" and item.target is not None:
+        guidance = "<p class='subtle'>Add staged candidates or generate with underfilled warnings.</p>"
+    return f"""
+    <article class="attention-card {color}">
+      <strong>{item.count}/{_safe(target)}</strong>
+      <h2>{_safe(item.label)}</h2>
+      <p>{_safe(item.status)}</p>
+      {guidance}
+    </article>
+    """
+
+
+def _trim_bucket_form(bucket: str) -> str:
+    return f"""
+    <form method="post" action="/greenrock/staging/trim" class="inline-trim-form" onsubmit="return confirm('Trim this bucket to the top ranked staged candidates?');">
+      <input type="hidden" name="bucket" value="{_safe(bucket)}">
+      <button type="submit" class="secondary">Trim to Top Ranked</button>
+    </form>
+    """
 
 
 def _staging_generation_status(warnings: tuple[str, ...]) -> str:
@@ -2127,13 +2205,17 @@ def _scan_results_table(rows, scan_id: str = "", batch: bool = False) -> str:
     )
     if not batch:
         return table
+    bucket_options = _staging_bucket_options("research")
     return f"""
-    <form method="post" action="/greenrock/scanner/promote-batch" class="scan-review-form" onsubmit="return confirm('Promote these tickers to the selected GreenRock list?');">
+    <form method="post" action="/greenrock/scanner/promote-batch" class="scan-review-form" onsubmit="return confirm('Apply the selected scanner action to these tickers?');">
       <input type="hidden" name="scan_id" value="{_safe(scan_id)}">
       <div class="promotion-bar">
         <span class="subtle">Promote these tickers to [list]?</span>
         <select name="list_key">{options}</select>
         <button type="submit">Promote Selected</button>
+        <span class="subtle">Stage selected candidates as</span>
+        <select name="bucket">{bucket_options}</select>
+        <button type="submit" formaction="/greenrock/scanner/stage-batch">Stage Selected Candidates</button>
       </div>
       {table}
     </form>
@@ -3145,6 +3227,8 @@ def _page(title: str, content: str, active: str = "/") -> str:
     .scan-review-form {{ min-width: 1780px; }}
     .promotion-bar {{ position: sticky; left: 0; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; padding: 10px; margin-bottom: 12px; border: 1px solid rgba(55,214,122,.25); border-radius: 8px; background: rgba(55,214,122,.08); }}
     .promotion-bar select {{ min-width: 240px; }}
+    .inline-trim-form {{ display: inline-flex; margin-left: 6px; vertical-align: middle; }}
+    .inline-trim-form button {{ padding: 7px 10px; font-size: 12px; }}
     .watchlist-card {{ overflow-x: auto; }}
     .watchlist-card table {{ min-width: 560px; }}
     .staging-grid {{ display: grid; gap: 14px; }}

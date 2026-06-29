@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from atlas_os.greenrock.scanner import latest_scan, load_promotion_metadata
+from atlas_os.greenrock.scanner import latest_scan, load_promotion_metadata, load_scan
 from atlas_os.greenrock.universe import LARGE_CAP_UNIVERSE, MEGA_ROCK_UNIVERSE, SMALL_MID_CAP_UNIVERSE
 
 
@@ -125,6 +125,39 @@ def add_staged_candidate(
     return row
 
 
+def add_staged_scan_candidate(
+    output_dir: Path,
+    scan_id: str,
+    ticker: str,
+    bucket: str,
+    notes: str = "",
+) -> dict[str, str]:
+    scan = load_scan(output_dir, scan_id)
+    normalized_ticker = _normalize_ticker(ticker)
+    scan_row = next((row for row in scan.rows if row.get("symbol", "").upper() == normalized_ticker), None)
+    if scan_row is None:
+        raise ValueError(f"{normalized_ticker} was not found in scan {scan.scan_id}.")
+    return _upsert_staged_row(
+        output_dir,
+        {
+            "ticker": normalized_ticker,
+            "staged_bucket": _normalize_bucket(bucket),
+            "source_list": "latest_scan",
+            "source_scan_id": scan.scan_id,
+            "greenrock_score": scan_row.get("greenrock_score", ""),
+            "confidence": scan_row.get("greenrock_confidence", ""),
+            "evidence_agreement": scan_row.get("evidence_agreement", ""),
+            "guardrail": scan_row.get("fundamental_guardrail", ""),
+            "research_priority": scan_row.get("research_priority", ""),
+            "top_bullish_signal": scan_row.get("top_bullish_signal", ""),
+            "top_caution_signal": scan_row.get("top_caution_signal", ""),
+            "staged_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "notes": notes,
+        },
+        market_cap_bucket=scan_row.get("market_cap_bucket", ""),
+    )
+
+
 def move_staged_candidate(output_dir: Path, ticker: str, bucket: str, notes: str | None = None) -> dict[str, str]:
     normalized_ticker = _normalize_ticker(ticker)
     normalized_bucket = _normalize_bucket(bucket)
@@ -148,6 +181,22 @@ def remove_staged_candidate(output_dir: Path, ticker: str) -> bool:
     kept = tuple(row for row in rows if row["ticker"] != normalized_ticker)
     save_staged_candidates(output_dir, kept)
     return len(kept) != len(rows)
+
+
+def trim_staged_bucket(output_dir: Path, bucket: str) -> tuple[dict[str, str], ...]:
+    normalized_bucket = _normalize_bucket(bucket)
+    target = STAGING_BUCKET_TARGETS.get(normalized_bucket)
+    if target is None:
+        raise ValueError("Only report candidate buckets can be trimmed.")
+    rows = list(load_staged_candidates(output_dir))
+    bucket_rows = [row for row in rows if row.get("staged_bucket") == normalized_bucket]
+    keep = {
+        row["ticker"]
+        for row in sorted(bucket_rows, key=_stage_rank_key, reverse=True)[:target]
+    }
+    trimmed = tuple(row for row in rows if row.get("staged_bucket") != normalized_bucket or row["ticker"] in keep)
+    save_staged_candidates(output_dir, trimmed)
+    return trimmed
 
 
 def update_staged_notes(output_dir: Path, ticker: str, notes: str) -> dict[str, str]:
@@ -201,6 +250,24 @@ def _candidate_metadata(output_dir: Path, ticker: str, source_list: str) -> dict
     return {"source_list": source_list or "manual"}
 
 
+def _upsert_staged_row(output_dir: Path, row: dict[str, str], market_cap_bucket: str = "") -> dict[str, str]:
+    normalized = _normalize_row(row)
+    _validate_staging_bucket(normalized["ticker"], normalized["staged_bucket"], {"market_cap_bucket": market_cap_bucket})
+    existing = list(load_staged_candidates(output_dir))
+    replaced = False
+    for index, item in enumerate(existing):
+        if item["ticker"] == normalized["ticker"]:
+            if not normalized.get("notes"):
+                normalized["notes"] = item.get("notes", "")
+            existing[index] = normalized
+            replaced = True
+            break
+    if not replaced:
+        existing.append(normalized)
+    save_staged_candidates(output_dir, tuple(existing))
+    return normalized
+
+
 def _metadata_from_latest_scan(output_dir: Path, ticker: str) -> dict[str, str]:
     scan = latest_scan(output_dir)
     if not scan:
@@ -251,6 +318,17 @@ def _suggested_staging_bucket(market_cap_bucket: str) -> str:
 
 def _normalize_ticker(ticker: str) -> str:
     return ticker.strip().upper()
+
+
+def _stage_rank_key(row: dict[str, str]) -> tuple[float, float, float]:
+    return (_float(row.get("greenrock_score", "")), _float(row.get("confidence", "")), _float(row.get("evidence_agreement", "")))
+
+
+def _float(value: str) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _normalize_bucket(bucket: str) -> str:

@@ -95,13 +95,13 @@ Open:
 http://127.0.0.1:8000/greenrock/picks
 ```
 
-The Picks Board shows one featured Mega Rock pick, eleven large-cap picks, and eleven small/mid-cap picks when available. It includes section counts, Finviz links, GreenRock Scores, signal labels, technical fields, and a clear mock/real data badge. Current report mode ranks configured watchlists; population scans are available separately and do not replace report sourcing yet. If a section is incomplete, Atlas shows a data quality warning. It is local-only and not a publishing surface.
+The Picks Board shows one featured Mega Rock pick, eleven large-cap picks, and eleven small/mid-cap picks when available. It includes section counts, Finviz links, GreenRock Scores, signal labels, technical fields, and a clear mock/real data badge. Current report mode supports the preferred staging-sourced draft flow and legacy watchlist draft flow. Population scans should be reviewed and staged before report generation. If a section is incomplete, Atlas shows a data quality warning. It is local-only and not a publishing surface.
 
 Real-data buckets are Mega Rock at $1T+, large cap from $10B to below $1T, and small/mid below $10B.
 
 ## Run Population Scanner
 
-Population scans are broad source screens, not report picks.
+Population scans are broad source screens, not report picks. Preferred workflow: Scan, Stage, Generate Draft, Approve, Export PDF.
 
 ```bash
 atlas greenrock population reset-all
@@ -139,12 +139,12 @@ Recommended browser flow:
 1. Open `/greenrock/discovery` to orient the workflow.
 2. Select a population and run the scan from `/greenrock/scanner`.
 3. Use the scanner filters for minimum GreenRock Score, Confidence, Evidence Agreement, Research Priority, and Guardrail label.
-4. Select one or more tickers, choose a destination list, and confirm promotion.
-5. Open `/greenrock/watchlists` to review updated local research queues.
-6. Open `/greenrock/staging` to choose final report candidates and operator notes.
-7. Generate reports later from the report workflow only; reports remain approval-gated.
+4. Select one or more tickers and either stage them directly into a report bucket or save them to a local research queue.
+5. Open `/greenrock/watchlists` only when you want to review saved research queues.
+6. Open `/greenrock/staging` to choose final report candidates, operator notes, and readiness.
+7. Generate the draft from staging, then approve before any PDF export.
 
-Promotion saves only to local GreenRock list CSVs. It is duplicate-safe and blocks bucket-list mismatches before writing, with a suggested destination and Personal Watchlist fallback. Promotion metadata is stored locally in `.atlas/output/greenrock/watchlists/promotion_metadata.csv` with scan ID, score, confidence, evidence agreement, research priority, guardrail, and promoted timestamp.
+Promotion saves only to local GreenRock list CSVs. Direct scan-to-staging saves only to the local staging CSV. Both paths are duplicate-safe and block bucket mismatches before writing where market-cap data is available. Promotion metadata is stored locally in `.atlas/output/greenrock/watchlists/promotion_metadata.csv` with scan ID, score, confidence, evidence agreement, research priority, guardrail, and promoted timestamp.
 
 GreenRock branding expects the local logo at `atlas_os/static/greenrock_logo.png`. If it is missing, browser pages and report/PDF generation continue without failing.
 
@@ -157,7 +157,7 @@ atlas greenrock report-from-staging
 atlas greenrock report-from-staging --allow-underfilled
 ```
 
-Without `--allow-underfilled`, Atlas blocks underfilled staging buckets. With it, Atlas creates a normal approval-gated draft and includes readiness warnings. Scanner populations do not automatically feed reports; promoted and staged candidates are the curated bridge.
+Without `--allow-underfilled`, Atlas blocks underfilled staging buckets. With it, Atlas creates a normal approval-gated draft and includes readiness warnings. Overfilled staging buckets show guidance to select the final 1/11/11 and include a confirmed trim-to-top-ranked helper. Scanner populations do not automatically feed reports; staged candidates are the curated bridge.
 
 ## Score Any Ticker
 
@@ -310,7 +310,7 @@ Use the navigation cards for:
 - Approvals.
 - Artifacts / Reports.
 
-On the GreenRock page, use **Run Mock Report** to generate a default mock-data draft or **Run Real Report** to attempt the configured real-data provider. Both buttons create a pending approval only after the workflow succeeds and neither button bypasses human review.
+On the GreenRock page, use **Generate Draft From Staging** for the preferred report path. **Run Sample/Mock Report** and **Run Legacy Watchlist Report** remain available for comparison and continuity. These actions create a pending approval only after the workflow succeeds and none bypass human review.
 
 For browser real mode:
 
@@ -321,7 +321,7 @@ export ATLAS_GREENROCK_REAL_TICKERS=
 atlas serve
 ```
 
-Open `http://127.0.0.1:8000/greenrock`, then click **Run Real Report**. With `ATLAS_GREENROCK_REAL_TICKERS` blank, Atlas uses the local GreenRock watchlists. If the provider is not configured, the browser shows a blocked message and no run, artifact, report, or approval is created.
+Open `http://127.0.0.1:8000/greenrock/staging`, then click **Generate Draft From Staging** and confirm. Legacy real watchlist drafts remain available from `http://127.0.0.1:8000/greenrock`. With `ATLAS_GREENROCK_REAL_TICKERS` blank, the legacy path uses local GreenRock watchlists. If the provider is not configured, the browser shows a blocked message and no run, artifact, report, or approval is created.
 
 Open `http://127.0.0.1:8000/greenrock/final-reports` to review the final PDF archive.
 

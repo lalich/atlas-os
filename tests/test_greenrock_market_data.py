@@ -34,6 +34,7 @@ from atlas_os.greenrock.staging import (
     load_staged_candidates,
     move_staged_candidate,
     remove_staged_candidate,
+    save_staged_candidates,
     staging_readiness,
 )
 from atlas_os.greenrock.staging_report import run_greenrock_staging_report_workflow
@@ -405,12 +406,12 @@ class GreenRockMarketDataTests(unittest.TestCase):
         self.assertIn("/static/greenrock_logo.png", response.body)
         self.assertIn("GreenRock Discovery Flow", response.body)
         self.assertNotIn("->", response.body)
-        self.assertIn("Select Population", response.body)
-        self.assertIn("Run Scan", response.body)
-        self.assertIn("Review Ranked Results", response.body)
-        self.assertIn("Promote Selected Names", response.body)
-        self.assertIn("View Updated Watchlists", response.body)
-        self.assertIn("Generate Report Later", response.body)
+        self.assertIn("Discovery Scan", response.body)
+        self.assertIn("Review Results", response.body)
+        self.assertIn("Stage Candidates", response.body)
+        self.assertIn("Generate Draft Report", response.body)
+        self.assertIn("Human Approval", response.body)
+        self.assertIn("Export PDF", response.body)
 
     def test_scanner_page_shows_latest_scan_metadata_and_filters(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -434,6 +435,42 @@ class GreenRockMarketDataTests(unittest.TestCase):
         self.assertIn("Research Priority", response.body)
         self.assertIn("Guardrail label", response.body)
         self.assertIn("Promote Selected", response.body)
+        self.assertIn("Stage Selected Candidates", response.body)
+
+    def test_scanner_can_stage_selected_candidates_directly_without_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {
+                "ATLAS_DB_PATH": str(root / "atlas.db"),
+                "ATLAS_OUTPUT_DIR": str(root / "output"),
+            }
+            with patch.dict("os.environ", env, clear=False):
+                db_path = initialize_database(root / "atlas.db")
+                result = run_population_scan(root / "output", "micro_moonshot", provider=FakeMarketDataProvider())
+                ticker = result.rows[0]["symbol"]
+                response = dispatch_request(
+                    "POST",
+                    "/greenrock/scanner/stage-batch",
+                    f"scan_id={result.scan_id}&tickers={ticker}&bucket=research",
+                )
+                staged = load_staged_candidates(root / "output")
+                with connect(db_path) as connection:
+                    approvals = list_approvals(connection)
+                    artifacts = list_artifacts(connection)
+                    runs = list_workflow_runs(connection)
+
+        self.assertEqual(response.status, 200)
+        self.assertIn("Stage summary: 1 staged", response.body)
+        self.assertEqual(len(staged), 1)
+        self.assertEqual(staged[0]["ticker"], ticker)
+        self.assertEqual(staged[0]["source_scan_id"], result.scan_id)
+        self.assertEqual(staged[0]["source_list"], "latest_scan")
+        self.assertEqual(staged[0]["greenrock_score"], result.rows[0]["greenrock_score"])
+        self.assertEqual(staged[0]["confidence"], result.rows[0]["greenrock_confidence"])
+        self.assertEqual(staged[0]["evidence_agreement"], result.rows[0]["evidence_agreement"])
+        self.assertEqual(approvals, ())
+        self.assertEqual(artifacts, ())
+        self.assertEqual(runs, ())
 
     def test_scanner_promotion_saves_duplicate_safe_and_local_only(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -664,6 +701,45 @@ class GreenRockMarketDataTests(unittest.TestCase):
         self.assertEqual(approvals, ())
         self.assertEqual(artifacts, ())
         self.assertEqual(runs, ())
+
+    def test_staging_readiness_shows_overfilled_guidance_and_trim_helper(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            rows = tuple(
+                {
+                    "ticker": f"LC{index:02d}",
+                    "staged_bucket": "large",
+                    "source_list": "test",
+                    "source_scan_id": "",
+                    "greenrock_score": str(70 + index),
+                    "confidence": str(60 + index),
+                    "evidence_agreement": str(50 + index),
+                    "guardrail": "Supportive",
+                    "research_priority": "This Week",
+                    "top_bullish_signal": "",
+                    "top_caution_signal": "",
+                    "staged_at": "2026-06-28T00:00:00+00:00",
+                    "notes": "",
+                }
+                for index in range(12)
+            )
+            save_staged_candidates(root / "output", rows)
+            env = {
+                "ATLAS_DB_PATH": str(root / "atlas.db"),
+                "ATLAS_OUTPUT_DIR": str(root / "output"),
+            }
+            with patch.dict("os.environ", env, clear=False):
+                page = dispatch_request("GET", "/greenrock/staging")
+                trimmed = dispatch_request("POST", "/greenrock/staging/trim", "bucket=large")
+                staged = load_staged_candidates(root / "output")
+
+        self.assertEqual(page.status, 200)
+        self.assertIn("Overfilled", page.body)
+        self.assertIn("Select final 11", page.body)
+        self.assertIn("Trim to Top Ranked", page.body)
+        self.assertEqual(trimmed.status, 200)
+        self.assertEqual(len([row for row in staged if row["staged_bucket"] == "large"]), 11)
+        self.assertNotIn("LC00", {row["ticker"] for row in staged})
 
     def test_cli_staging_commands_work(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

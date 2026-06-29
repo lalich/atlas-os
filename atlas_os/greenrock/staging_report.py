@@ -201,8 +201,6 @@ def build_staging_report_markdown(run_id: str, rows: tuple[dict[str, str], ...],
         "**Data Mode:** REAL",
         "**Selection Mode:** STAGING",
         "**Candidate Source:** Staging-sourced",
-        f"**Staged Candidate Source:** {', '.join(source_lists) if source_lists else 'local staging'}",
-        f"**Source Scan ID:** {', '.join(scan_ids) if scan_ids else 'not available'}",
         "",
         "> Draft only. This staging-sourced report requires human approval before any client-facing use.",
         "",
@@ -214,15 +212,21 @@ def build_staging_report_markdown(run_id: str, rows: tuple[dict[str, str], ...],
             "approval-gated report workflow."
         ),
         "",
-        "- Source type: Staging-sourced",
         "- Data mode: REAL",
         "- Selection mode: STAGING",
-        f"- Source lists: {', '.join(source_lists) if source_lists else 'local staging'}",
-        f"- Scan IDs: {', '.join(scan_ids) if scan_ids else 'not available'}",
-        "",
-        "## Readiness Warning",
-        "",
+        "- Source type: Staging-sourced",
     ]
+    if source_lists:
+        lines.append(f"- Source lists: {', '.join(source_lists)}")
+    if scan_ids:
+        lines.append(f"- Scan IDs: {', '.join(scan_ids)}")
+    lines.extend(
+        [
+            "",
+            "## Readiness",
+            "",
+        ]
+    )
     if warnings:
         lines.extend(f"- {warning}" for warning in warnings)
     else:
@@ -233,18 +237,22 @@ def build_staging_report_markdown(run_id: str, rows: tuple[dict[str, str], ...],
             "## Mega Rock Candidate",
             "",
             _staging_table(tuple(row for row in rows if row.get("staged_bucket") == MEGA_BUCKET)),
+            _candidate_signal_summaries(tuple(row for row in rows if row.get("staged_bucket") == MEGA_BUCKET)),
             "",
             "## Large Cap Candidates",
             "",
             _staging_table(tuple(row for row in rows if row.get("staged_bucket") == LARGE_BUCKET)),
+            _candidate_signal_summaries(tuple(row for row in rows if row.get("staged_bucket") == LARGE_BUCKET)),
             "",
             "## Small/Mid Candidates",
             "",
             _staging_table(tuple(row for row in rows if row.get("staged_bucket") == SMALL_MID_BUCKET)),
+            _candidate_signal_summaries(tuple(row for row in rows if row.get("staged_bucket") == SMALL_MID_BUCKET)),
             "",
             "## Research Only / Excluded",
             "",
             _staging_table(tuple(row for row in rows if row.get("staged_bucket") not in {MEGA_BUCKET, LARGE_BUCKET, SMALL_MID_BUCKET})),
+            _candidate_signal_summaries(tuple(row for row in rows if row.get("staged_bucket") not in {MEGA_BUCKET, LARGE_BUCKET, SMALL_MID_BUCKET})),
             "",
             "## Human Approval Disclaimer",
             "",
@@ -265,30 +273,46 @@ def build_staging_report_markdown(run_id: str, rows: tuple[dict[str, str], ...],
 
 
 def _staging_table(rows: tuple[dict[str, str], ...]) -> str:
-    lines = [
-        "| Ticker | Bucket | GreenRock Score | Confidence | Evidence Agreement | Guardrail | Research Priority | Top Bullish Signal | Top Caution Signal | Source | Scan ID | Staging Notes |",
-        "|---|---|---:|---:|---:|---|---|---|---|---|---|---|",
-    ]
     if not rows:
-        lines.append("| No staged candidates | - | - | - | - | - | - | - | - | - | - | - |")
-        return "\n".join(lines)
+        return "No staged candidates in this bucket."
+    lines = [
+        "| Ticker | Score | Confidence | Evidence | Guardrail | Priority | Source | Notes |",
+        "|---|---:|---:|---:|---|---|---|---|",
+    ]
     for row in rows:
+        source = row.get("source_list", "") or "local staging"
+        if row.get("source_scan_id"):
+            source = f"{source} / {row.get('source_scan_id')}"
         lines.append(
             "| "
             f"{row.get('ticker', '')} | "
-            f"{STAGING_BUCKET_LABELS.get(row.get('staged_bucket', ''), row.get('staged_bucket', ''))} | "
             f"{row.get('greenrock_score', '') or '-'} | "
             f"{row.get('confidence', '') or '-'} | "
             f"{row.get('evidence_agreement', '') or '-'} | "
             f"{row.get('guardrail', '') or '-'} | "
             f"{row.get('research_priority', '') or '-'} | "
-            f"{row.get('top_bullish_signal', '') or '-'} | "
-            f"{row.get('top_caution_signal', '') or '-'} | "
-            f"{row.get('source_list', '') or 'local staging'} | "
-            f"{row.get('source_scan_id', '') or '-'} | "
+            f"{source} | "
             f"{row.get('notes', '') or '-'} |"
         )
     return "\n".join(lines)
+
+
+def _candidate_signal_summaries(rows: tuple[dict[str, str], ...]) -> str:
+    if not rows:
+        return ""
+    lines = ["", "### Candidate Evidence Notes", ""]
+    for row in rows:
+        bullish = row.get("top_bullish_signal", "") or "No top bullish signal recorded."
+        caution = row.get("top_caution_signal", "") or "No top caution signal recorded."
+        lines.extend(
+            [
+                f"**{row.get('ticker', '')}**",
+                f"- Top bullish signal: {bullish}",
+                f"- Top caution signal: {caution}",
+                "",
+            ]
+        )
+    return "\n".join(lines).strip()
 
 
 def _logo_lines() -> list[str]:
