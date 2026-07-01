@@ -125,6 +125,10 @@ Population scans are broader research screens sourced from Universe Manager, sep
 atlas greenrock population reset-all
 atlas greenrock population list
 atlas greenrock population master
+atlas greenrock market-pulse
+atlas greenrock archetypes audit
+atlas greenrock universe health
+atlas greenrock universe cleanup-failures --dry-run
 atlas greenrock population add micro_moonshot GRRR PI
 atlas greenrock population validate
 atlas greenrock scan --population all
@@ -145,6 +149,8 @@ Populations are stored locally under `.atlas/output/greenrock/populations/`:
 Scan outputs are stored under `.atlas/output/greenrock/scans/<scan_id>/` as `scan_results.csv` and `scan_summary.md`. Scans require the configured real provider, fail safely when it is unavailable, and do not create reports, approvals, emails, or publications. The preferred GreenRock report path is now: Scan, Stage, Generate Draft, Approve, Export PDF.
 
 Scan rows are ranked candidates with GreenRock Score, Confidence, Evidence Agreement, Guardrail, Research Priority, Rank, Percentile, Universe Membership, and Market Archetype. Scan summaries show total configured tickers, fetched/scored tickers, skipped tickers, provider failures, duplicates removed, and ranked count.
+
+Universe Manager UI uses filters and pagination for the Master Universe instead of showing only the first alphabetical sample. Filter by provider, market-cap bucket, archetype, or ticker search. Provider failures from the latest successful scan are summarized separately so stale/delisted/acquired names do not dominate the page. Cleanup is dry-run by default; confirmed cleanup only removes failed tickers from editable local population seed CSVs.
 
 Scanner actions can either save a ticker into Watchlist, Ranked Candidates, Strict Review, Mega Rock Candidate Pool, Large Cap Watchlist, or Small/Mid Watchlist, or stage selected scan rows directly into the final report slate. Promotion and staging are duplicate-safe, show market-cap bucket warnings where applicable, and write only to local GreenRock CSVs.
 

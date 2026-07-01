@@ -115,6 +115,10 @@ Preferred workflow: Scan, Stage, Generate Draft, Approve, Export PDF.
 atlas greenrock population reset-all
 atlas greenrock population list
 atlas greenrock population master
+atlas greenrock market-pulse
+atlas greenrock archetypes audit
+atlas greenrock universe health
+atlas greenrock universe cleanup-failures --dry-run
 atlas greenrock population validate
 atlas greenrock scan --population qqq
 atlas greenrock scan --population sp500
@@ -145,6 +149,10 @@ Outputs are local only:
 - `.atlas/output/greenrock/scans/<scan_id>/scan_summary.md`
 
 Scans require the configured real provider and fail safely with setup instructions when unavailable. They create local scan files only; they do not create report approvals, PDFs, emails, or publications. Ranked scanner rows include GreenRock Score, Confidence, Evidence Agreement, Guardrail, Research Priority, Rank, Percentile, Universe Membership, and Market Archetype. Scan summaries show total configured tickers, fetched/scored tickers, skipped tickers, provider failures, duplicates removed, and ranked count.
+
+Universe Manager shows provider cards, master total, duplicates removed, bucket counts, archetype counts, and provider failure health before the row table. The table is filtered and paginated; use provider, market-cap bucket, archetype, or ticker search instead of relying on the first alphabetical rows.
+
+`atlas greenrock universe health` shows provider-failed tickers with failure reason, source membership, and suggested action. `atlas greenrock universe cleanup-failures --dry-run` changes nothing. `--confirm` is required before Atlas removes failed tickers from editable local population seed files.
 
 Recommended browser flow:
 

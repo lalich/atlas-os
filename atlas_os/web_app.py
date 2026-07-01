@@ -36,11 +36,13 @@ from atlas_os.core.workflow_runs import get_workflow_run, list_workflow_runs
 from atlas_os.db.database import connect, initialize_database
 from atlas_os.greenrock.pdf_export import render_markdown_report_to_pdf
 from atlas_os.greenrock.market_data import MarketDataConfigurationError
-from atlas_os.greenrock.market_engine import MARKET_ARCHETYPES
+from atlas_os.greenrock.market_engine import MARKET_ARCHETYPES, classify_market_archetype
 from atlas_os.greenrock.population import GREENROCK_POPULATION_LABELS
 from atlas_os.greenrock.score import calculate_score_preview, score_signal
 from atlas_os.greenrock.scanner import (
     latest_scan,
+    load_scan_failures,
+    universe_health_rows,
     load_promotion_metadata,
     promote_scan_ticker,
     run_population_scan,
@@ -130,7 +132,7 @@ GREENROCK_LOGO_URL = "/static/greenrock_logo.png"
 def create_app():
     """Return a FastAPI app when FastAPI is installed."""
     try:
-        from fastapi import FastAPI, Form
+        from fastapi import FastAPI, Form, Request
         from fastapi.responses import HTMLResponse, RedirectResponse
     except ImportError:
         return None
@@ -162,8 +164,8 @@ def create_app():
         return render_greenrock_scanner()
 
     @app.get("/greenrock/universe", response_class=HTMLResponse)
-    def greenrock_universe() -> str:
-        return render_greenrock_universe()
+    def greenrock_universe(request: Request) -> str:
+        return render_greenrock_universe(query=dict(request.query_params))
 
     @app.get("/greenrock/market-pulse", response_class=HTMLResponse)
     def greenrock_market_pulse() -> str:
@@ -380,7 +382,7 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
     if method == "GET" and route == "/greenrock/scanner":
         return WebResponse(200, render_greenrock_scanner(_first(query, "status"), query))
     if method == "GET" and route == "/greenrock/universe":
-        return WebResponse(200, render_greenrock_universe(_first(query, "status")))
+        return WebResponse(200, render_greenrock_universe(_first(query, "status"), {key: values[0] for key, values in query.items()}))
     if method == "GET" and route == "/greenrock/market-pulse":
         return WebResponse(200, render_greenrock_market_pulse(_first(query, "status")))
     if method == "GET" and route == "/greenrock/watchlists":
@@ -979,18 +981,32 @@ def render_greenrock_scanner(status_message: str | None = None, query: dict[str,
     return _page("GreenRock Market Scanner", content, active="/greenrock/scanner")
 
 
-def render_greenrock_universe(status_message: str | None = None) -> str:
+def render_greenrock_universe(status_message: str | None = None, query: dict[str, str] | None = None) -> str:
     settings = get_settings()
     master = default_universe_manager(settings.output_dir).master_universe()
+    filters = query or {}
     provider_cards = "".join(_universe_provider_card(provider) for provider in master.providers)
     bucket_counts: dict[str, int] = {}
+    archetype_counts: dict[str, int] = {}
     for row in master.rows:
         bucket_counts[row.market_cap_bucket] = bucket_counts.get(row.market_cap_bucket, 0) + 1
+        archetype_counts[row.market_archetype] = archetype_counts.get(row.market_archetype, 0) + 1
     buckets = "".join(
         _attention_card("neutral", str(count), f"{bucket.replace('_', ' ').title()} Bucket", "Master Universe")
         for bucket, count in sorted(bucket_counts.items())
     )
-    rows = "".join(_master_universe_row(row) for row in master.rows[:80])
+    archetypes = "".join(
+        _attention_card("neutral", str(count), archetype or "Unknown", "Archetype")
+        for archetype, count in sorted(archetype_counts.items())
+    )
+    failures = universe_health_rows(settings.output_dir)
+    filtered_rows = _filter_master_universe_rows(master.rows, filters)
+    page_size = 100
+    page = max(1, _parse_int(filters.get("page", "1")) or 1)
+    total_pages = max(1, (len(filtered_rows) + page_size - 1) // page_size)
+    page = min(page, total_pages)
+    page_rows = filtered_rows[(page - 1) * page_size : page * page_size]
+    rows = "".join(_master_universe_row(row) for row in page_rows)
     if not rows:
         rows = "<tr><td colspan='6' class='empty'>No master universe tickers available yet.</td></tr>"
     content = f"""
@@ -1008,16 +1024,26 @@ def render_greenrock_universe(status_message: str | None = None) -> str:
       {_attention_card("neutral", str(len(master.providers)), "Providers", "Registered sources")}
     </section>
     <section class="board-meta">{buckets}</section>
+    <section class="board-meta">{archetypes}</section>
+    <section class="panel warning-panel">
+      <div class="section-head">
+        <h2>Provider Failure Health</h2>
+        <span class="badge pending">{len(failures)} provider failures</span>
+      </div>
+      {_provider_failure_summary(failures)}
+    </section>
     <section class="watchlist-grid">{provider_cards}</section>
     <section class="panel picks-panel">
       <div class="section-head">
         <h2>Master Universe</h2>
-        <span class="subtle">First 80 rows. Scanner can run this set with population all.</span>
+        <span class="subtle">Showing {len(page_rows)} of {len(filtered_rows)} filtered rows from {master.size} total. Page {page} of {total_pages}.</span>
       </div>
+      {_universe_filter_form(filters, master)}
       <table>
         <thead><tr><th>Ticker</th><th>Membership</th><th>Market Cap Bucket</th><th>Archetype</th><th>Sector</th><th>Health</th></tr></thead>
         <tbody>{rows}</tbody>
       </table>
+      {_pagination_links('/greenrock/universe', filters, page, total_pages)}
       <p class="path">{_safe(master.path)}</p>
     </section>
     <section class="panel">
@@ -1032,8 +1058,10 @@ def render_greenrock_market_pulse(status_message: str | None = None) -> str:
     settings = get_settings()
     scan = latest_scan(settings.output_dir)
     if scan:
+        normalized_rows = tuple(_pulse_row(row) for row in scan.rows)
+        failures = load_scan_failures(settings.output_dir, scan.scan_id)
         grouped = {
-            archetype: tuple(row for row in scan.rows if row.get("market_archetype", "") == archetype)
+            archetype: tuple(row for row in normalized_rows if row.get("market_archetype", "") == archetype)
             for archetype in MARKET_ARCHETYPES
         }
         cards = "".join(
@@ -1043,10 +1071,20 @@ def render_greenrock_market_pulse(status_message: str | None = None) -> str:
         sections = "".join(_market_pulse_section(archetype, rows[:8], scan.scan_id) for archetype, rows in grouped.items())
         diagnostics = f"""
         <section class="board-meta">
+          {_attention_card("neutral", _safe(scan.scan_id), "Scan ID", "Latest successful scan")}
+          {_attention_card("neutral", _safe(scan.population), "Population", "Scan source")}
           {_attention_card("neutral", str(scan.configured_ticker_count), "Configured Tickers", "Before provider fetch")}
           {_attention_card("green", str(scan.fetched_ticker_count), "Fetched / Scored", scan.data_source)}
+        </section>
+        <section class="board-meta">
           {_attention_card("yellow", str(scan.skipped_ticker_count), "Skipped Tickers", "No usable provider data")}
-          {_attention_card("yellow", str(scan.provider_failure_count), "Provider Failures", "Provider errors")}
+          {_attention_card("neutral", str(scan.duplicates_removed), "Duplicates Removed", "Universe merge")}
+          {_attention_card("green", str(len(scan.rows)), "Ranked Count", "Ranking Engine output")}
+          {_attention_card("yellow", str(len(failures)), "Provider Failures", "Open Universe Health for detail")}
+        </section>
+        <section class="panel warning-panel">
+          <div class="section-head"><h2>Provider Failures</h2><span class="badge pending">{len(failures)} provider failures</span></div>
+          {_provider_failure_summary(failures)}
         </section>
         """
     else:
@@ -2396,6 +2434,95 @@ def _master_universe_row(row) -> str:
     )
 
 
+def _filter_master_universe_rows(rows, filters: dict[str, str]):
+    provider = filters.get("provider", "").strip()
+    bucket = filters.get("bucket", "").strip()
+    archetype = filters.get("archetype", "").strip()
+    search = filters.get("q", "").strip().upper()
+    filtered = []
+    for row in rows:
+        if provider and provider not in row.provider_membership:
+            continue
+        if bucket and bucket != row.market_cap_bucket:
+            continue
+        if archetype and archetype != row.market_archetype:
+            continue
+        if search and search not in row.ticker:
+            continue
+        filtered.append(row)
+    return tuple(filtered)
+
+
+def _universe_filter_form(filters: dict[str, str], master) -> str:
+    providers = tuple(provider.name for provider in master.providers)
+    buckets = tuple(sorted({row.market_cap_bucket for row in master.rows if row.market_cap_bucket}))
+    archetypes = tuple(sorted({row.market_archetype for row in master.rows if row.market_archetype}))
+    return f"""
+    <form method="get" action="/greenrock/universe" class="scanner-filter-form">
+      <label>Ticker Search<input name="q" value="{_safe(filters.get('q', ''))}" placeholder="Ticker"></label>
+      <label>Provider<select name="provider">{_select_options(('',) + providers, filters.get('provider', ''))}</select></label>
+      <label>Market-Cap Bucket<select name="bucket">{_select_options(('',) + buckets, filters.get('bucket', ''))}</select></label>
+      <label>Archetype<select name="archetype">{_select_options(('',) + archetypes, filters.get('archetype', ''))}</select></label>
+      <button type="submit">Apply Filters</button>
+      <a class="button secondary" href="/greenrock/universe">Clear</a>
+    </form>
+    """
+
+
+def _pagination_links(base_path: str, filters: dict[str, str], page: int, total_pages: int) -> str:
+    if total_pages <= 1:
+        return ""
+    previous_link = _page_link(base_path, filters, page - 1, "Previous") if page > 1 else "<span class='button disabled'>Previous</span>"
+    next_link = _page_link(base_path, filters, page + 1, "Next") if page < total_pages else "<span class='button disabled'>Next</span>"
+    return f"<div class='action-row'>{previous_link}<span class='subtle'>Page {page} of {total_pages}</span>{next_link}</div>"
+
+
+def _page_link(base_path: str, filters: dict[str, str], page: int, label: str) -> str:
+    query = {key: value for key, value in filters.items() if value and key != "status"}
+    query["page"] = str(page)
+    return f"<a class='button secondary' href='{base_path}?{urlencode(query)}'>{_safe(label)}</a>"
+
+
+def _provider_failure_summary(failures: tuple[dict[str, str], ...]) -> str:
+    if not failures:
+        return "<p class='subtle'>No provider failures recorded for the latest successful scan.</p>"
+    rows = "".join(
+        "<tr>"
+        f"<td><strong>{_safe(row.get('ticker', ''))}</strong></td>"
+        f"<td>{_safe(row.get('failure_reason', ''))}</td>"
+        f"<td>{_safe(row.get('provider_membership', ''))}</td>"
+        f"<td>{_safe(row.get('suggested_action', 'review'))}</td>"
+        "</tr>"
+        for row in failures[:20]
+    )
+    extra = f"<p class='subtle'>Showing 20 of {len(failures)} provider failures. Use CLI universe health for the full list.</p>" if len(failures) > 20 else ""
+    return f"""
+    {extra}
+    <table>
+      <thead><tr><th>Ticker</th><th>Failure Reason</th><th>Membership</th><th>Suggested Action</th></tr></thead>
+      <tbody>{rows}</tbody>
+    </table>
+    """
+
+
+def _pulse_row(row: dict[str, str]) -> dict[str, str]:
+    normalized = dict(row)
+    if not normalized.get("market_archetype", "").strip():
+        normalized["market_archetype"] = classify_market_archetype(
+            normalized.get("symbol", ""),
+            _as_float_or_none(normalized.get("market_cap", "")),
+            tuple(item for item in normalized.get("universe_membership", "").split("|") if item),
+        )
+    return normalized
+
+
+def _as_float_or_none(value: str) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _market_pulse_section(archetype: str, rows: tuple[dict[str, str], ...], scan_id: str) -> str:
     body = "".join(
         "<tr>"
@@ -2410,7 +2537,7 @@ def _market_pulse_section(archetype: str, rows: tuple[dict[str, str], ...], scan
         for row in rows
     )
     if not body:
-        body = "<tr><td colspan='7' class='empty'>No ranked opportunities in this archetype yet.</td></tr>"
+        body = f"<tr><td colspan='7' class='empty'>No scored names in this archetype: {_safe(archetype)}.</td></tr>"
     return f"""
     <section class="panel picks-panel">
       <div class="section-head">

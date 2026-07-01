@@ -4,8 +4,13 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import io
+from contextlib import redirect_stdout
+from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
+from atlas_os.cli import main
 from atlas_os.greenrock.market_data import MarketDataProvider
 from atlas_os.greenrock.market_engine import (
     ARCHETYPE_LARGE,
@@ -22,9 +27,10 @@ from atlas_os.greenrock.population import (
     RUSSELL2000_POPULATION,
     SP500_POPULATION,
     save_population,
+    load_population,
 )
 from atlas_os.greenrock.sample_data import load_mock_stocks
-from atlas_os.greenrock.scanner import run_population_scan
+from atlas_os.greenrock.scanner import cleanup_failed_tickers, run_population_scan, universe_health_rows
 from atlas_os.greenrock.universe import add_ticker_to_greenrock_list
 from atlas_os.greenrock.universe_manager import (
     BUCKET_LARGE,
@@ -36,6 +42,7 @@ from atlas_os.greenrock.universe_manager import (
     default_universe_manager,
     load_master_universe,
 )
+from atlas_os.web_app import dispatch_request
 
 
 class UniverseManagerTests(unittest.TestCase):
@@ -113,6 +120,72 @@ class UniverseManagerTests(unittest.TestCase):
             self.assertIn("Total Configured Tickers", summary)
             self.assertIn("Ranked Count", summary)
 
+    def test_market_pulse_reads_latest_scan_and_shows_ranked_names(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output_dir = Path(directory) / "output"
+            env = {"ATLAS_OUTPUT_DIR": str(output_dir), "ATLAS_DB_PATH": str(Path(directory) / "atlas.db")}
+            with patch.dict("os.environ", env, clear=False):
+                save_population(output_dir, QQQ_POPULATION, ("LC01", "GME", "GRRR", "DEAD"))
+                run_population_scan(output_dir, "all", provider=MixedArchetypeProvider())
+                response = dispatch_request("GET", "/greenrock/market-pulse")
+
+        self.assertEqual(response.status, 200)
+        self.assertIn("scan-all-", response.body)
+        self.assertIn("Configured Tickers", response.body)
+        self.assertIn("Duplicates Removed", response.body)
+        self.assertIn("GME", response.body)
+        self.assertIn("GRRR", response.body)
+        self.assertIn("No scored names in this archetype", response.body)
+
+    def test_universe_page_filters_and_labels_page_sample(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output_dir = Path(directory) / "output"
+            env = {"ATLAS_OUTPUT_DIR": str(output_dir), "ATLAS_DB_PATH": str(Path(directory) / "atlas.db")}
+            with patch.dict("os.environ", env, clear=False):
+                response = dispatch_request("GET", "/greenrock/universe?q=TSLA&archetype=Large")
+
+        self.assertEqual(response.status, 200)
+        self.assertIn("Master Universe Size", response.body)
+        self.assertIn("Showing", response.body)
+        self.assertIn("filtered rows", response.body)
+        self.assertIn("Ticker Search", response.body)
+        self.assertIn("Provider Failure Health", response.body)
+
+    def test_market_pulse_cli_and_archetype_audit_work(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output_dir = Path(directory) / "output"
+            env = {"ATLAS_OUTPUT_DIR": str(output_dir), "ATLAS_DB_PATH": str(Path(directory) / "atlas.db")}
+            with patch.dict("os.environ", env, clear=False):
+                save_population(output_dir, QQQ_POPULATION, ("LC01", "GME", "GRRR"))
+                run_population_scan(output_dir, "all", provider=MixedArchetypeProvider())
+                pulse = _run_cli(["greenrock", "market-pulse"])
+                audit = _run_cli(["greenrock", "archetypes", "audit"])
+
+        self.assertIn("GreenRock Market Pulse", pulse)
+        self.assertIn("GME", pulse)
+        self.assertIn("GreenRock Archetype Audit", audit)
+        self.assertIn("Meme: count=", audit)
+        self.assertIn("Special Situation: count=", audit)
+
+    def test_universe_health_reports_failed_tickers_and_cleanup_dry_run_removes_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output_dir = Path(directory) / "output"
+            env = {"ATLAS_OUTPUT_DIR": str(output_dir), "ATLAS_DB_PATH": str(Path(directory) / "atlas.db")}
+            with patch.dict("os.environ", env, clear=False):
+                save_population(output_dir, MICRO_MOONSHOT_POPULATION, ("GRRR", "DEAD"))
+                run_population_scan(output_dir, "micro_moonshot", provider=MixedArchetypeProvider())
+                health_rows = universe_health_rows(output_dir)
+                cleanup_candidates = cleanup_failed_tickers(output_dir, confirm=False)
+                cli_health = _run_cli(["greenrock", "universe", "health"])
+                cli_cleanup = _run_cli(["greenrock", "universe", "cleanup-failures", "--dry-run"])
+                micro = load_population(output_dir, MICRO_MOONSHOT_POPULATION)
+
+        self.assertTrue(any(row["ticker"] == "DEAD" for row in health_rows))
+        self.assertTrue(cleanup_candidates)
+        self.assertIn("DEAD", cli_health)
+        self.assertIn("dry-run", cli_cleanup)
+        self.assertIn("DEAD", micro.tickers)
+
 
 class MockScanProvider(MarketDataProvider):
     data_mode = "mock"
@@ -124,6 +197,29 @@ class MockScanProvider(MarketDataProvider):
     def fetch_stocks(self):
         stocks = {stock.symbol: stock for stock in load_mock_stocks()}
         return tuple(stocks[symbol] for symbol in self.symbols)
+
+
+class MixedArchetypeProvider(MarketDataProvider):
+    data_mode = "mock"
+    source_name = "mixed_archetype_provider"
+    provider_failures = ("DEAD: no price history",)
+
+    def fetch_stocks(self):
+        base = next(stock for stock in load_mock_stocks() if stock.symbol == "LC01")
+        return (
+            replace(base, symbol="LC01", company_name="Large Fixture", market_cap=8_000_000_000),
+            replace(base, symbol="GME", company_name="Meme Fixture", market_cap=10_000_000_000),
+            replace(base, symbol="GRRR", company_name="Special Situation Fixture", market_cap=100_000_000),
+        )
+
+
+def _run_cli(args: list[str]) -> str:
+    buffer = io.StringIO()
+    with redirect_stdout(buffer):
+        exit_code = main(args)
+    if exit_code != 0:
+        raise AssertionError(f"CLI exited with {exit_code}: {args}")
+    return buffer.getvalue()
 
 
 if __name__ == "__main__":

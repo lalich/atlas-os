@@ -49,6 +49,14 @@ class ScanResult:
     duplicates_removed: int = 0
 
 
+FAILURE_HEADERS = [
+    "ticker",
+    "failure_reason",
+    "provider_membership",
+    "suggested_action",
+]
+
+
 PROMOTION_METADATA_HEADERS = [
     "ticker",
     "destination_list",
@@ -110,6 +118,7 @@ def run_population_scan(
     fetched_count = len(stocks)
     provider_failures = tuple(getattr(market_data_provider, "provider_failures", ()))
     warnings = _scan_warnings(tickers, stocks) + provider_failures
+    failure_rows = _failure_rows(tickers, stocks, membership_by_ticker, provider_failures)
 
     scan_id = f"scan-{normalized_population}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
     scan_dir = Path(output_dir) / "greenrock" / "scans" / scan_id
@@ -117,6 +126,7 @@ def run_population_scan(
     results_path = scan_dir / "scan_results.csv"
     summary_path = scan_dir / "scan_summary.md"
     _write_results_csv(results_path, ranked_rows)
+    _write_failures_csv(scan_dir / "scan_failures.csv", failure_rows)
     _write_summary(
         summary_path,
         scan_id,
@@ -149,12 +159,14 @@ def latest_scan(output_dir: Path) -> ScanResult | None:
     scans_dir = Path(output_dir) / "greenrock" / "scans"
     if not scans_dir.exists():
         return None
-    scan_dirs = sorted((path for path in scans_dir.iterdir() if path.is_dir()), reverse=True)
+    scan_dirs = sorted((path for path in scans_dir.iterdir() if path.is_dir()), key=_scan_dir_sort_key, reverse=True)
     for scan_dir in scan_dirs:
         results_path = scan_dir / "scan_results.csv"
         summary_path = scan_dir / "scan_summary.md"
         if results_path.exists():
             rows = _read_results_csv(results_path)
+            if not rows:
+                continue
             population = scan_dir.name.removeprefix("scan-").rsplit("-", maxsplit=1)[0]
             return ScanResult(
                 scan_id=scan_dir.name,
@@ -391,7 +403,49 @@ def _write_results_csv(path: Path, rows: tuple[dict[str, str], ...]) -> None:
 
 def _read_results_csv(path: Path) -> tuple[dict[str, str], ...]:
     with path.open(newline="", encoding="utf-8") as csv_file:
-        return tuple(csv.DictReader(csv_file))
+        return tuple(_normalize_scan_row(row) for row in csv.DictReader(csv_file))
+
+
+def scan_failures_path(output_dir: Path, scan_id: str) -> Path:
+    return Path(output_dir) / "greenrock" / "scans" / _clean_scan_id(scan_id) / "scan_failures.csv"
+
+
+def load_scan_failures(output_dir: Path, scan_id: str | None = None) -> tuple[dict[str, str], ...]:
+    scan = load_scan(output_dir, scan_id) if scan_id else latest_scan(output_dir)
+    if scan is None:
+        return ()
+    path = scan_failures_path(output_dir, scan.scan_id)
+    if path.exists():
+        with path.open(newline="", encoding="utf-8") as csv_file:
+            return tuple(dict(row) for row in csv.DictReader(csv_file))
+    return _inferred_failure_rows(output_dir, scan)
+
+
+def universe_health_rows(output_dir: Path) -> tuple[dict[str, str], ...]:
+    return load_scan_failures(output_dir)
+
+
+def cleanup_failed_tickers(output_dir: Path, confirm: bool = False) -> tuple[dict[str, str], ...]:
+    failures = tuple(row for row in universe_health_rows(output_dir) if row.get("suggested_action") == "remove from seed")
+    if not confirm:
+        return failures
+    from atlas_os.greenrock.population import load_population, save_population
+
+    affected: list[dict[str, str]] = []
+    removals_by_provider: dict[str, set[str]] = {}
+    for row in failures:
+        ticker = row.get("ticker", "").strip().upper()
+        for provider in row.get("provider_membership", "").split("|"):
+            if provider in GREENROCK_POPULATION_LABELS and ticker:
+                removals_by_provider.setdefault(provider, set()).add(ticker)
+    for provider, tickers in removals_by_provider.items():
+        population = load_population(output_dir, provider)
+        kept = tuple(ticker for ticker in population.tickers if ticker not in tickers)
+        if len(kept) != len(population.tickers):
+            save_population(output_dir, provider, kept)
+            for ticker in sorted(tickers):
+                affected.append({"ticker": ticker, "provider": provider, "action": "removed"})
+    return tuple(affected)
 
 
 def _write_summary(
@@ -434,6 +488,13 @@ def _write_summary(
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _write_failures_csv(path: Path, rows: tuple[dict[str, str], ...]) -> None:
+    with path.open("w", newline="", encoding="utf-8") as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=FAILURE_HEADERS)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 def _summary_value(path: Path, label: str) -> str:
     prefix = f"**{label}:**"
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -451,9 +512,98 @@ def _summary_int(path: Path, label: str) -> int:
         return 0
 
 
+def _normalize_scan_row(row: dict[str, str]) -> dict[str, str]:
+    normalized = dict(row)
+    if not normalized.get("market_archetype", "").strip():
+        normalized["market_archetype"] = classify_market_archetype(
+            normalized.get("symbol", ""),
+            _float_or_none(normalized.get("market_cap", "")),
+            tuple(item for item in normalized.get("universe_membership", "").split("|") if item),
+        )
+    return normalized
+
+
 def _scan_warnings(tickers, stocks) -> tuple[str, ...]:
     returned = {stock.symbol for stock in stocks}
     missing = tuple(ticker for ticker in tickers if ticker not in returned)
     if missing:
         return (f"{len(missing)} ticker(s) did not return usable provider data.",)
     return ()
+
+
+def _failure_rows(
+    tickers: tuple[str, ...],
+    stocks,
+    membership_by_ticker: dict[str, tuple[str, ...]],
+    provider_failures: tuple[str, ...],
+) -> tuple[dict[str, str], ...]:
+    returned = {stock.symbol for stock in stocks}
+    reasons = _provider_failure_reasons(provider_failures)
+    rows: list[dict[str, str]] = []
+    for ticker in tickers:
+        if ticker in returned:
+            continue
+        reason = reasons.get(ticker, "No usable provider data returned.")
+        rows.append(
+            {
+                "ticker": ticker,
+                "failure_reason": reason,
+                "provider_membership": "|".join(membership_by_ticker.get(ticker, ())),
+                "suggested_action": _suggested_failure_action(reason),
+            }
+        )
+    return tuple(rows)
+
+
+def _inferred_failure_rows(output_dir: Path, scan: ScanResult) -> tuple[dict[str, str], ...]:
+    manager = default_universe_manager(output_dir)
+    membership_by_ticker = manager.membership_by_ticker()
+    if scan.population == ALL_POPULATION:
+        configured = tuple(membership_by_ticker)
+    else:
+        configured = population_tickers(output_dir, scan.population)
+    ranked = {row.get("symbol", "").upper() for row in scan.rows}
+    return tuple(
+        {
+            "ticker": ticker,
+            "failure_reason": "No usable provider data returned.",
+            "provider_membership": "|".join(membership_by_ticker.get(ticker, ())),
+            "suggested_action": "review",
+        }
+        for ticker in configured
+        if ticker not in ranked
+    )
+
+
+def _provider_failure_reasons(provider_failures: tuple[str, ...]) -> dict[str, str]:
+    reasons: dict[str, str] = {}
+    for item in provider_failures:
+        ticker, separator, reason = item.partition(":")
+        if separator and ticker.strip():
+            reasons[ticker.strip().upper()] = reason.strip()
+    return reasons
+
+
+def _suggested_failure_action(reason: str) -> str:
+    lowered = reason.lower()
+    if "delist" in lowered or "no price" in lowered or "possibly delisted" in lowered:
+        return "remove from seed"
+    if "fewer than 252" in lowered:
+        return "review"
+    if "symbol may be delisted" in lowered or "acquired" in lowered:
+        return "replace ticker if known"
+    return "review"
+
+
+def _scan_dir_sort_key(path: Path) -> tuple[str, float]:
+    stamp = path.name.rsplit("-", maxsplit=1)[-1]
+    if len(stamp) == 14 and stamp.isdigit():
+        return (stamp, path.stat().st_mtime)
+    return ("", path.stat().st_mtime)
+
+
+def _float_or_none(value: str) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None

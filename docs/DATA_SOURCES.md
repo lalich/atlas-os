@@ -131,6 +131,12 @@ Population scans use the configured real market-data provider and write:
 
 Scan rows include GreenRock Score, Confidence, Evidence Agreement, Fundamental Guardrail, Research Priority, Rank, Percentile, Universe Membership, Market Archetype, market-cap bucket, top bullish signal, top caution signal, data-quality warnings, and Finviz links. Scan summaries include total configured tickers, fetched/scored tickers, skipped tickers, provider failures, duplicates removed, and ranked count. Scans are local research outputs and do not create report approvals, emails, publications, or client-facing materials.
 
+Successful scans also write provider-failure health metadata when available:
+
+- `.atlas/output/greenrock/scans/<scan_id>/scan_failures.csv`
+
+Older scans without `scan_failures.csv` are still readable; Atlas infers failed tickers by comparing configured universe tickers against ranked scan rows.
+
 The browser discovery flow is:
 
 1. Universe Providers: QQQ, S&P 500, Russell 2000, Micro/Moonshot, and Personal Watchlists.
@@ -141,6 +147,8 @@ The browser discovery flow is:
 6. Market Pulse: review ranked opportunities by Mega, Large, Mid, Small, Micro, Meme, and Special Situation.
 7. Staging: curated bridge into report generation.
 8. Report: later approval-gated publication draft.
+
+Market Pulse and archetype audits derive missing archetypes for older scan CSVs from ticker, market cap, and universe membership, so successful historical scans remain useful.
 
 Promotion from scans writes only to local list storage and optional local metadata:
 

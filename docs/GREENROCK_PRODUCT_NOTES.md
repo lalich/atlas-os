@@ -16,7 +16,11 @@
 - Maintain separate concepts for provider populations, the Master Universe, scanner rankings, curated watchlists, staging, and report picks. Population scans broaden the source universe but should not bypass report approval gates.
 - Keep Universe Manager reusable by future Atlas divisions. GreenRock-specific provider defaults are allowed, but the master universe record should remain simple: ticker, provider membership, market-cap bucket, sector when available, last refresh, and health.
 - Keep `/greenrock/universe` focused on provider counts, master universe size, duplicates removed, last refresh, provider health, bucket counts, and first-pass membership visibility.
+- Keep Universe Manager row display filtered and paginated. It should clearly state when a page/sample is shown, and offer provider, market-cap bucket, archetype, and ticker search filters.
 - Keep `/greenrock/market-pulse` focused on post-scan opportunity review by Mega, Large, Mid, Small, Micro, Meme, and Special Situation archetype. It may stage candidates but must not create reports or approvals directly.
+- Keep Market Pulse reading the latest successful scan by timestamp, not by population-name sorting, and derive archetypes for older scan CSVs when the field is missing.
+- Keep provider failures visible but bounded. Show counts and a short table in the UI, with full health detail available from `atlas greenrock universe health`.
+- Keep universe cleanup conservative. Dry-run must change nothing; confirmed cleanup may only remove failed tickers from editable local population seed files.
 - Keep Micro/Moonshot population storage editable for non-index-style names that may not appear in standard index populations.
 - Keep scanner promotion and direct scan-to-staging local-only and duplicate-safe. Promotion should write selected scan tickers into GreenRock list CSVs, and staging should write only to the report candidate staging CSV without creating reports, approvals, PDFs, emails, publications, or client-facing files.
 - Treat the discovery workflow as Scan, Stage, Generate Draft, Approve, Export PDF. The `/greenrock/discovery` page should help operators understand which stage they are in and what the next local action is.

@@ -26,6 +26,7 @@ from atlas_os.core.workflow_steps import list_workflow_steps
 from atlas_os.db.database import connect, initialize_database
 from atlas_os.greenrock.lifecycle import cleanup_greenrock_drafts
 from atlas_os.greenrock.market_data import MarketDataConfigurationError
+from atlas_os.greenrock.market_engine import MARKET_ARCHETYPES, classify_market_archetype
 from atlas_os.greenrock.pdf_export import render_markdown_report_to_pdf
 from atlas_os.greenrock.population import (
     ALL_POPULATION,
@@ -38,7 +39,13 @@ from atlas_os.greenrock.population import (
 )
 from atlas_os.greenrock.report import build_sample_report
 from atlas_os.greenrock.score import calculate_score_preview, score_signal
-from atlas_os.greenrock.scanner import promote_scan_ticker, run_population_scan
+from atlas_os.greenrock.scanner import (
+    cleanup_failed_tickers,
+    latest_scan,
+    promote_scan_ticker,
+    run_population_scan,
+    universe_health_rows,
+)
 from atlas_os.greenrock.screener import run_screen
 from atlas_os.greenrock.staging import (
     STAGING_BUCKET_LABELS,
@@ -270,6 +277,22 @@ def build_parser() -> argparse.ArgumentParser:
     universe_subparsers.add_parser("reset-small-mid", help="Reset local universe to the small/mid-cap default.")
     universe_subparsers.add_parser("reset-all", help="Reset all local GreenRock universes.")
     universe_subparsers.add_parser("validate", help="Validate local GreenRock watchlists.")
+    universe_subparsers.add_parser("health", help="Show provider-failed ticker health from the latest scan.")
+    cleanup_failures = universe_subparsers.add_parser("cleanup-failures", help="Dry-run or confirm cleanup of failed local seed tickers.")
+    cleanup_group = cleanup_failures.add_mutually_exclusive_group()
+    cleanup_group.add_argument("--dry-run", action="store_true", default=True, help="Show cleanup candidates without changing files.")
+    cleanup_group.add_argument("--confirm", action="store_true", help="Remove failed tickers from editable local population seeds.")
+
+    greenrock_subparsers.add_parser(
+        "market-pulse",
+        help="Show latest ranked market opportunities by archetype.",
+    )
+    archetypes = greenrock_subparsers.add_parser(
+        "archetypes",
+        help="Inspect market archetype classification.",
+    )
+    archetype_subparsers = archetypes.add_subparsers(dest="archetypes_command")
+    archetype_subparsers.add_parser("audit", help="Audit latest scan archetype counts and samples.")
 
     population = greenrock_subparsers.add_parser(
         "population",
@@ -831,6 +854,95 @@ def run_greenrock_scan(population: str) -> int:
             f"percentile={row.get('percentile', '')} membership={row.get('universe_membership', '')} "
             f"guardrail={row['fundamental_guardrail']}"
         )
+    return 0
+
+
+def run_greenrock_market_pulse() -> int:
+    settings = get_settings()
+    scan = latest_scan(settings.output_dir)
+    if scan is None:
+        print("GreenRock Market Pulse")
+        print("No successful scan found. Run atlas greenrock scan --population all first.")
+        return 0
+    rows = tuple(_cli_scan_row(row) for row in scan.rows)
+    print("GreenRock Market Pulse")
+    print(f"scan_id: {scan.scan_id}")
+    print(f"population: {scan.population}")
+    print(f"configured_count: {scan.configured_ticker_count}")
+    print(f"scored_count: {len(scan.rows)}")
+    print(f"skipped_count: {scan.skipped_ticker_count}")
+    print(f"duplicates_removed: {scan.duplicates_removed}")
+    print(f"provider_failures: {len(universe_health_rows(settings.output_dir))}")
+    for archetype in MARKET_ARCHETYPES:
+        archetype_rows = tuple(row for row in rows if row.get("market_archetype") == archetype)
+        print(f"{archetype}: {len(archetype_rows)}")
+        if archetype_rows:
+            for row in archetype_rows[:5]:
+                print(
+                    f"  {row.get('rank', '-')} {row.get('symbol', '')} "
+                    f"score={row.get('greenrock_score', '')} priority={row.get('research_priority', '')}"
+                )
+        else:
+            print("  No scored names in this archetype.")
+    return 0
+
+
+def run_greenrock_archetypes(command: str | None) -> int:
+    if command != "audit":
+        print("Choose an archetypes command: audit.")
+        return 1
+    settings = get_settings()
+    scan = latest_scan(settings.output_dir)
+    rows = tuple(_cli_scan_row(row) for row in scan.rows) if scan else ()
+    print("GreenRock Archetype Audit")
+    print(f"scan_id: {scan.scan_id if scan else 'none'}")
+    missing = tuple(row for row in rows if not row.get("market_archetype"))
+    print(f"missing_unknown_count: {len(missing)}")
+    for archetype in MARKET_ARCHETYPES:
+        archetype_rows = tuple(row for row in rows if row.get("market_archetype") == archetype)
+        samples = ", ".join(row.get("symbol", "") for row in archetype_rows[:8]) or "none"
+        top = archetype_rows[0].get("symbol", "none") if archetype_rows else "none"
+        print(f"{archetype}: count={len(archetype_rows)} samples={samples} top_ranked={top}")
+    return 0
+
+
+def run_greenrock_universe_health() -> int:
+    settings = get_settings()
+    failures = universe_health_rows(settings.output_dir)
+    print("GreenRock Universe Health")
+    print(f"provider_failure_count: {len(failures)}")
+    if not failures:
+        print("No provider-failed tickers recorded for the latest successful scan.")
+        return 0
+    print("ticker failure_reason membership suggested_action")
+    for row in failures:
+        print(
+            f"{row.get('ticker', '')} {row.get('failure_reason', '-') or '-'} "
+            f"{row.get('provider_membership', '-') or '-'} {row.get('suggested_action', 'review')}"
+        )
+    return 0
+
+
+def run_greenrock_universe_cleanup_failures(confirm: bool = False) -> int:
+    settings = get_settings()
+    rows = cleanup_failed_tickers(settings.output_dir, confirm=confirm)
+    print("GreenRock Universe Failure Cleanup")
+    print(f"mode: {'confirm' if confirm else 'dry-run'}")
+    print(f"candidate_count: {len(rows)}")
+    if not rows:
+        print("No cleanup candidates found.")
+        return 0
+    for row in rows:
+        if confirm:
+            print(f"removed {row.get('ticker', '')} from {row.get('provider', '')}")
+        else:
+            print(
+                f"would_review {row.get('ticker', '')} "
+                f"membership={row.get('provider_membership', '')} "
+                f"reason={row.get('failure_reason', '')}"
+            )
+    if not confirm:
+        print("No files changed. Re-run with --confirm to remove cleanup candidates from editable local population seeds.")
     return 0
 
 
@@ -1609,6 +1721,24 @@ def _candidate_row_score(row: dict[str, str]) -> float:
         return 0.0
 
 
+def _cli_scan_row(row: dict[str, str]) -> dict[str, str]:
+    normalized = dict(row)
+    if not normalized.get("market_archetype", ""):
+        normalized["market_archetype"] = classify_market_archetype(
+            normalized.get("symbol", ""),
+            _cli_float_or_none(normalized.get("market_cap", "")),
+            tuple(item for item in normalized.get("universe_membership", "").split("|") if item),
+        )
+    return normalized
+
+
+def _cli_float_or_none(value: str) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _candidate_summary(row: dict[str, str]) -> str:
     return f"{row.get('symbol', '')} score={row.get('score', '')} {row.get('company_name', '')}"
 
@@ -1664,6 +1794,10 @@ def main(argv: list[str] | None = None) -> int:
             return run_greenrock_latest_candidates()
         if args.greenrock_command == "picks-board":
             return run_greenrock_picks_board()
+        if args.greenrock_command == "market-pulse":
+            return run_greenrock_market_pulse()
+        if args.greenrock_command == "archetypes":
+            return run_greenrock_archetypes(args.archetypes_command)
         if args.greenrock_command == "score":
             return run_greenrock_score(args.ticker, args.data, args.selection)
         if args.greenrock_command == "population":
@@ -1696,6 +1830,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.greenrock_command == "cleanup-drafts":
             return run_greenrock_cleanup_drafts(args.dry_run)
         if args.greenrock_command == "universe":
+            if args.universe_command == "health":
+                return run_greenrock_universe_health()
+            if args.universe_command == "cleanup-failures":
+                return run_greenrock_universe_cleanup_failures(getattr(args, "confirm", False))
             return run_greenrock_universe(args.universe_command, getattr(args, "tickers", None))
         parser.error("greenrock requires a subcommand")
 
