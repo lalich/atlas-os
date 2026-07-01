@@ -11,7 +11,12 @@
 - Replace mock data with an approved market data provider only after vendor, credential, and compliance controls are defined.
 - Add survivorship-bias checks, liquidity thresholds, and history completeness checks.
 - Store raw input snapshots for reproducibility.
-- Maintain separate concepts for population scans, curated watchlists, and report picks. Population scans broaden the source universe but should not bypass report approval gates.
+- Treat Universe Manager as the owner of research populations. The intended pipeline is Universe Providers, Universe Builder, Master Universe, Evidence Engine, Ranking Engine, Staging, and GreenRock Reports.
+- Treat Atlas Market Engine as the expansion/classification layer between local editable lists and actual scanning. QQQ, S&P 500, and Russell-style providers should target broad seed sets; Micro/Moonshot remains custom editable.
+- Maintain separate concepts for provider populations, the Master Universe, scanner rankings, curated watchlists, staging, and report picks. Population scans broaden the source universe but should not bypass report approval gates.
+- Keep Universe Manager reusable by future Atlas divisions. GreenRock-specific provider defaults are allowed, but the master universe record should remain simple: ticker, provider membership, market-cap bucket, sector when available, last refresh, and health.
+- Keep `/greenrock/universe` focused on provider counts, master universe size, duplicates removed, last refresh, provider health, bucket counts, and first-pass membership visibility.
+- Keep `/greenrock/market-pulse` focused on post-scan opportunity review by Mega, Large, Mid, Small, Micro, Meme, and Special Situation archetype. It may stage candidates but must not create reports or approvals directly.
 - Keep Micro/Moonshot population storage editable for non-index-style names that may not appear in standard index populations.
 - Keep scanner promotion and direct scan-to-staging local-only and duplicate-safe. Promotion should write selected scan tickers into GreenRock list CSVs, and staging should write only to the report candidate staging CSV without creating reports, approvals, PDFs, emails, publications, or client-facing files.
 - Treat the discovery workflow as Scan, Stage, Generate Draft, Approve, Export PDF. The `/greenrock/discovery` page should help operators understand which stage they are in and what the next local action is.
@@ -24,7 +29,9 @@
 - Keep underfilled section readiness separate from missing analytics readiness. Underfilled buckets are slot-count warnings; missing analytics are data-quality warnings and should block clean report generation unless explicitly overridden.
 - Keep staging buckets explicit: Mega Rock Candidate, Large Cap Candidate, Small/Mid Candidate, Research Only, and Excluded. Count targets should remain visible for the three report candidate buckets.
 - Staging-sourced report generation may create normal workflow runs, report artifacts, and pending approvals only after explicit operator confirmation. It must not publish, email, or export a PDF automatically.
-- Scanner populations should not automatically feed reports. Staging is the preferred curated bridge into approval-gated draft generation.
+- Scanner populations should not automatically feed reports. Universe -> Scanner -> Ranking Engine -> Staging -> Report is the required sourcing path, with staging as the preferred curated bridge into approval-gated draft generation.
+- Scanner rows should remain ranked candidates, not arbitrary result rows. Required fields include GreenRock Score, Confidence, Evidence Agreement, Guardrail, Research Priority, Rank, Percentile, and Universe Membership.
+- Scanner summaries should show total configured tickers, fetched/scored tickers, skipped tickers, provider failures, duplicates removed, and ranked count.
 - Keep staging-sourced report tables editorial and readable: compact main columns, clean empty-bucket sentences, long bullish/caution signals moved into candidate notes or an appendix, and green table headers with yellow text.
 - Keep bucket-list guardrails firm. If market-cap bucket data conflicts with Mega Rock, Large Cap, or Small/Mid destinations, block the save and suggest the proper list or Personal Watchlist.
 

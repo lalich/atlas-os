@@ -70,6 +70,7 @@ class YFinanceMarketDataProvider(RealMarketDataProvider):
         self.source_name = (
             f"yfinance:{universe_name}" if universe_name else "yfinance:env_tickers"
         )
+        self.provider_failures: tuple[str, ...] = ()
 
     def fetch_stocks(self) -> tuple[MockStock, ...]:
         try:
@@ -83,10 +84,16 @@ class YFinanceMarketDataProvider(RealMarketDataProvider):
             yf.set_tz_cache_location("/tmp/atlas-yfinance-cache")
 
         stocks: list[MockStock] = []
+        failures: list[str] = []
         for ticker in self.tickers:
-            instrument = yf.Ticker(ticker)
-            history = instrument.history(period="max", interval="1d", auto_adjust=False)
+            try:
+                instrument = yf.Ticker(ticker)
+                history = instrument.history(period="max", interval="1d", auto_adjust=False)
+            except Exception as exc:
+                failures.append(f"{ticker}: provider error: {exc}")
+                continue
             if history is None or history.empty:
+                failures.append(f"{ticker}: no price history")
                 continue
 
             closes = history["Close"].dropna()
@@ -100,6 +107,7 @@ class YFinanceMarketDataProvider(RealMarketDataProvider):
                 for index, close in closes.items()
             ]
             if len(bars) < 252:
+                failures.append(f"{ticker}: fewer than 252 usable price bars")
                 continue
 
             try:
@@ -125,6 +133,7 @@ class YFinanceMarketDataProvider(RealMarketDataProvider):
                 )
             )
 
+        self.provider_failures = tuple(failures)
         if not stocks:
             raise MarketDataConfigurationError(
                 "Real market data request returned no usable 252-day price histories."

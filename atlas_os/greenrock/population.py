@@ -6,6 +6,8 @@ import csv
 from dataclasses import dataclass
 from pathlib import Path
 
+from atlas_os.greenrock.market_engine import expanded_population_tickers
+
 
 QQQ_POPULATION = "qqq"
 SP500_POPULATION = "sp500"
@@ -136,9 +138,10 @@ def population_tickers(output_dir: Path, name: str) -> tuple[str, ...]:
     if normalized == ALL_POPULATION:
         tickers: list[str] = []
         for population in load_populations(output_dir).values():
-            tickers.extend(population.tickers)
+            tickers.extend(expanded_population_tickers(population.name, population.tickers))
         return tuple(dict.fromkeys(tickers))
-    return load_population(output_dir, normalized).tickers
+    population = load_population(output_dir, normalized)
+    return expanded_population_tickers(population.name, population.tickers)
 
 
 def validate_populations(output_dir: Path) -> PopulationValidation:

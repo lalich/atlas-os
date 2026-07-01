@@ -101,11 +101,20 @@ Real-data buckets are Mega Rock at $1T+, large cap from $10B to below $1T, and s
 
 ## Run Population Scanner
 
-Population scans are broad source screens, not report picks. Preferred workflow: Scan, Stage, Generate Draft, Approve, Export PDF.
+Population scans are broad source screens, not report picks. Universe Manager owns these populations and builds the Master Universe used by `--population all`.
+
+Atlas Research Pipeline:
+
+```text
+Universe Providers -> Universe Builder -> Master Universe -> Evidence Engine -> Ranking Engine -> Staging -> GreenRock Reports
+```
+
+Preferred workflow: Scan, Stage, Generate Draft, Approve, Export PDF.
 
 ```bash
 atlas greenrock population reset-all
 atlas greenrock population list
+atlas greenrock population master
 atlas greenrock population validate
 atlas greenrock scan --population qqq
 atlas greenrock scan --population sp500
@@ -122,6 +131,8 @@ Browser:
 
 ```text
 http://127.0.0.1:8000/greenrock/discovery
+http://127.0.0.1:8000/greenrock/universe
+http://127.0.0.1:8000/greenrock/market-pulse
 http://127.0.0.1:8000/greenrock/scanner
 http://127.0.0.1:8000/greenrock/watchlists
 http://127.0.0.1:8000/greenrock/staging
@@ -129,20 +140,23 @@ http://127.0.0.1:8000/greenrock/staging
 
 Outputs are local only:
 
+- `.atlas/output/atlas/research/master_universe.csv`
 - `.atlas/output/greenrock/scans/<scan_id>/scan_results.csv`
 - `.atlas/output/greenrock/scans/<scan_id>/scan_summary.md`
 
-Scans require the configured real provider and fail safely with setup instructions when unavailable. They create local scan files only; they do not create report approvals, PDFs, emails, or publications.
+Scans require the configured real provider and fail safely with setup instructions when unavailable. They create local scan files only; they do not create report approvals, PDFs, emails, or publications. Ranked scanner rows include GreenRock Score, Confidence, Evidence Agreement, Guardrail, Research Priority, Rank, Percentile, Universe Membership, and Market Archetype. Scan summaries show total configured tickers, fetched/scored tickers, skipped tickers, provider failures, duplicates removed, and ranked count.
 
 Recommended browser flow:
 
 1. Open `/greenrock/discovery` to orient the workflow.
-2. Select a population and run the scan from `/greenrock/scanner`.
-3. Use the scanner filters for minimum GreenRock Score, Confidence, Evidence Agreement, Research Priority, and Guardrail label.
-4. Select one or more tickers and either stage them directly into a report bucket or save them to a local research queue.
-5. Open `/greenrock/watchlists` only when you want to review saved research queues.
-6. Open `/greenrock/staging` to choose final report candidates, operator notes, and readiness.
-7. Generate the draft from staging, then approve before any PDF export.
+2. Open `/greenrock/universe` to review provider health, master universe size, duplicate removal, and last refresh when needed.
+3. Select a population and run the scan from `/greenrock/scanner`; choose `all` to scan the Master Universe.
+4. Use the scanner filters for minimum GreenRock Score, Confidence, Evidence Agreement, Research Priority, and Guardrail label.
+5. Open `/greenrock/market-pulse` to review top ranked opportunities by Mega, Large, Mid, Small, Micro, Meme, and Special Situation archetype.
+6. Select one or more tickers and either stage them directly into a report bucket or save them to a local research queue.
+7. Open `/greenrock/watchlists` only when you want to review saved research queues.
+8. Open `/greenrock/staging` to choose final report candidates, operator notes, and readiness.
+9. Generate the draft from staging, then approve before any PDF export.
 
 Promotion saves only to local GreenRock list CSVs. Direct scan-to-staging saves only to the local staging CSV. Both paths are duplicate-safe and block bucket mismatches before writing where market-cap data is available. Promotion metadata is stored locally in `.atlas/output/greenrock/watchlists/promotion_metadata.csv` with scan ID, score, confidence, evidence agreement, research priority, guardrail, and promoted timestamp.
 

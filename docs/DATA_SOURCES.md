@@ -100,9 +100,15 @@ https://finviz.com/quote.ashx?t=<TICKER>
 
 The Picks Board does not publish, email, distribute, or bypass approval.
 
-## Population Scanner Data Source
+## Universe Manager and Population Scanner Data Source
 
-Population = broad scan source. Watchlist = manually curated list. Report picks = final ranked output in the approval-gated report workflow.
+Universe Manager owns Atlas research populations. Population = broad provider source. Master Universe = duplicate-safe merge of expanded QQQ, S&P 500, Russell-style small-cap, Micro/Moonshot, and Personal Watchlist providers. Watchlist = manually curated list. Report picks = final staged output in the approval-gated report workflow.
+
+Atlas Research Pipeline:
+
+```text
+Universe Providers -> Universe Builder -> Master Universe -> Evidence Engine -> Ranking Engine -> Staging -> GreenRock Reports
+```
 
 Local population files:
 
@@ -110,6 +116,9 @@ Local population files:
 - `.atlas/output/greenrock/populations/sp500.csv`
 - `.atlas/output/greenrock/populations/russell2000.csv`
 - `.atlas/output/greenrock/populations/micro_moonshot.csv`
+- `.atlas/output/greenrock/watchlists/*.csv`
+- `.atlas/output/greenrock/universes/*.csv`
+- `.atlas/output/atlas/research/master_universe.csv`
 
 The Micro/Moonshot population is editable and includes non-index-style names such as GRRR, PI, ENPH, NIO, SOFI, RKT, AFRM, OPEN, FUBO, CHPT, MARA, RIOT, HOOD, UPST, DKNG, LC, LMND, RUN, STEM, and ENVX.
 
@@ -118,15 +127,20 @@ Population scans use the configured real market-data provider and write:
 - `.atlas/output/greenrock/scans/<scan_id>/scan_results.csv`
 - `.atlas/output/greenrock/scans/<scan_id>/scan_summary.md`
 
-Scan rows include GreenRock Score, Confidence, Evidence Agreement, Fundamental Guardrail, Research Priority, market-cap bucket, top bullish signal, top caution signal, data-quality warnings, and Finviz links. Scans are local research outputs and do not create report approvals, emails, publications, or client-facing materials.
+`atlas greenrock scan --population all` scans the Master Universe. QQQ, S&P 500, Russell 2000, and Micro/Moonshot remain individually scannable.
+
+Scan rows include GreenRock Score, Confidence, Evidence Agreement, Fundamental Guardrail, Research Priority, Rank, Percentile, Universe Membership, Market Archetype, market-cap bucket, top bullish signal, top caution signal, data-quality warnings, and Finviz links. Scan summaries include total configured tickers, fetched/scored tickers, skipped tickers, provider failures, duplicates removed, and ranked count. Scans are local research outputs and do not create report approvals, emails, publications, or client-facing materials.
 
 The browser discovery flow is:
 
-1. Population: broad scan source.
-2. Scanner: local discovery engine.
-3. Promote: save selected names to a local GreenRock list.
-4. Watchlist: curated research queue.
-5. Report: later approval-gated publication draft.
+1. Universe Providers: QQQ, S&P 500, Russell 2000, Micro/Moonshot, and Personal Watchlists.
+2. Universe Builder: merge sources, remove duplicates, classify buckets, and track provider health.
+3. Master Universe: source of truth for `--population all`.
+4. Scanner: local discovery engine.
+5. Ranking Engine: rank candidates with score, confidence, agreement, guardrail, priority, rank, percentile, membership, and archetype.
+6. Market Pulse: review ranked opportunities by Mega, Large, Mid, Small, Micro, Meme, and Special Situation.
+7. Staging: curated bridge into report generation.
+8. Report: later approval-gated publication draft.
 
 Promotion from scans writes only to local list storage and optional local metadata:
 

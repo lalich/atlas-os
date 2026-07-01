@@ -8,8 +8,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from atlas_os.greenrock.criteria import evaluate_stock
+from atlas_os.greenrock.market_engine import classify_market_archetype
 from atlas_os.greenrock.market_data import MarketDataConfigurationError, MarketDataProvider, YFinanceMarketDataProvider
 from atlas_os.greenrock.population import ALL_POPULATION, GREENROCK_POPULATION_LABELS, population_tickers
+from atlas_os.greenrock.ranking import rank_candidate_rows
 from atlas_os.greenrock.score import (
     build_evidence_items,
     candidate_evidence_agreement,
@@ -17,6 +19,7 @@ from atlas_os.greenrock.score import (
     score_signal,
     top_evidence_signal,
 )
+from atlas_os.greenrock.universe_manager import default_universe_manager
 from atlas_os.greenrock.universe import (
     LARGE_CAP_UNIVERSE,
     MEGA_ROCK_UNIVERSE,
@@ -39,6 +42,11 @@ class ScanResult:
     summary_path: Path
     rows: tuple[dict[str, str], ...]
     warnings: tuple[str, ...] = ()
+    configured_ticker_count: int = 0
+    fetched_ticker_count: int = 0
+    skipped_ticker_count: int = 0
+    provider_failure_count: int = 0
+    duplicates_removed: int = 0
 
 
 PROMOTION_METADATA_HEADERS = [
@@ -59,6 +67,7 @@ SCAN_HEADERS = [
     "symbol",
     "company_name",
     "market_cap_bucket",
+    "market_archetype",
     "market_cap",
     "price",
     "greenrock_score",
@@ -67,6 +76,8 @@ SCAN_HEADERS = [
     "evidence_agreement",
     "fundamental_guardrail",
     "research_priority",
+    "percentile",
+    "universe_membership",
     "top_bullish_signal",
     "top_caution_signal",
     "data_quality_warnings",
@@ -80,14 +91,25 @@ def run_population_scan(
     provider: MarketDataProvider | None = None,
 ) -> ScanResult:
     normalized_population = population.strip().lower()
-    tickers = population_tickers(output_dir, normalized_population)
+    universe_manager = default_universe_manager(output_dir)
+    master = universe_manager.master_universe()
+    membership_by_ticker = {row.ticker: row.provider_membership for row in master.rows}
+    if normalized_population == ALL_POPULATION:
+        tickers = tuple(row.ticker for row in master.rows)
+        duplicates_removed = master.duplicates_removed
+    else:
+        tickers = population_tickers(output_dir, normalized_population)
+        duplicates_removed = 0
     if not tickers:
         raise MarketDataConfigurationError(f"Population {population} has no tickers.")
     market_data_provider = provider or _provider_for_scan(tickers, normalized_population)
     stocks = market_data_provider.fetch_stocks()
     rows = [_candidate_row(evaluate_stock(stock)) for stock in stocks]
     rows.sort(key=lambda row: _row_sort_key(row), reverse=True)
-    ranked_rows = tuple({**row, "rank": str(index)} for index, row in enumerate(rows, start=1))
+    ranked_rows = rank_candidate_rows(tuple(rows), membership_by_ticker)
+    fetched_count = len(stocks)
+    provider_failures = tuple(getattr(market_data_provider, "provider_failures", ()))
+    warnings = _scan_warnings(tickers, stocks) + provider_failures
 
     scan_id = f"scan-{normalized_population}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
     scan_dir = Path(output_dir) / "greenrock" / "scans" / scan_id
@@ -95,8 +117,18 @@ def run_population_scan(
     results_path = scan_dir / "scan_results.csv"
     summary_path = scan_dir / "scan_summary.md"
     _write_results_csv(results_path, ranked_rows)
-    _write_summary(summary_path, scan_id, normalized_population, market_data_provider.source_name, ranked_rows)
-    warnings = _scan_warnings(tickers, stocks)
+    _write_summary(
+        summary_path,
+        scan_id,
+        normalized_population,
+        market_data_provider.source_name,
+        ranked_rows,
+        configured_ticker_count=len(tickers),
+        fetched_ticker_count=fetched_count,
+        skipped_ticker_count=max(0, len(tickers) - fetched_count),
+        provider_failure_count=len(provider_failures),
+        duplicates_removed=duplicates_removed,
+    )
     return ScanResult(
         scan_id=scan_id,
         population=normalized_population,
@@ -105,6 +137,11 @@ def run_population_scan(
         summary_path=summary_path,
         rows=ranked_rows,
         warnings=warnings,
+        configured_ticker_count=len(tickers),
+        fetched_ticker_count=fetched_count,
+        skipped_ticker_count=max(0, len(tickers) - fetched_count),
+        provider_failure_count=len(provider_failures),
+        duplicates_removed=duplicates_removed,
     )
 
 
@@ -126,6 +163,11 @@ def latest_scan(output_dir: Path) -> ScanResult | None:
                 results_path=results_path,
                 summary_path=summary_path,
                 rows=rows,
+                configured_ticker_count=_summary_int(summary_path, "Total Configured Tickers"),
+                fetched_ticker_count=_summary_int(summary_path, "Tickers Successfully Fetched/Scored"),
+                skipped_ticker_count=_summary_int(summary_path, "Skipped Tickers"),
+                provider_failure_count=_summary_int(summary_path, "Provider Failures"),
+                duplicates_removed=_summary_int(summary_path, "Duplicates Removed"),
             )
     return None
 
@@ -146,6 +188,11 @@ def load_scan(output_dir: Path, scan_id: str) -> ScanResult:
         results_path=results_path,
         summary_path=summary_path,
         rows=rows,
+        configured_ticker_count=_summary_int(summary_path, "Total Configured Tickers"),
+        fetched_ticker_count=_summary_int(summary_path, "Tickers Successfully Fetched/Scored"),
+        skipped_ticker_count=_summary_int(summary_path, "Skipped Tickers"),
+        provider_failure_count=_summary_int(summary_path, "Provider Failures"),
+        duplicates_removed=_summary_int(summary_path, "Duplicates Removed"),
     )
 
 
@@ -264,6 +311,7 @@ def _candidate_row(candidate) -> dict[str, str]:
         "symbol": candidate.symbol,
         "company_name": candidate.company_name,
         "market_cap_bucket": candidate.market_cap_bucket,
+        "market_archetype": classify_market_archetype(candidate.symbol, candidate.market_cap),
         "market_cap": f"{candidate.market_cap:.2f}",
         "price": f"{candidate.indicators.latest_close:.2f}",
         "greenrock_score": f"{candidate.score:.2f}",
@@ -352,26 +400,36 @@ def _write_summary(
     population: str,
     data_source: str,
     rows: tuple[dict[str, str], ...],
+    configured_ticker_count: int,
+    fetched_ticker_count: int,
+    skipped_ticker_count: int,
+    provider_failure_count: int,
+    duplicates_removed: int,
 ) -> None:
-    label = "All Populations" if population == ALL_POPULATION else GREENROCK_POPULATION_LABELS.get(population, population)
+    label = "Master Universe" if population == ALL_POPULATION else GREENROCK_POPULATION_LABELS.get(population, population)
     lines = [
         "# GreenRock Population Scan Summary",
         "",
         f"**Scan ID:** {scan_id}",
         f"**Population:** {label}",
         f"**Data Source:** {data_source}",
-        f"**Ticker Count:** {len(rows)}",
+        f"**Total Configured Tickers:** {configured_ticker_count}",
+        f"**Tickers Successfully Fetched/Scored:** {fetched_ticker_count}",
+        f"**Skipped Tickers:** {skipped_ticker_count}",
+        f"**Provider Failures:** {provider_failure_count}",
+        f"**Duplicates Removed:** {duplicates_removed}",
+        f"**Ranked Count:** {len(rows)}",
         "",
         "> Local research scan only. Not a report, not an approval, not investment advice, and not published.",
         "",
-        "| Rank | Symbol | Score | Confidence | Evidence Agreement | Guardrail | Priority |",
-        "|---:|---|---:|---:|---:|---|---|",
+        "| Rank | Percentile | Symbol | Score | Confidence | Evidence Agreement | Guardrail | Priority | Universe Membership |",
+        "|---:|---:|---|---:|---:|---:|---|---|---|",
     ]
     for row in rows[:25]:
         lines.append(
-            f"| {row['rank']} | {row['symbol']} | {row['greenrock_score']} | "
+            f"| {row['rank']} | {row.get('percentile', '')} | {row['symbol']} | {row['greenrock_score']} | "
             f"{row['greenrock_confidence']} | {row['evidence_agreement']} | "
-            f"{row['fundamental_guardrail']} | {row['research_priority']} |"
+            f"{row['fundamental_guardrail']} | {row['research_priority']} | {row.get('universe_membership', '')} |"
         )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -382,6 +440,15 @@ def _summary_value(path: Path, label: str) -> str:
         if line.startswith(prefix):
             return line.removeprefix(prefix).strip()
     return "unknown"
+
+
+def _summary_int(path: Path, label: str) -> int:
+    if not path.exists():
+        return 0
+    try:
+        return int(_summary_value(path, label))
+    except ValueError:
+        return 0
 
 
 def _scan_warnings(tickers, stocks) -> tuple[str, ...]:

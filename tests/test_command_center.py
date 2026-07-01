@@ -45,6 +45,19 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("Last Refresh:", response.body)
         self.assertIn("GreenRock Picks Board", response.body)
 
+    def test_real_provider_status_displays_when_configured(self) -> None:
+        with _isolated_env():
+            with (
+                patch.dict("os.environ", {"ATLAS_MARKET_DATA_PROVIDER": "yfinance"}, clear=False),
+                patch("atlas_os.web_app.importlib.util.find_spec", return_value=object()),
+            ):
+                response = dispatch_request("GET", "/")
+
+        self.assertEqual(response.status, 200)
+        self.assertIn("Real Data Provider: configured", response.body)
+        self.assertIn("Current Provider: yfinance", response.body)
+        self.assertNotIn("Mock Data Unless Otherwise Noted", response.body)
+
     def test_project_directory_route_returns_200(self) -> None:
         with _isolated_env():
             response = dispatch_request("GET", "/projects")
@@ -97,6 +110,26 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("Large Cap: 11/11", response.body)
         self.assertIn("Small/Mid: 11/11", response.body)
         self.assertEqual(response.body.count("data-pick-slot="), 23)
+
+    def test_greenrock_universe_route_returns_200(self) -> None:
+        with _isolated_env():
+            response = dispatch_request("GET", "/greenrock/universe")
+
+        self.assertEqual(response.status, 200)
+        self.assertIn("Universe Manager", response.body)
+        self.assertIn("Master Universe Size", response.body)
+        self.assertIn("Duplicates Removed", response.body)
+        self.assertIn("Provider", response.body)
+        self.assertIn("Universe Providers -> Universe Builder", response.body)
+
+    def test_greenrock_market_pulse_route_returns_200(self) -> None:
+        with _isolated_env():
+            response = dispatch_request("GET", "/greenrock/market-pulse")
+
+        self.assertEqual(response.status, 200)
+        self.assertIn("GreenRock Market Pulse", response.body)
+        self.assertIn("Top Opportunities by Archetype", response.body)
+        self.assertIn("Reports still generate only from staging", response.body)
 
     def test_picks_route_shows_incomplete_section_warnings(self) -> None:
         with _isolated_env():

@@ -107,15 +107,27 @@ The local screener writes:
 
 Draft reports remain local, approval-gated, and blocked from client-facing use. Mock mode is the default.
 
-## GreenRock Population Scanner
+## Atlas Research Pipeline and Universe Manager
 
-Population scans are broader research screens, separate from curated watchlists and report picks.
+Universe Manager owns research populations before GreenRock scanning, staging, and reporting:
+
+```text
+Universe Providers -> Universe Builder -> Master Universe -> Evidence Engine -> Ranking Engine -> Staging -> GreenRock Reports
+```
+
+Providers currently include expanded QQQ, S&P 500, Russell-style small-cap, Micro/Moonshot, and Personal Watchlists. They merge into a duplicate-safe Master Universe stored locally at `.atlas/output/atlas/research/master_universe.csv`. The browser page is available at `/greenrock/universe`.
+
+Atlas Market Engine also classifies scan candidates by archetype: Mega, Large, Mid, Small, Micro, Meme, and Special Situation. Market Pulse is available at `/greenrock/market-pulse`.
+
+Population scans are broader research screens sourced from Universe Manager, separate from curated report picks.
 
 ```bash
 atlas greenrock population reset-all
 atlas greenrock population list
+atlas greenrock population master
 atlas greenrock population add micro_moonshot GRRR PI
 atlas greenrock population validate
+atlas greenrock scan --population all
 atlas greenrock scan --population micro_moonshot
 atlas greenrock scan-promote <scan_id> SOFI --list watchlist
 atlas greenrock staging add SOFI --bucket small_mid
@@ -131,6 +143,8 @@ Populations are stored locally under `.atlas/output/greenrock/populations/`:
 - `micro_moonshot.csv`
 
 Scan outputs are stored under `.atlas/output/greenrock/scans/<scan_id>/` as `scan_results.csv` and `scan_summary.md`. Scans require the configured real provider, fail safely when it is unavailable, and do not create reports, approvals, emails, or publications. The preferred GreenRock report path is now: Scan, Stage, Generate Draft, Approve, Export PDF.
+
+Scan rows are ranked candidates with GreenRock Score, Confidence, Evidence Agreement, Guardrail, Research Priority, Rank, Percentile, Universe Membership, and Market Archetype. Scan summaries show total configured tickers, fetched/scored tickers, skipped tickers, provider failures, duplicates removed, and ranked count.
 
 Scanner actions can either save a ticker into Watchlist, Ranked Candidates, Strict Review, Mega Rock Candidate Pool, Large Cap Watchlist, or Small/Mid Watchlist, or stage selected scan rows directly into the final report slate. Promotion and staging are duplicate-safe, show market-cap bucket warnings where applicable, and write only to local GreenRock CSVs.
 

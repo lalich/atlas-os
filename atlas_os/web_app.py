@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import html
+import importlib.util
 import os
 import subprocess
 import sys
@@ -35,6 +36,7 @@ from atlas_os.core.workflow_runs import get_workflow_run, list_workflow_runs
 from atlas_os.db.database import connect, initialize_database
 from atlas_os.greenrock.pdf_export import render_markdown_report_to_pdf
 from atlas_os.greenrock.market_data import MarketDataConfigurationError
+from atlas_os.greenrock.market_engine import MARKET_ARCHETYPES
 from atlas_os.greenrock.population import GREENROCK_POPULATION_LABELS
 from atlas_os.greenrock.score import calculate_score_preview, score_signal
 from atlas_os.greenrock.scanner import (
@@ -66,6 +68,7 @@ from atlas_os.greenrock.universe import (
     placement_path,
     remove_ticker_from_greenrock_list,
 )
+from atlas_os.greenrock.universe_manager import default_universe_manager, provider_label
 from atlas_os.greenrock.workflow import run_greenrock_screening_workflow
 from atlas_os.greenrock.scoring import signal_label
 
@@ -157,6 +160,14 @@ def create_app():
     @app.get("/greenrock/scanner", response_class=HTMLResponse)
     def greenrock_scanner() -> str:
         return render_greenrock_scanner()
+
+    @app.get("/greenrock/universe", response_class=HTMLResponse)
+    def greenrock_universe() -> str:
+        return render_greenrock_universe()
+
+    @app.get("/greenrock/market-pulse", response_class=HTMLResponse)
+    def greenrock_market_pulse() -> str:
+        return render_greenrock_market_pulse()
 
     @app.post("/greenrock/scanner/run")
     def greenrock_scanner_run(population: str = Form("qqq")):
@@ -322,6 +333,14 @@ def create_app():
 
 
 def serve(host: str = "127.0.0.1", port: int = 8000) -> None:
+    provider = _real_data_provider_status()
+    print(f"Atlas Command Center running at http://{host}:{port}")
+    print(
+        "Development mode: local only. "
+        f"Real data provider: {provider['configured_label']}. "
+        f"Current provider: {provider['current_provider']}."
+    )
+    print("No publish, email, trading, or client-file actions are enabled.")
     app = create_app()
     if app is not None:
         try:
@@ -333,8 +352,6 @@ def serve(host: str = "127.0.0.1", port: int = 8000) -> None:
             return
 
     server = ThreadingHTTPServer((host, port), _CommandCenterHandler)
-    print(f"Atlas Command Center running at http://{host}:{port}")
-    print("Local development mode. Mock data only. No publish or send controls.")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -362,6 +379,10 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
         return WebResponse(200, render_greenrock_discovery(_first(query, "status")))
     if method == "GET" and route == "/greenrock/scanner":
         return WebResponse(200, render_greenrock_scanner(_first(query, "status"), query))
+    if method == "GET" and route == "/greenrock/universe":
+        return WebResponse(200, render_greenrock_universe(_first(query, "status")))
+    if method == "GET" and route == "/greenrock/market-pulse":
+        return WebResponse(200, render_greenrock_market_pulse(_first(query, "status")))
     if method == "GET" and route == "/greenrock/watchlists":
         return WebResponse(200, render_greenrock_watchlists(_first(query, "status")))
     if method == "GET" and route == "/greenrock/staging":
@@ -577,6 +598,8 @@ def render_dashboard(status_message: str | None = None) -> str:
       {_nav_card("Project Directory", "/projects", "GreenRock, Bat Signal, Insurance, Atlas Core")}
       {_nav_card("GreenRock Analysts", "/greenrock", "Run latest draft, approvals, candidates")}
       {_nav_card("GreenRock Discovery", "/greenrock/discovery", "Scan, promote, and manage local research queues")}
+      {_nav_card("Universe Manager", "/greenrock/universe", "Provider health, master universe, and duplicate removal")}
+      {_nav_card("Market Pulse", "/greenrock/market-pulse", "Top ranked opportunities by market archetype")}
       {_nav_card("GreenRock Picks Board", "/greenrock/picks", "Mega Rock, large-cap, and small/mid-cap picks")}
       {_nav_card("GreenRock Market Scanner", "/greenrock/scanner", "Population scans before report picks")}
       {_nav_card("Report Candidate Staging", "/greenrock/staging", "Final local curation before approval-gated drafts")}
@@ -886,7 +909,7 @@ def render_greenrock_scanner(status_message: str | None = None, query: dict[str,
           <button type="submit">{_safe(label)}</button>
         </form>
         """
-        for name, label in {**GREENROCK_POPULATION_LABELS, "all": "All Populations"}.items()
+        for name, label in {**GREENROCK_POPULATION_LABELS, "all": "Master Universe"}.items()
     )
     latest = ""
     if scan:
@@ -894,9 +917,15 @@ def render_greenrock_scanner(status_message: str | None = None, query: dict[str,
         latest = f"""
         <section class="board-meta">
           {_attention_card("neutral", _safe(scan.population), "Population Scanned", _safe(scan.scan_id))}
-          {_attention_card("green", str(len(scan.rows)), "Tickers Scanned", _safe(scan.data_source))}
+          {_attention_card("neutral", str(scan.configured_ticker_count), "Configured Tickers", "Before provider fetch")}
+          {_attention_card("green", str(scan.fetched_ticker_count), "Fetched / Scored", _safe(scan.data_source))}
+          {_attention_card("yellow", str(scan.skipped_ticker_count), "Skipped Tickers", "No usable provider data")}
+        </section>
+        <section class="board-meta">
+          {_attention_card("yellow", str(scan.provider_failure_count), "Provider Failures", "Provider errors")}
+          {_attention_card("neutral", str(scan.duplicates_removed), "Duplicates Removed", "Universe merge")}
+          {_attention_card("green", str(len(scan.rows)), "Ranked Count", "Ranking Engine output")}
           {_attention_card("neutral", _safe(metadata["timestamp"]), "Scan Timestamp", "UTC")}
-          {_attention_card("neutral", str(len(filtered_rows)), "Rows After Filters", "Top-ranked candidates below")}
         </section>
         <section class="panel scanner-filter-panel">
           <div class="section-head">
@@ -931,7 +960,7 @@ def render_greenrock_scanner(status_message: str | None = None, query: dict[str,
       <p class="eyebrow">GreenRock Analysts</p>
       <h1>Market Scanner</h1>
       <p>Scanner = discovery engine. Review broad populations, then stage selected names into the final report slate or save them to local research queues.</p>
-      <p><a class="button secondary" href="/greenrock/discovery">Discovery Workflow</a></p>
+      <p><a class="button secondary" href="/greenrock/discovery">Discovery Workflow</a> <a class="button secondary" href="/greenrock/universe">Universe Manager</a></p>
     </section>
     <section class="panel">
       <div class="section-head">
@@ -948,6 +977,95 @@ def render_greenrock_scanner(status_message: str | None = None, query: dict[str,
     </section>
     """
     return _page("GreenRock Market Scanner", content, active="/greenrock/scanner")
+
+
+def render_greenrock_universe(status_message: str | None = None) -> str:
+    settings = get_settings()
+    master = default_universe_manager(settings.output_dir).master_universe()
+    provider_cards = "".join(_universe_provider_card(provider) for provider in master.providers)
+    bucket_counts: dict[str, int] = {}
+    for row in master.rows:
+        bucket_counts[row.market_cap_bucket] = bucket_counts.get(row.market_cap_bucket, 0) + 1
+    buckets = "".join(
+        _attention_card("neutral", str(count), f"{bucket.replace('_', ' ').title()} Bucket", "Master Universe")
+        for bucket, count in sorted(bucket_counts.items())
+    )
+    rows = "".join(_master_universe_row(row) for row in master.rows[:80])
+    if not rows:
+        rows = "<tr><td colspan='6' class='empty'>No master universe tickers available yet.</td></tr>"
+    content = f"""
+    {_status_banner(status_message)}
+    <section class="hero compact greenrock-hero">
+      <p class="eyebrow">Atlas Research Pipeline</p>
+      <h1>Universe Manager</h1>
+      <p>Universe Manager owns research populations before scanner, ranking, staging, and reports.</p>
+      <p><a class="button secondary" href="/greenrock/scanner">Open Scanner</a></p>
+    </section>
+    <section class="board-meta">
+      {_attention_card("green", str(master.size), "Master Universe Size", "Unique tickers")}
+      {_attention_card("neutral", str(master.duplicates_removed), "Duplicates Removed", "Provider overlap")}
+      {_attention_card("neutral", _safe(master.last_refresh), "Last Refresh", "UTC")}
+      {_attention_card("neutral", str(len(master.providers)), "Providers", "Registered sources")}
+    </section>
+    <section class="board-meta">{buckets}</section>
+    <section class="watchlist-grid">{provider_cards}</section>
+    <section class="panel picks-panel">
+      <div class="section-head">
+        <h2>Master Universe</h2>
+        <span class="subtle">First 80 rows. Scanner can run this set with population all.</span>
+      </div>
+      <table>
+        <thead><tr><th>Ticker</th><th>Membership</th><th>Market Cap Bucket</th><th>Archetype</th><th>Sector</th><th>Health</th></tr></thead>
+        <tbody>{rows}</tbody>
+      </table>
+      <p class="path">{_safe(master.path)}</p>
+    </section>
+    <section class="panel">
+      <h2>Pipeline</h2>
+      <p class="subtle">Universe Providers -> Universe Builder -> Master Universe -> Evidence Engine -> Ranking Engine -> Staging -> GreenRock Reports.</p>
+    </section>
+    """
+    return _page("GreenRock Universe", content, active="/greenrock/universe")
+
+
+def render_greenrock_market_pulse(status_message: str | None = None) -> str:
+    settings = get_settings()
+    scan = latest_scan(settings.output_dir)
+    if scan:
+        grouped = {
+            archetype: tuple(row for row in scan.rows if row.get("market_archetype", "") == archetype)
+            for archetype in MARKET_ARCHETYPES
+        }
+        cards = "".join(
+            _attention_card("neutral", str(len(rows)), archetype, "Latest ranked scan")
+            for archetype, rows in grouped.items()
+        )
+        sections = "".join(_market_pulse_section(archetype, rows[:8], scan.scan_id) for archetype, rows in grouped.items())
+        diagnostics = f"""
+        <section class="board-meta">
+          {_attention_card("neutral", str(scan.configured_ticker_count), "Configured Tickers", "Before provider fetch")}
+          {_attention_card("green", str(scan.fetched_ticker_count), "Fetched / Scored", scan.data_source)}
+          {_attention_card("yellow", str(scan.skipped_ticker_count), "Skipped Tickers", "No usable provider data")}
+          {_attention_card("yellow", str(scan.provider_failure_count), "Provider Failures", "Provider errors")}
+        </section>
+        """
+    else:
+        cards = ""
+        sections = "<section class='panel warning-panel'><h2>No Latest Scan</h2><p>Run a population scan first. Market Pulse does not create reports or approvals.</p></section>"
+        diagnostics = ""
+    content = f"""
+    {_status_banner(status_message)}
+    <section class="hero compact greenrock-hero">
+      <p class="eyebrow">GreenRock Market Pulse</p>
+      <h1>Top Opportunities by Archetype</h1>
+      <p>Scanner finds opportunities. Operators stage candidates. Reports still generate only from staging and remain approval-gated.</p>
+      <p><a class="button secondary" href="/greenrock/scanner">Run Scanner</a> <a class="button secondary" href="/greenrock/staging">Open Staging</a></p>
+    </section>
+    {diagnostics}
+    <section class="board-meta">{cards}</section>
+    {sections}
+    """
+    return _page("GreenRock Market Pulse", content, active="/greenrock/market-pulse")
 
 
 def render_greenrock_watchlists(status_message: str | None = None) -> str:
@@ -2247,6 +2365,66 @@ def _watchlist_overview_card(
     """
 
 
+def _universe_provider_card(provider) -> str:
+    color = "approved" if provider.health == "healthy" else "pending"
+    return f"""
+    <section class="panel watchlist-card">
+      <div class="section-head">
+        <h2>{_safe(provider_label(provider.name))}</h2>
+        <span class="badge {color}">{_safe(provider.health)}</span>
+      </div>
+      <dl class="detail-list">
+        <div><dt>Ticker Count</dt><dd>{provider.ticker_count}</dd></div>
+        <div><dt>Status</dt><dd>{_safe(provider.status)}</dd></div>
+        <div><dt>Last Refresh</dt><dd>{_safe(provider.last_refresh or 'not refreshed')}</dd></div>
+        <div><dt>Source</dt><dd class="path">{_safe(provider.source)}</dd></div>
+      </dl>
+    </section>
+    """
+
+
+def _master_universe_row(row) -> str:
+    return (
+        "<tr>"
+        f"<td><strong>{_safe(row.ticker)}</strong><br>{_finviz_link(row.ticker)}</td>"
+        f"<td>{_safe(', '.join(provider_label(name) for name in row.provider_membership))}</td>"
+        f"<td>{_safe(row.market_cap_bucket.replace('_', ' ').title())}</td>"
+        f"<td>{_safe(row.market_archetype)}</td>"
+        f"<td>{_safe(row.sector or '-')}</td>"
+        f"<td>{_safe(row.health)}</td>"
+        "</tr>"
+    )
+
+
+def _market_pulse_section(archetype: str, rows: tuple[dict[str, str], ...], scan_id: str) -> str:
+    body = "".join(
+        "<tr>"
+        f"<td>{_safe(row.get('rank', ''))}</td>"
+        f"<td><strong>{_safe(row.get('symbol', ''))}</strong><br>{_finviz_link(row.get('symbol', ''))}</td>"
+        f"<td>{_safe(row.get('greenrock_score', ''))}</td>"
+        f"<td>{_safe(row.get('greenrock_confidence', ''))}</td>"
+        f"<td>{_safe(row.get('evidence_agreement', ''))}</td>"
+        f"<td>{_safe(row.get('research_priority', ''))}</td>"
+        f"<td>{_staging_add_form(row.get('symbol', ''), 'latest_scan', compact=True)}</td>"
+        "</tr>"
+        for row in rows
+    )
+    if not body:
+        body = "<tr><td colspan='7' class='empty'>No ranked opportunities in this archetype yet.</td></tr>"
+    return f"""
+    <section class="panel picks-panel">
+      <div class="section-head">
+        <h2>{_safe(archetype)}</h2>
+        <span class="subtle">Latest scan: {_safe(scan_id)}</span>
+      </div>
+      <table>
+        <thead><tr><th>Rank</th><th>Ticker</th><th>Score</th><th>Confidence</th><th>Evidence</th><th>Priority</th><th>Stage</th></tr></thead>
+        <tbody>{body}</tbody>
+      </table>
+    </section>
+    """
+
+
 def _watchlist_ticker_row(list_key: str, ticker: str, metadata: dict[str, str] | None) -> str:
     source = f"scan:{metadata.get('scan_id', '')}" if metadata else "manual/local"
     promoted_at = metadata.get("promoted_at", "") if metadata else ""
@@ -2496,7 +2674,7 @@ def _scan_results_table(rows, scan_id: str = "", batch: bool = False) -> str:
     promote_column = "" if batch else "<th>Promote</th>"
     table = (
         f"<table class='picks-table'><thead><tr>{select_column}<th>Rank</th><th>Ticker</th><th>Company</th>"
-        "<th>Score</th><th>Confidence</th><th>Evidence Agreement</th><th>Guardrail</th><th>Priority</th>"
+        "<th>Archetype</th><th>Score</th><th>Confidence</th><th>Evidence Agreement</th><th>Guardrail</th><th>Priority</th>"
         f"<th>Top Bullish Signal</th><th>Top Caution Signal</th><th>Data Quality Warnings</th>{promote_column}</tr></thead><tbody>"
         + body
         + "</tbody></table>"
@@ -2540,6 +2718,7 @@ def _scan_results_row(row: dict[str, str], scan_id: str, options: str, batch: bo
         f"<td>{_safe(row.get('rank', ''))}</td>"
         f"<td><strong>{_safe(row.get('symbol', ''))}</strong><br>{_finviz_link(row.get('symbol', ''))}</td>"
         f"<td>{_safe(row.get('company_name', ''))}</td>"
+        f"<td>{_safe(row.get('market_archetype', ''))}</td>"
         f"<td>{_safe(row.get('greenrock_score', ''))}</td>"
         f"<td>{_safe(row.get('greenrock_confidence', ''))}</td>"
         f"<td>{_safe(row.get('evidence_agreement', ''))}</td>"
@@ -3361,12 +3540,15 @@ def _error_response(status: int, title: str, message: str) -> WebResponse:
 
 
 def _page(title: str, content: str, active: str = "/") -> str:
+    provider = _real_data_provider_status()
     nav = (
         ("Inbox", "/"),
         ("Projects", "/projects"),
         ("GreenRock", "/greenrock"),
         ("Discovery", "/greenrock/discovery"),
         ("Picks", "/greenrock/picks"),
+        ("Universe", "/greenrock/universe"),
+        ("Pulse", "/greenrock/market-pulse"),
         ("Scanner", "/greenrock/scanner"),
         ("Watchlists", "/greenrock/watchlists"),
         ("Staging", "/greenrock/staging"),
@@ -3671,7 +3853,7 @@ def _page(title: str, content: str, active: str = "/") -> str:
 <body>
   <header>
     <h1>Atlas Command Center</h1>
-    <p>Development Mode. Local Only. Mock Data Unless Otherwise Noted.</p>
+    <p>Development Mode: Local Only. Real Data Provider: {_safe(provider['configured_label'])}. Current Provider: {_safe(provider['current_provider'])}.</p>
     <nav>{nav_html}</nav>
   </header>
   <main>{content}</main>
@@ -3680,12 +3862,35 @@ def _page(title: str, content: str, active: str = "/") -> str:
       <span>Atlas Command Center</span>
       <span>Development Mode</span>
       <span>Local Only</span>
-      <span>Mock Data Unless Otherwise Noted</span>
+      <span>Real Data Provider: {_safe(provider['configured_label'])}</span>
+      <span>Current Provider: {_safe(provider['current_provider'])}</span>
       <span>Last Refresh: {refresh}</span>
     </div>
   </footer>
 </body>
 </html>"""
+
+
+def _real_data_provider_status() -> dict[str, str]:
+    provider_name = os.getenv("ATLAS_MARKET_DATA_PROVIDER", "").strip().lower()
+    if provider_name == "yfinance":
+        available = importlib.util.find_spec("yfinance") is not None
+        return {
+            "configured": "true" if available else "false",
+            "configured_label": "configured" if available else "configured but package missing",
+            "current_provider": "yfinance",
+        }
+    if provider_name:
+        return {
+            "configured": "false",
+            "configured_label": f"unsupported ({provider_name})",
+            "current_provider": provider_name,
+        }
+    return {
+        "configured": "false",
+        "configured_label": "not configured",
+        "current_provider": "none",
+    }
 
 
 class _CommandCenterHandler(BaseHTTPRequestHandler):

@@ -66,6 +66,7 @@ from atlas_os.greenrock.universe import (
     reset_universe,
     validate_watchlists,
 )
+from atlas_os.greenrock.universe_manager import default_universe_manager, provider_label
 from atlas_os.greenrock.workflow import run_greenrock_screening_workflow
 from atlas_os.logging_config import configure_logging
 
@@ -276,6 +277,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     population_subparsers = population.add_subparsers(dest="population_command")
     population_subparsers.add_parser("list", help="List current GreenRock populations.")
+    population_subparsers.add_parser("master", help="Show the Atlas master research universe.")
     population_subparsers.add_parser("reset-all", help="Reset all GreenRock populations.")
     population_add = population_subparsers.add_parser("add", help="Add tickers to a population.")
     population_add.add_argument("population", choices=GREENROCK_POPULATION_NAMES)
@@ -730,6 +732,31 @@ def run_greenrock_population(command: str | None, population: str | None = None,
             print(f"ticker_count: {len(item.tickers)}")
             print(f"path: {item.path}")
             print(f"tickers: {', '.join(item.tickers)}")
+        master = default_universe_manager(settings.output_dir).master_universe()
+        print("Atlas master universe")
+        print(f"ticker_count: {master.size}")
+        print(f"duplicates_removed: {master.duplicates_removed}")
+        print(f"path: {master.path}")
+        return 0
+    if command == "master":
+        master = default_universe_manager(settings.output_dir).master_universe()
+        print("Atlas Research Master Universe")
+        print(f"ticker_count: {master.size}")
+        print(f"duplicates_removed: {master.duplicates_removed}")
+        print(f"last_refresh: {master.last_refresh}")
+        print(f"path: {master.path}")
+        print("providers:")
+        for provider in master.providers:
+            print(
+                f"  {provider.name} ({provider_label(provider.name)}): "
+                f"{provider.ticker_count} tickers status={provider.status} health={provider.health}"
+            )
+        print("tickers:")
+        for row in master.rows:
+            print(
+                f"  {row.ticker} bucket={row.market_cap_bucket} "
+                f"membership={','.join(row.provider_membership)} health={row.health}"
+            )
         return 0
     if command == "reset-all":
         populations = reset_all_populations(settings.output_dir)
@@ -764,7 +791,7 @@ def run_greenrock_population(command: str | None, population: str | None = None,
         else:
             print("  none")
         return 0
-    print("Choose a population command: list, reset-all, add, remove, or validate.")
+    print("Choose a population command: list, master, reset-all, add, remove, or validate.")
     return 1
 
 
@@ -786,6 +813,11 @@ def run_greenrock_scan(population: str) -> int:
     print(f"data_source: {result.data_source}")
     print(f"results_csv: {result.results_path}")
     print(f"summary_md: {result.summary_path}")
+    print(f"total_configured_tickers: {result.configured_ticker_count}")
+    print(f"successfully_fetched_scored: {result.fetched_ticker_count}")
+    print(f"skipped_tickers: {result.skipped_ticker_count}")
+    print(f"provider_failures: {result.provider_failure_count}")
+    print(f"duplicates_removed: {result.duplicates_removed}")
     print(f"ranked_count: {len(result.rows)}")
     if result.warnings:
         print("warnings:")
@@ -796,6 +828,7 @@ def run_greenrock_scan(population: str) -> int:
         print(
             f"  {row['rank']} {row['symbol']} score={row['greenrock_score']} "
             f"confidence={row['greenrock_confidence']} evidence={row['evidence_agreement']} "
+            f"percentile={row.get('percentile', '')} membership={row.get('universe_membership', '')} "
             f"guardrail={row['fundamental_guardrail']}"
         )
     return 0
