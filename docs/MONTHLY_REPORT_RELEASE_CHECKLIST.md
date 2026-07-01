@@ -9,6 +9,8 @@ atlas greenrock staging ready
 atlas greenrock staging enrich
 atlas greenrock report-from-staging
 atlas greenrock report-from-staging --allow-underfilled
+atlas greenrock stage-analyst-slate --overwrite-staging
+atlas greenrock report-analyst-slate --overwrite-staging
 ```
 
 Legacy/sample drafts remain available for comparison:
@@ -22,6 +24,7 @@ atlas greenrock report-draft
 - Record the `run_id` and `approval_id`.
 - Confirm the report path is run-specific.
 - Confirm the Candidate Source Disclosure identifies staging, watchlist, scanner/population, mock, or real-data sourcing as applicable.
+- If using the Atlas Analyst slate, confirm the draft highlights archetype leaders before compact remaining-candidate tables.
 
 ## 2. Review Report
 
@@ -38,6 +41,8 @@ atlas greenrock latest-report --print
 - If using staging mode, confirm readiness warnings, staging notes, source lists, and scan IDs appear only where available.
 - If using `--allow-missing-analytics`, confirm each affected ticker has an explicit staging data warning.
 - Confirm the main report tables stay readable and move long bullish/caution signals into candidate notes or an appendix.
+- Confirm Atlas Analyst summaries are deterministic, cite GreenRock Score/Confidence/Evidence Agreement, and avoid transaction-action or personalized recommendation language.
+- Confirm prior-scan comparison either shows rank/score/confidence/evidence changes or says no prior scan comparison is available.
 - Confirm empty staged buckets show a clean sentence rather than placeholder rows.
 - Confirm green-filled table headers render with yellow text in Markdown/HTML/PDF views where styling applies.
 - Confirm data-mode and human-approval disclaimers are present.

@@ -116,6 +116,10 @@ atlas greenrock population reset-all
 atlas greenrock population list
 atlas greenrock population master
 atlas greenrock market-pulse
+atlas greenrock stage-from-market-pulse --overwrite-staging
+atlas greenrock report-from-market-pulse --overwrite-staging
+atlas greenrock stage-analyst-slate --overwrite-staging
+atlas greenrock report-analyst-slate --overwrite-staging
 atlas greenrock archetypes audit
 atlas greenrock universe health
 atlas greenrock universe cleanup-failures --dry-run
@@ -161,12 +165,19 @@ Recommended browser flow:
 3. Select a population and run the scan from `/greenrock/scanner`; choose `all` to scan the Master Universe.
 4. Use the scanner filters for minimum GreenRock Score, Confidence, Evidence Agreement, Research Priority, and Guardrail label.
 5. Open `/greenrock/market-pulse` to review top ranked opportunities by Mega, Large, Mid, Small, Micro, Meme, and Special Situation archetype.
-6. Select one or more tickers and either stage them directly into a report bucket or save them to a local research queue.
-7. Open `/greenrock/watchlists` only when you want to review saved research queues.
-8. Open `/greenrock/staging` to choose final report candidates, operator notes, and readiness.
-9. Generate the draft from staging, then approve before any PDF export.
+6. Use **Stage Top Market Pulse Candidates** when you want the standard Market Pulse slate: top 1 Mega, top 11 Large, and top 11 combined Mid/Small/Micro. Confirm before replacing existing staging.
+7. Use **Generate Atlas Analyst Report Slate** when you want one leader from each available archetype, then remaining candidates filled by rank.
+8. After staging, use **Generate Draft From Staged Market Pulse** to create the normal workflow run, draft artifacts, pending approval, and Review Center link. No PDF export happens until approval.
+9. Select one or more tickers manually from scanner results when you want custom staging or local research queue saves instead.
+10. Open `/greenrock/watchlists` only when you want to review saved research queues.
+11. Open `/greenrock/staging` to choose final report candidates, operator notes, and readiness.
+12. Generate the draft from staging, then approve before any PDF export.
 
 Promotion saves only to local GreenRock list CSVs. Direct scan-to-staging saves only to the local staging CSV. Both paths are duplicate-safe and block bucket mismatches before writing where market-cap data is available. Promotion metadata is stored locally in `.atlas/output/greenrock/watchlists/promotion_metadata.csv` with scan ID, score, confidence, evidence agreement, research priority, guardrail, and promoted timestamp.
+
+Market Pulse staging is local-only and writes to `.atlas/output/greenrock/staging/report_candidates.csv`. It preserves scan score, confidence, Evidence Agreement, Guardrail, Research Priority, top signals, scan ID, and source. CLI staging blocks if staging already contains candidates unless `--overwrite-staging` is supplied.
+
+Atlas Analyst is the report intelligence layer. GreenRock Score remains the branded score; Atlas Analyst adds deterministic summary text, archetype leadership, prior-scan comparison when available, bullish evidence, caution evidence, and what to watch next. It uses local scan/staging data only and no external LLM/API.
 
 GreenRock branding expects the local logo at `atlas_os/static/greenrock_logo.png`. If it is missing, browser pages and report/PDF generation continue without failing.
 
@@ -179,6 +190,10 @@ atlas greenrock staging ready
 atlas greenrock staging enrich
 atlas greenrock report-from-staging
 atlas greenrock report-from-staging --allow-underfilled
+atlas greenrock stage-from-market-pulse --overwrite-staging
+atlas greenrock report-from-market-pulse --overwrite-staging
+atlas greenrock stage-analyst-slate --overwrite-staging
+atlas greenrock report-analyst-slate --overwrite-staging
 ```
 
 Without `--allow-underfilled`, Atlas blocks underfilled staging buckets. With it, Atlas creates a normal approval-gated draft and includes readiness warnings. Overfilled staging buckets show guidance to select the final 1/11/11 and include a confirmed trim-to-top-ranked helper. Scanner populations do not automatically feed reports; staged candidates are the curated bridge.

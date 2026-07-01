@@ -17,7 +17,11 @@
 - Keep Universe Manager reusable by future Atlas divisions. GreenRock-specific provider defaults are allowed, but the master universe record should remain simple: ticker, provider membership, market-cap bucket, sector when available, last refresh, and health.
 - Keep `/greenrock/universe` focused on provider counts, master universe size, duplicates removed, last refresh, provider health, bucket counts, and first-pass membership visibility.
 - Keep Universe Manager row display filtered and paginated. It should clearly state when a page/sample is shown, and offer provider, market-cap bucket, archetype, and ticker search filters.
-- Keep `/greenrock/market-pulse` focused on post-scan opportunity review by Mega, Large, Mid, Small, Micro, Meme, and Special Situation archetype. It may stage candidates but must not create reports or approvals directly.
+- Keep `/greenrock/market-pulse` focused on post-scan opportunity review by Mega, Large, Mid, Small, Micro, Meme, and Special Situation archetype. It may stage top candidates, and after staging may explicitly start the normal approval-gated draft workflow. Staging itself must not create reports or approvals.
+- Keep Market Pulse staging deterministic: top 1 Mega, top 11 Large, and top 11 combined Mid/Small/Micro candidates from the latest successful scan. Preserve score, confidence, Evidence Agreement, Guardrail, Research Priority, top signals, scan ID, and source.
+- Keep Atlas Analyst slate generation deterministic: select one leader from each available archetype, then fill remaining report slots by rank without duplicate tickers.
+- Treat GreenRock Score as the branded score and Atlas Analyst as the intelligence/reporting layer. Reports should explain candidates with deterministic templates, not external LLM/API calls.
+- Require overwrite confirmation before Market Pulse replaces existing staging. CLI overwrite must be explicit.
 - Keep Market Pulse reading the latest successful scan by timestamp, not by population-name sorting, and derive archetypes for older scan CSVs when the field is missing.
 - Keep provider failures visible but bounded. Show counts and a short table in the UI, with full health detail available from `atlas greenrock universe health`.
 - Keep universe cleanup conservative. Dry-run must change nothing; confirmed cleanup may only remove failed tickers from editable local population seed files.
@@ -33,6 +37,9 @@
 - Keep underfilled section readiness separate from missing analytics readiness. Underfilled buckets are slot-count warnings; missing analytics are data-quality warnings and should block clean report generation unless explicitly overridden.
 - Keep staging buckets explicit: Mega Rock Candidate, Large Cap Candidate, Small/Mid Candidate, Research Only, and Excluded. Count targets should remain visible for the three report candidate buckets.
 - Staging-sourced report generation may create normal workflow runs, report artifacts, and pending approvals only after explicit operator confirmation. It must not publish, email, or export a PDF automatically.
+- Market Pulse report generation must reuse the staging-sourced report workflow. The one-click UI path is latest scan, Market Pulse staging, staged draft generation, pending approval, and Review Center. It must not bypass staging, auto-approve, publish, email, trade, create client files, or export a PDF.
+- Atlas Analyst reports should lead with seven possible archetype leaders: Mega, Large, Mid, Small, Micro, Meme, and Special Situation. Remaining staged candidates belong in compact tables.
+- Atlas Analyst summaries should include rank context, archetype, GreenRock Score, Confidence, Evidence Agreement, Research Priority, why Atlas surfaced it, prior-scan comparison when available, primary bullish evidence, primary caution, and what to watch next.
 - Scanner populations should not automatically feed reports. Universe -> Scanner -> Ranking Engine -> Staging -> Report is the required sourcing path, with staging as the preferred curated bridge into approval-gated draft generation.
 - Scanner rows should remain ranked candidates, not arbitrary result rows. Required fields include GreenRock Score, Confidence, Evidence Agreement, Guardrail, Research Priority, Rank, Percentile, and Universe Membership.
 - Scanner summaries should show total configured tickers, fetched/scored tickers, skipped tickers, provider failures, duplicates removed, and ranked count.

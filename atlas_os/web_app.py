@@ -37,6 +37,12 @@ from atlas_os.db.database import connect, initialize_database
 from atlas_os.greenrock.pdf_export import render_markdown_report_to_pdf
 from atlas_os.greenrock.market_data import MarketDataConfigurationError
 from atlas_os.greenrock.market_engine import MARKET_ARCHETYPES, classify_market_archetype
+from atlas_os.greenrock.market_pulse import (
+    select_analyst_slate_candidates,
+    select_market_pulse_candidates,
+    stage_analyst_slate_candidates,
+    stage_top_market_pulse_candidates,
+)
 from atlas_os.greenrock.population import GREENROCK_POPULATION_LABELS
 from atlas_os.greenrock.score import calculate_score_preview, score_signal
 from atlas_os.greenrock.scanner import (
@@ -168,8 +174,27 @@ def create_app():
         return render_greenrock_universe(query=dict(request.query_params))
 
     @app.get("/greenrock/market-pulse", response_class=HTMLResponse)
-    def greenrock_market_pulse() -> str:
-        return render_greenrock_market_pulse()
+    def greenrock_market_pulse(request: Request) -> str:
+        return render_greenrock_market_pulse(request.query_params.get("status"))
+
+    @app.get("/greenrock/market-pulse/stage/confirm", response_class=HTMLResponse)
+    def greenrock_market_pulse_stage_confirm(request: Request) -> str:
+        return render_market_pulse_stage_confirmation(request.query_params.get("status"), request.query_params.get("slate", "market_pulse"))
+
+    @app.post("/greenrock/market-pulse/stage")
+    def greenrock_market_pulse_stage(overwrite_staging: str = Form(""), slate_mode: str = Form("market_pulse")):
+        message = stage_market_pulse_from_browser(overwrite_staging == "yes", slate_mode)
+        return RedirectResponse(_with_status("/greenrock/market-pulse", message), status_code=303)
+
+    @app.get("/greenrock/market-pulse/report/confirm", response_class=HTMLResponse)
+    def greenrock_market_pulse_report_confirm(request: Request) -> str:
+        return render_market_pulse_report_confirmation(request.query_params.get("status"))
+
+    @app.post("/greenrock/market-pulse/report")
+    def greenrock_market_pulse_report(allow_underfilled: str = Form("")):
+        message = generate_market_pulse_report_from_browser(allow_underfilled == "yes")
+        redirect_target = _review_path_from_status(message) or "/greenrock/market-pulse"
+        return RedirectResponse(_with_status(redirect_target, message), status_code=303)
 
     @app.post("/greenrock/scanner/run")
     def greenrock_scanner_run(population: str = Form("qqq")):
@@ -385,6 +410,10 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
         return WebResponse(200, render_greenrock_universe(_first(query, "status"), {key: values[0] for key, values in query.items()}))
     if method == "GET" and route == "/greenrock/market-pulse":
         return WebResponse(200, render_greenrock_market_pulse(_first(query, "status")))
+    if method == "GET" and route == "/greenrock/market-pulse/stage/confirm":
+        return WebResponse(200, render_market_pulse_stage_confirmation(_first(query, "status"), _first(query, "slate") or "market_pulse"))
+    if method == "GET" and route == "/greenrock/market-pulse/report/confirm":
+        return WebResponse(200, render_market_pulse_report_confirmation(_first(query, "status")))
     if method == "GET" and route == "/greenrock/watchlists":
         return WebResponse(200, render_greenrock_watchlists(_first(query, "status")))
     if method == "GET" and route == "/greenrock/staging":
@@ -454,6 +483,18 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
     if method == "POST" and route == "/greenrock/scanner/run":
         message = run_greenrock_scan_from_browser(form.get("population", "qqq"))
         return WebResponse(303, "", location=_with_status("/greenrock/scanner", message))
+    if method == "POST" and route == "/greenrock/market-pulse/stage":
+        return WebResponse(
+            303,
+            "",
+                location=_with_status(
+                    "/greenrock/market-pulse",
+                    stage_market_pulse_from_browser(form.get("overwrite_staging") == "yes", form.get("slate_mode", "market_pulse")),
+                ),
+        )
+    if method == "POST" and route == "/greenrock/market-pulse/report":
+        message = generate_market_pulse_report_from_browser(form.get("allow_underfilled") == "yes")
+        return WebResponse(303, "", location=_with_status(_review_path_from_status(message) or "/greenrock/market-pulse", message))
     if method == "POST" and route == "/greenrock/scanner/promote":
         return WebResponse(
             200,
@@ -1087,10 +1128,12 @@ def render_greenrock_market_pulse(status_message: str | None = None) -> str:
           {_provider_failure_summary(failures)}
         </section>
         """
+        actions = _market_pulse_actions(settings.output_dir, scan.scan_id)
     else:
         cards = ""
         sections = "<section class='panel warning-panel'><h2>No Latest Scan</h2><p>Run a population scan first. Market Pulse does not create reports or approvals.</p></section>"
         diagnostics = ""
+        actions = ""
     content = f"""
     {_status_banner(status_message)}
     <section class="hero compact greenrock-hero">
@@ -1100,10 +1143,113 @@ def render_greenrock_market_pulse(status_message: str | None = None) -> str:
       <p><a class="button secondary" href="/greenrock/scanner">Run Scanner</a> <a class="button secondary" href="/greenrock/staging">Open Staging</a></p>
     </section>
     {diagnostics}
+    {actions}
     <section class="board-meta">{cards}</section>
     {sections}
     """
     return _page("GreenRock Market Pulse", content, active="/greenrock/market-pulse")
+
+
+def render_market_pulse_stage_confirmation(status_message: str | None = None, slate_mode: str = "market_pulse") -> str:
+    settings = get_settings()
+    scan = latest_scan(settings.output_dir)
+    existing = load_staged_candidates(settings.output_dir)
+    analyst_mode = slate_mode == "analyst"
+    button_label = "Generate Atlas Analyst Report Slate" if analyst_mode else "Stage Top Market Pulse Candidates"
+    selector_description = (
+        "one leader from each available archetype, then remaining report slate by rank"
+        if analyst_mode
+        else "top 1 Mega, top 11 Large, and top 11 combined Mid/Small/Micro"
+    )
+    if scan is None:
+        preview = "<p>No successful scan found. Run a population scan first.</p>"
+        form = '<a class="button secondary" href="/greenrock/market-pulse">Back</a>'
+    else:
+        selected = select_analyst_slate_candidates(scan) if analyst_mode else select_market_pulse_candidates(scan)
+        preview_rows = "".join(
+            "<tr>"
+            f"<td>{_safe(row.get('symbol', ''))}</td>"
+            f"<td>{_safe(row.get('market_archetype', ''))}</td>"
+            f"<td>{_safe(bucket)}</td>"
+            f"<td>{_safe(row.get('greenrock_score', ''))}</td>"
+            f"<td>{_safe(row.get('research_priority', ''))}</td>"
+            "</tr>"
+            for row, bucket in selected[:30]
+        )
+        overwrite = "<input type='hidden' name='overwrite_staging' value='yes'>"
+        overwrite_note = (
+            f"<p class='warning-text'>Existing staging has {len(existing)} candidate(s). Confirming will replace them with this slate.</p>"
+            if existing
+            else "<p class='subtle'>Current staging is empty. Confirming will create a new report slate.</p>"
+        )
+        preview = f"""
+        <p>Latest scan: <strong>{_safe(scan.scan_id)}</strong>. Candidate selection: {_safe(selector_description)}.</p>
+        {overwrite_note}
+        <table>
+          <thead><tr><th>Ticker</th><th>Archetype</th><th>Stage Bucket</th><th>Score</th><th>Priority</th></tr></thead>
+          <tbody>{preview_rows or "<tr><td colspan='5' class='empty'>No candidates available.</td></tr>"}</tbody>
+        </table>
+        """
+        form = f"""
+        <form method="post" action="/greenrock/market-pulse/stage" class="confirm-form">
+          {overwrite}
+          <input type="hidden" name="slate_mode" value="{'analyst' if analyst_mode else 'market_pulse'}">
+          <button type="submit">{button_label}</button>
+          <a class="button secondary" href="/greenrock/market-pulse">Cancel</a>
+        </form>
+        """
+    content = f"""
+    {_status_banner(status_message)}
+    <section class="hero compact greenrock-hero">
+      <p class="eyebrow">Confirm Market Pulse Staging</p>
+      <h1>{button_label}?</h1>
+      <p>This writes local staging only. It creates no report, approval, PDF, email, publication, trading action, or client file.</p>
+    </section>
+    <section class="panel warning-panel">
+      {preview}
+      {form}
+    </section>
+    """
+    return _page("Confirm Market Pulse Staging", content, active="/greenrock/market-pulse")
+
+
+def render_market_pulse_report_confirmation(status_message: str | None = None) -> str:
+    settings = get_settings()
+    rows = load_staged_candidates(settings.output_dir)
+    scan = latest_scan(settings.output_dir)
+    staged_count = len(tuple(row for row in rows if not scan or row.get("source_scan_id") == scan.scan_id))
+    readiness = staging_report_readiness(settings.output_dir, allow_underfilled=True)
+    warnings = "".join(f"<li>{_safe(warning)}</li>" for warning in readiness.warnings) or "<li>No readiness warnings.</li>"
+    underfilled = any("underfilled" in warning for warning in readiness.warnings)
+    allow_control = (
+        """
+        <label class="checkbox-line">
+          <input type="checkbox" name="allow_underfilled" value="yes">
+          Allow underfilled sections and show warnings in the draft
+        </label>
+        """
+        if underfilled
+        else "<input type='hidden' name='allow_underfilled' value='yes'>"
+    )
+    content = f"""
+    {_status_banner(status_message)}
+    <section class="hero compact greenrock-hero">
+      <p class="eyebrow">Confirm Market Pulse Draft</p>
+      <h1>Generate Draft From Staged Market Pulse?</h1>
+      <p>This creates a normal local workflow run, report artifacts, and a pending approval. It does not publish, email, trade, create client files, or export a PDF.</p>
+    </section>
+    <section class="panel warning-panel">
+      <p>Staged Market Pulse candidates from latest scan: <strong>{staged_count}</strong>.</p>
+      <h2>Readiness Review</h2>
+      <ul class="compact-list">{warnings}</ul>
+      <form method="post" action="/greenrock/market-pulse/report" class="confirm-form">
+        {allow_control}
+        <button type="submit">Create Approval-Gated Draft</button>
+        <a class="button secondary" href="/greenrock/market-pulse">Cancel</a>
+      </form>
+    </section>
+    """
+    return _page("Confirm Market Pulse Draft", content, active="/greenrock/market-pulse")
 
 
 def render_greenrock_watchlists(status_message: str | None = None) -> str:
@@ -1224,6 +1370,34 @@ def run_greenrock_scan_from_browser(population: str) -> str:
     except (MarketDataConfigurationError, ValueError) as error:
         return f"Population scan blocked: {error}"
     return f"Population scan complete: {result.scan_id}"
+
+
+def stage_market_pulse_from_browser(overwrite_staging: bool = False, slate_mode: str = "market_pulse") -> str:
+    settings = get_settings()
+    try:
+        if slate_mode == "analyst":
+            result = stage_analyst_slate_candidates(settings.output_dir, overwrite=overwrite_staging)
+        else:
+            result = stage_top_market_pulse_candidates(settings.output_dir, overwrite=overwrite_staging)
+    except ValueError as error:
+        return f"Market Pulse staging blocked: {error}"
+    counts = {
+        "mega": sum(1 for row in result.staged_rows if row.get("staged_bucket") == "mega"),
+        "large": sum(1 for row in result.staged_rows if row.get("staged_bucket") == "large"),
+        "small_mid": sum(1 for row in result.staged_rows if row.get("staged_bucket") == "small_mid"),
+    }
+    label = "Atlas Analyst slate" if slate_mode == "analyst" else "Market Pulse"
+    status = f"{label} staged {len(result.staged_rows)} candidates from {result.scan_id}: {counts['mega']} mega, {counts['large']} large, {counts['small_mid']} small/mid."
+    if result.replaced_existing:
+        status += " Existing staging was replaced after confirmation."
+    if result.warnings:
+        status += " Warnings: " + " ".join(result.warnings)
+    status += " No report, approval, PDF, email, publication, trading action, or client file was created."
+    return status
+
+
+def generate_market_pulse_report_from_browser(allow_underfilled: bool = False) -> str:
+    return generate_greenrock_staging_report(allow_underfilled=allow_underfilled)
 
 
 def promote_greenrock_scan_ticker(scan_id: str, ticker: str, list_key: str) -> str:
@@ -1621,10 +1795,12 @@ def render_greenrock_report_review(run_id: str, status_message: str | None = Non
         {_path_action(report.content_path, "Open Markdown")}
       </div>
     </section>
+    {_review_candidate_section("Featured Archetype Leaders", _extract_report_section(markdown, ("## Featured Archetype Leaders",)))}
+    {_review_candidate_section("Remaining Ranked Candidates", _extract_report_section(markdown, ("## Remaining Ranked Candidates",)))}
+    {_review_candidate_section("Staging Bucket Appendix", _extract_report_section(markdown, ("## Appendix: Staging Buckets", "## Mega Rock Candidate", "## Mega Rock Pick")))}
     {_review_candidate_section("Mega Rock", _extract_report_section(markdown, ("## Mega Rock Candidate", "## Mega Rock Pick")))}
     {_review_candidate_section("Large Cap", _extract_report_section(markdown, ("## Large Cap Candidates", "## Top Large-Cap Candidates")))}
     {_review_candidate_section("Small/Mid", _extract_report_section(markdown, ("## Small/Mid Candidates", "## Top Small/Mid-Cap Candidates")))}
-    {_review_candidate_section("Research Only / Excluded", _extract_report_section(markdown, ("## Research Only / Excluded",)))}
     <section class="panel disclosure-panel">
       <h2>Review Boundary</h2>
       <p>This page reviews a local draft only. Approval updates local records; PDF export remains blocked until approval; nothing is published or emailed.</p>
@@ -2503,6 +2679,45 @@ def _provider_failure_summary(failures: tuple[dict[str, str], ...]) -> str:
       <tbody>{rows}</tbody>
     </table>
     """
+
+
+def _market_pulse_actions(output_dir: Path, scan_id: str) -> str:
+    staged_rows = load_staged_candidates(output_dir)
+    market_pulse_rows = tuple(row for row in staged_rows if row.get("source_scan_id") == scan_id)
+    report_button = (
+        '<a class="button" href="/greenrock/market-pulse/report/confirm">Generate Draft From Staged Market Pulse</a>'
+        if market_pulse_rows
+        else ""
+    )
+    report_note = (
+        f"<p class='subtle'>{len(market_pulse_rows)} staged candidate(s) from this scan are ready for the normal approval-gated draft workflow.</p>"
+        if market_pulse_rows
+        else "<p class='subtle'>Stage candidates first, then generate the approval-gated draft from staging.</p>"
+    )
+    return f"""
+    <section class="panel warning-panel">
+      <div class="section-head">
+        <h2>Market Pulse To Report</h2>
+        <span class="badge">Local approval-gated workflow</span>
+      </div>
+      <p>Stage top candidates from the latest scan, then create the normal draft report from staging. No PDF export happens until a human approves.</p>
+      <p class="subtle">Atlas Analyst slate stages one leader from each available archetype, then fills the remaining report slate by rank.</p>
+      <div class="action-row">
+        <a class="button" href="/greenrock/market-pulse/stage/confirm">Stage Top Market Pulse Candidates</a>
+        <a class="button" href="/greenrock/market-pulse/stage/confirm?slate=analyst">Generate Atlas Analyst Report Slate</a>
+        {report_button}
+      </div>
+      {report_note}
+    </section>
+    """
+
+
+def _review_path_from_status(status: str) -> str | None:
+    marker = "Review at "
+    if marker not in status:
+        return None
+    tail = status.split(marker, maxsplit=1)[1].strip()
+    return tail.rstrip(".") or None
 
 
 def _pulse_row(row: dict[str, str]) -> dict[str, str]:

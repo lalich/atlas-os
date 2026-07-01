@@ -13,7 +13,9 @@ from atlas_os.core.artifacts import Artifact
 from atlas_os.core.reports import create_report_record
 from atlas_os.core.workflow_runner import WorkflowContext, WorkflowRunner, WorkflowStep
 from atlas_os.core.workflow_runs import WorkflowRun
+from atlas_os.greenrock.analyst import analyst_candidates, archetype_leaders, remaining_candidates
 from atlas_os.greenrock.assets import greenrock_logo_path
+from atlas_os.greenrock.market_engine import MARKET_ARCHETYPES
 from atlas_os.greenrock.screener import CSV_HEADERS
 from atlas_os.greenrock.staging import (
     LARGE_BUCKET,
@@ -102,6 +104,7 @@ def _stage_candidates_step(source_output_dir: Path, readiness_warnings: tuple[st
         rows = load_staged_candidates(source_output_dir)
         context.greenrock_staging_rows = rows
         context.greenrock_staging_warnings = readiness_warnings
+        context.greenrock_source_output_dir = source_output_dir
         paths = _write_staging_outputs(rows, context.output_dir)
         context.record_artifact("candidates_csv", paths["all"], output_key="all")
         context.record_artifact("mega_rock_csv", paths["mega_rock"], output_key="mega_rock")
@@ -183,7 +186,8 @@ def _draft_staging_report(context: WorkflowContext) -> None:
     context.output_dir.mkdir(parents=True, exist_ok=True)
     rows = getattr(context, "greenrock_staging_rows", ())
     warnings = getattr(context, "greenrock_staging_warnings", ())
-    report_markdown = build_staging_report_markdown(context.run.run_id, rows, warnings)
+    source_output_dir = getattr(context, "greenrock_source_output_dir", context.output_dir)
+    report_markdown = build_staging_report_markdown(context.run.run_id, rows, warnings, source_output_dir)
     report_path = context.output_dir / "greenrock_report_draft.md"
     report_path.write_text(report_markdown, encoding="utf-8")
     report_artifact = context.record_artifact("report_draft_md", report_path, output_key="report_draft")
@@ -209,13 +213,21 @@ def _draft_staging_report(context: WorkflowContext) -> None:
     context.blocked_for_approval = True
 
 
-def build_staging_report_markdown(run_id: str, rows: tuple[dict[str, str], ...], warnings: tuple[str, ...] = ()) -> str:
+def build_staging_report_markdown(
+    run_id: str,
+    rows: tuple[dict[str, str], ...],
+    warnings: tuple[str, ...] = (),
+    output_dir: Path | None = None,
+) -> str:
     source_lists = sorted({row.get("source_list", "") for row in rows if row.get("source_list", "")})
     scan_ids = sorted({row.get("source_scan_id", "") for row in rows if row.get("source_scan_id", "")})
+    analyst_rows = analyst_candidates(output_dir or Path("."), rows)
+    leaders = archetype_leaders(analyst_rows)
+    remaining = remaining_candidates(analyst_rows, leaders)
     lines = _logo_lines() + [
         "# GreenRock Analysts Monthly Opportunity Report",
         "",
-        "## Technical Dislocation Screen",
+        "## Atlas Analyst Research Draft",
         "",
         f"**Date:** {date.today().isoformat()}",
         f"**Run ID:** {run_id}",
@@ -244,6 +256,19 @@ def build_staging_report_markdown(run_id: str, rows: tuple[dict[str, str], ...],
     lines.extend(
         [
             "",
+            "## Market Pulse Summary",
+            "",
+            (
+                "GreenRock Score is the branded scoring layer. Atlas Analyst is the deterministic "
+                "research intelligence layer that explains why staged candidates surfaced, highlights "
+                "archetype leaders, and keeps remaining candidates compact for review."
+            ),
+            "",
+            f"- Staged candidates: {len(rows)}",
+            f"- Featured archetype leaders: {len(leaders)}",
+            f"- Remaining ranked candidates: {len(remaining)}",
+            f"- Archetypes reviewed: {', '.join(MARKET_ARCHETYPES)}",
+            "",
             "## Readiness",
             "",
         ]
@@ -259,25 +284,43 @@ def build_staging_report_markdown(run_id: str, rows: tuple[dict[str, str], ...],
     lines.extend(
         [
             "",
-            "## Mega Rock Candidate",
+            "## Featured Archetype Leaders",
+            "",
+            _archetype_leader_sections(leaders),
+            "",
+            "## Remaining Ranked Candidates",
+            "",
+            _remaining_candidates_table(remaining),
+            "",
+            "## Appendix: Staging Buckets",
+            "",
+            "### Mega Rock Candidate",
             "",
             _staging_table(tuple(row for row in rows if row.get("staged_bucket") == MEGA_BUCKET)),
             _candidate_signal_summaries(tuple(row for row in rows if row.get("staged_bucket") == MEGA_BUCKET)),
             "",
-            "## Large Cap Candidates",
+            "### Large Cap Candidates",
             "",
             _staging_table(tuple(row for row in rows if row.get("staged_bucket") == LARGE_BUCKET)),
             _candidate_signal_summaries(tuple(row for row in rows if row.get("staged_bucket") == LARGE_BUCKET)),
             "",
-            "## Small/Mid Candidates",
+            "### Small/Mid Candidates",
             "",
             _staging_table(tuple(row for row in rows if row.get("staged_bucket") == SMALL_MID_BUCKET)),
             _candidate_signal_summaries(tuple(row for row in rows if row.get("staged_bucket") == SMALL_MID_BUCKET)),
             "",
-            "## Research Only / Excluded",
+            "### Research Only / Excluded",
             "",
             _staging_table(tuple(row for row in rows if row.get("staged_bucket") not in {MEGA_BUCKET, LARGE_BUCKET, SMALL_MID_BUCKET})),
             _candidate_signal_summaries(tuple(row for row in rows if row.get("staged_bucket") not in {MEGA_BUCKET, LARGE_BUCKET, SMALL_MID_BUCKET})),
+            "",
+            "## Appendix: Methodology",
+            "",
+            (
+                "Atlas Analyst text is generated with deterministic template logic from local scan and "
+                "staging data only. It uses no external LLM/API calls. Prior-scan comparison appears "
+                "only when a previous local scan contains the same ticker."
+            ),
             "",
             "## Human Approval Disclaimer",
             "",
@@ -290,11 +333,76 @@ def build_staging_report_markdown(run_id: str, rows: tuple[dict[str, str], ...],
             "",
             (
                 "This material is for internal workflow testing only. It does not provide personalized "
-                "investment advice, guarantee outcomes, or recommend that any person buy, sell, or hold a security."
+                "investment advice, guarantee outcomes, or recommend that any person take a security transaction action."
             ),
         ]
     )
     return "\n".join(lines) + "\n"
+
+
+def _archetype_leader_sections(leaders) -> str:
+    if not leaders:
+        return "No archetype leaders available from staged candidates."
+    blocks: list[str] = []
+    by_archetype = {leader.archetype: leader for leader in leaders}
+    for archetype in MARKET_ARCHETYPES:
+        leader = by_archetype.get(archetype)
+        if leader is None:
+            blocks.extend([f"### {archetype}", "", "No staged leader available for this archetype.", ""])
+            continue
+        blocks.extend(
+            [
+                f"### {archetype}: {leader.ticker}",
+                "",
+                f"- Rank: {leader.rank or '-'}",
+                f"- GreenRock Score: {leader.greenrock_score or '-'}",
+                f"- Confidence: {leader.confidence or '-'}",
+                f"- Evidence Agreement: {leader.evidence_agreement or '-'}",
+                f"- Guardrail: {leader.guardrail or '-'}",
+                f"- Research Priority: {leader.research_priority or '-'}",
+                "",
+                "**Atlas Analyst Summary**",
+                "",
+                leader.summary,
+                "",
+                "**Bullish Evidence**",
+                "",
+                leader.bullish_evidence,
+                "",
+                "**Bearish Evidence**",
+                "",
+                leader.bearish_evidence,
+                "",
+                "**What To Watch Next**",
+                "",
+                leader.watch_next,
+                "",
+            ]
+        )
+    return "\n".join(blocks).strip()
+
+
+def _remaining_candidates_table(candidates) -> str:
+    if not candidates:
+        return "No remaining staged candidates after featured archetype leaders."
+    lines = [
+        "| Ticker | Archetype | Rank | Score | Confidence | Evidence | Guardrail | Priority | Source Scan ID |",
+        "|---|---|---:|---:|---:|---:|---|---|---|",
+    ]
+    for candidate in candidates:
+        lines.append(
+            "| "
+            f"{candidate.ticker} | "
+            f"{candidate.archetype or '-'} | "
+            f"{candidate.rank or '-'} | "
+            f"{candidate.greenrock_score or '-'} | "
+            f"{candidate.confidence or '-'} | "
+            f"{candidate.evidence_agreement or '-'} | "
+            f"{candidate.guardrail or '-'} | "
+            f"{candidate.research_priority or '-'} | "
+            f"{candidate.source_scan_id or '-'} |"
+        )
+    return "\n".join(lines)
 
 
 def _staging_table(rows: tuple[dict[str, str], ...]) -> str:

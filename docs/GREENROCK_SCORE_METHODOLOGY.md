@@ -2,6 +2,8 @@
 
 GreenRock Score is a 0-100 technical dislocation score used by Atlas OS to rank review candidates for GreenRock Analysts workflows. It is a screening and prioritization aid only. It is not a recommendation, guarantee, or client-facing conclusion.
 
+GreenRock Score is the branded scoring layer. Atlas Analyst is the deterministic intelligence and reporting layer that turns local scan/staging data into report narrative. Atlas Analyst uses templates only; it does not call external LLMs or APIs.
+
 GreenRock Score, GreenRock Confidence, and Evidence Agreement are separate:
 
 - GreenRock Score measures the opportunity/dislocation setup.
@@ -10,6 +12,26 @@ GreenRock Score, GreenRock Confidence, and Evidence Agreement are separate:
 - Fundamental Guardrails measure survivability and recovery support from light balance-sheet and dilution checks.
 - Confidence may be high when Score is moderate if the evidence is clean and complete.
 - Confidence may be low when Score is high if the data is shallow, noisy, incomplete, or internally conflicted.
+
+## Atlas Analyst Reporting Layer
+
+Atlas Analyst reports highlight one leader from each available market archetype: Mega, Large, Mid, Small, Micro, Meme, and Special Situation. Remaining staged candidates are summarized in compact tables.
+
+For each featured leader, Atlas Analyst may include:
+
+- Rank context from the latest scan.
+- Market archetype.
+- GreenRock Score.
+- Confidence.
+- Evidence Agreement.
+- Research Priority.
+- Why Atlas surfaced the ticker.
+- Prior-scan comparison when local history contains the same ticker.
+- Primary bullish evidence.
+- Primary caution.
+- What to watch next.
+
+If no prior scan row exists for that ticker, reports state: `No prior scan comparison available.`
 
 ## GreenRock Evidence Engine
 
@@ -120,7 +142,7 @@ Confidence considers:
 
 ## Fundamental Guardrails
 
-Fundamental Guardrails are light viability checks, not a full valuation model. They do not produce buy, sell, or hold conclusions and do not replace analyst review.
+Fundamental Guardrails are light viability checks, not a full valuation model. They do not produce transaction-action conclusions and do not replace analyst review.
 
 Fields used where available:
 

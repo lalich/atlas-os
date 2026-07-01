@@ -170,8 +170,8 @@ def build_report_draft(
         "",
         (
             "This material is for internal workflow testing only. It does not provide personalized "
-            "investment advice, guarantee outcomes, or recommend that any person buy, sell, or hold a "
-            "security. Any client-facing version would require appropriate review, substantiation, and "
+            "investment advice, guarantee outcomes, or recommend that any person take a security "
+            "transaction action. Any client-facing version would require appropriate review, substantiation, and "
             "approval under the applicable GreenRock process."
         ),
     ]

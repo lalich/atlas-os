@@ -126,6 +126,10 @@ atlas greenrock population reset-all
 atlas greenrock population list
 atlas greenrock population master
 atlas greenrock market-pulse
+atlas greenrock stage-from-market-pulse --overwrite-staging
+atlas greenrock report-from-market-pulse --overwrite-staging
+atlas greenrock stage-analyst-slate --overwrite-staging
+atlas greenrock report-analyst-slate --overwrite-staging
 atlas greenrock archetypes audit
 atlas greenrock universe health
 atlas greenrock universe cleanup-failures --dry-run
@@ -152,6 +156,8 @@ Scan rows are ranked candidates with GreenRock Score, Confidence, Evidence Agree
 
 Universe Manager UI uses filters and pagination for the Master Universe instead of showing only the first alphabetical sample. Filter by provider, market-cap bucket, archetype, or ticker search. Provider failures from the latest successful scan are summarized separately so stale/delisted/acquired names do not dominate the page. Cleanup is dry-run by default; confirmed cleanup only removes failed tickers from editable local population seed CSVs.
 
+Market Pulse can stage a report slate from the latest successful scan with `atlas greenrock stage-from-market-pulse` or the `/greenrock/market-pulse` button. It selects the top 1 Mega, top 11 Large, and top 11 combined Mid/Small/Micro candidates, preserving score, confidence, Evidence Agreement, Guardrail, Research Priority, top signals, scan ID, and source into staging. Existing staging is never replaced without explicit overwrite/confirmation.
+
 Scanner actions can either save a ticker into Watchlist, Ranked Candidates, Strict Review, Mega Rock Candidate Pool, Large Cap Watchlist, or Small/Mid Watchlist, or stage selected scan rows directly into the final report slate. Promotion and staging are duplicate-safe, show market-cap bucket warnings where applicable, and write only to local GreenRock CSVs.
 
 Bucket-specific saves are guarded by available market-cap bucket data: mismatched Mega Rock, Large Cap, or Small/Mid saves are blocked with a suggested destination. Personal Watchlist is the manual fallback for unknown or intentionally tracked names.
@@ -173,6 +179,10 @@ Staging stores candidates locally at `.atlas/output/greenrock/staging/report_can
 Staged candidates should have analytics before clean report generation. Use `atlas greenrock staging enrich` to refresh missing Score, Confidence, Evidence Agreement, Guardrail, Research Priority, and top signal fields from the configured real provider. `atlas greenrock staging ready` reports both section fill status and analytics completeness.
 
 `atlas greenrock report-from-staging` creates the preferred approval-gated GreenRock draft from staged candidates. It blocks underfilled sections by default; use `--allow-underfilled` to generate a draft that clearly shows readiness warnings. Missing analytics are a separate gate: run `atlas greenrock staging enrich` first, or use `--allow-missing-analytics` only for an intentional draft with explicit data warnings. Scanner populations do not automatically feed reports: staged candidates are the curated bridge. Browser review is available at `/greenrock/reports/<run_id>/review`.
+
+`atlas greenrock report-from-market-pulse` is the one-command version of the same gated path: latest scan -> Market Pulse selection -> staging -> normal workflow run -> pending approval -> Review Center. It does not email, publish, trade, create client files, or export a PDF automatically.
+
+Atlas Analyst is the deterministic intelligence layer for staging-sourced reports. GreenRock Score remains the branded score; Atlas Analyst explains rank context, archetype, confidence, Evidence Agreement, prior-scan changes when available, primary bullish/caution evidence, and what to watch next. `atlas greenrock stage-analyst-slate` stages one leader from each available archetype, then fills the remaining report slate by rank. `atlas greenrock report-analyst-slate` uses that slate and creates the same approval-gated draft workflow.
 
 GreenRock branding uses the local asset path `atlas_os/static/greenrock_logo.png`. If the logo file is missing, web pages and report/PDF generation continue without failing.
 
@@ -419,6 +429,7 @@ Command Center pages:
 - `/greenrock/discovery` guided GreenRock discovery workflow showing Discovery Scan, Review Results, Stage Candidates, Generate Draft Report, Human Approval, and Export PDF.
 - `/greenrock/picks` GreenRock Picks Board with the featured Mega Rock pick, 11 large-cap picks, 11 small/mid-cap picks, Evidence Agreement, top signals, Fundamental Guardrail fields, Finviz links, and explicit data-mode labeling.
 - `/greenrock/scanner` GreenRock Market Scanner for population scans, latest scan metadata, quick filters, ranked results, Finviz links, deliberate promote-to-list review, and direct scan-to-staging.
+- `/greenrock/market-pulse` latest successful scan overview by archetype, with one-click staging of top Market Pulse candidates, Atlas Analyst report slate generation, and approval-gated draft generation from staging.
 - `/greenrock/watchlists` local GreenRock watchlist overview with ticker counts, tickers, Finviz links, promotion source, and latest promoted timestamp when available.
 - `/greenrock/staging` Report Candidate Staging page for final local curation into Mega Rock, Large Cap, Small/Mid, Research Only, and Excluded buckets before approval-gated report drafts.
 - `/greenrock/score` GreenRock Score Calculator with confidence, Evidence Agreement, Fundamental Guardrails, research priority, evidence cards, watch-next notes, methodology explanation, and preview-only score breakdown.

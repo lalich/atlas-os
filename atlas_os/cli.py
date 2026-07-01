@@ -27,6 +27,7 @@ from atlas_os.db.database import connect, initialize_database
 from atlas_os.greenrock.lifecycle import cleanup_greenrock_drafts
 from atlas_os.greenrock.market_data import MarketDataConfigurationError
 from atlas_os.greenrock.market_engine import MARKET_ARCHETYPES, classify_market_archetype
+from atlas_os.greenrock.market_pulse import stage_analyst_slate_candidates, stage_top_market_pulse_candidates
 from atlas_os.greenrock.pdf_export import render_markdown_report_to_pdf
 from atlas_os.greenrock.population import (
     ALL_POPULATION,
@@ -286,6 +287,62 @@ def build_parser() -> argparse.ArgumentParser:
     greenrock_subparsers.add_parser(
         "market-pulse",
         help="Show latest ranked market opportunities by archetype.",
+    )
+    stage_from_market_pulse = greenrock_subparsers.add_parser(
+        "stage-from-market-pulse",
+        help="Stage the top Market Pulse candidates from the latest successful scan.",
+    )
+    stage_from_market_pulse.add_argument(
+        "--overwrite-staging",
+        action="store_true",
+        help="Replace existing local staging candidates with the Market Pulse slate.",
+    )
+    report_from_market_pulse = greenrock_subparsers.add_parser(
+        "report-from-market-pulse",
+        help="Stage top Market Pulse candidates and create an approval-gated draft report.",
+    )
+    report_from_market_pulse.add_argument(
+        "--overwrite-staging",
+        action="store_true",
+        help="Replace existing local staging candidates before creating the draft.",
+    )
+    report_from_market_pulse.add_argument(
+        "--allow-underfilled",
+        action="store_true",
+        help="Allow a staging-sourced draft if the latest scan does not fill all Market Pulse slots.",
+    )
+    report_from_market_pulse.add_argument(
+        "--allow-missing-analytics",
+        action="store_true",
+        help="Allow a draft if staged candidate analytics are incomplete.",
+    )
+    stage_analyst_slate = greenrock_subparsers.add_parser(
+        "stage-analyst-slate",
+        help="Stage archetype leaders plus remaining ranked candidates from the latest Market Pulse scan.",
+    )
+    stage_analyst_slate.add_argument(
+        "--overwrite-staging",
+        action="store_true",
+        help="Replace existing local staging candidates with the Atlas Analyst slate.",
+    )
+    report_analyst_slate = greenrock_subparsers.add_parser(
+        "report-analyst-slate",
+        help="Stage an Atlas Analyst slate and create an approval-gated draft report.",
+    )
+    report_analyst_slate.add_argument(
+        "--overwrite-staging",
+        action="store_true",
+        help="Replace existing local staging candidates before creating the draft.",
+    )
+    report_analyst_slate.add_argument(
+        "--allow-underfilled",
+        action="store_true",
+        help="Allow a staging-sourced draft if the latest scan does not fill all report slots.",
+    )
+    report_analyst_slate.add_argument(
+        "--allow-missing-analytics",
+        action="store_true",
+        help="Allow a draft if staged candidate analytics are incomplete.",
     )
     archetypes = greenrock_subparsers.add_parser(
         "archetypes",
@@ -885,6 +942,87 @@ def run_greenrock_market_pulse() -> int:
         else:
             print("  No scored names in this archetype.")
     return 0
+
+
+def run_greenrock_stage_from_market_pulse(overwrite_staging: bool = False, report_followup: bool = False) -> int:
+    settings = get_settings()
+    try:
+        result = stage_top_market_pulse_candidates(settings.output_dir, overwrite=overwrite_staging)
+    except ValueError as error:
+        print("GreenRock Market Pulse staging blocked")
+        print(f"reason: {error}")
+        print("No report, approval, PDF, email, publication, or external action was created.")
+        return 1
+    print("GreenRock Market Pulse candidates staged")
+    print(f"scan_id: {result.scan_id}")
+    print(f"staged_count: {len(result.staged_rows)}")
+    print(f"replaced_existing: {'yes' if result.replaced_existing else 'no'}")
+    print("buckets:")
+    for bucket in ("mega", "large", "small_mid"):
+        count = sum(1 for row in result.staged_rows if row.get("staged_bucket") == bucket)
+        print(f"  {bucket}: {count}")
+    if result.warnings:
+        print("warnings:")
+        for warning in result.warnings:
+            print(f"  {warning}")
+    if report_followup:
+        print("Staging complete. Creating the approval-gated draft from staging next.")
+    else:
+        print("No report, approval, PDF, email, publication, or external action was created.")
+    return 0
+
+
+def run_greenrock_stage_analyst_slate(overwrite_staging: bool = False, report_followup: bool = False) -> int:
+    settings = get_settings()
+    try:
+        result = stage_analyst_slate_candidates(settings.output_dir, overwrite=overwrite_staging)
+    except ValueError as error:
+        print("GreenRock Atlas Analyst slate staging blocked")
+        print(f"reason: {error}")
+        print("No report, approval, PDF, email, publication, or external action was created.")
+        return 1
+    print("GreenRock Atlas Analyst slate staged")
+    print(f"scan_id: {result.scan_id}")
+    print(f"staged_count: {len(result.staged_rows)}")
+    print(f"replaced_existing: {'yes' if result.replaced_existing else 'no'}")
+    print("selection: one leader from each available archetype, then remaining report slate by rank")
+    if result.warnings:
+        print("warnings:")
+        for warning in result.warnings:
+            print(f"  {warning}")
+    if report_followup:
+        print("Staging complete. Creating the approval-gated draft from staging next.")
+    else:
+        print("No report, approval, PDF, email, publication, or external action was created.")
+    return 0
+
+
+def run_greenrock_report_from_market_pulse(
+    overwrite_staging: bool = False,
+    allow_underfilled: bool = False,
+    allow_missing_analytics: bool = False,
+) -> int:
+    stage_code = run_greenrock_stage_from_market_pulse(overwrite_staging=overwrite_staging, report_followup=True)
+    if stage_code != 0:
+        return stage_code
+    return run_greenrock_report_from_staging(
+        allow_underfilled=allow_underfilled,
+        allow_missing_analytics=allow_missing_analytics,
+    )
+
+
+def run_greenrock_report_analyst_slate(
+    overwrite_staging: bool = False,
+    allow_underfilled: bool = False,
+    allow_missing_analytics: bool = False,
+) -> int:
+    stage_code = run_greenrock_stage_analyst_slate(overwrite_staging=overwrite_staging, report_followup=True)
+    if stage_code != 0:
+        return stage_code
+    return run_greenrock_report_from_staging(
+        allow_underfilled=allow_underfilled,
+        allow_missing_analytics=allow_missing_analytics,
+    )
 
 
 def run_greenrock_archetypes(command: str | None) -> int:
@@ -1796,6 +1934,22 @@ def main(argv: list[str] | None = None) -> int:
             return run_greenrock_picks_board()
         if args.greenrock_command == "market-pulse":
             return run_greenrock_market_pulse()
+        if args.greenrock_command == "stage-from-market-pulse":
+            return run_greenrock_stage_from_market_pulse(args.overwrite_staging)
+        if args.greenrock_command == "report-from-market-pulse":
+            return run_greenrock_report_from_market_pulse(
+                args.overwrite_staging,
+                args.allow_underfilled,
+                args.allow_missing_analytics,
+            )
+        if args.greenrock_command == "stage-analyst-slate":
+            return run_greenrock_stage_analyst_slate(args.overwrite_staging)
+        if args.greenrock_command == "report-analyst-slate":
+            return run_greenrock_report_analyst_slate(
+                args.overwrite_staging,
+                args.allow_underfilled,
+                args.allow_missing_analytics,
+            )
         if args.greenrock_command == "archetypes":
             return run_greenrock_archetypes(args.archetypes_command)
         if args.greenrock_command == "score":
