@@ -34,7 +34,7 @@ atlas greenrock latest-report --print
 ```
 
 - Open `/greenrock/reports/<run_id>/review` in the browser.
-- Confirm the review page shows report metadata, source disclosure, candidate tables, evidence notes, approval status, and PDF status.
+- Confirm the review page shows the branded Atlas OS / GreenRock title section, report metadata, source disclosure, candidate tables, evidence notes, approval status, and PDF status.
 - Review executive summary, methodology, tables, rationale, risks, and disclaimers.
 - Confirm data mode and data source are clearly labeled.
 - Confirm candidate source, selection mode, source lists, and scan IDs are clearly labeled where applicable.
@@ -88,6 +88,9 @@ PDF export is approved-only and idempotent for the run.
 
 In the browser, export from `/greenrock/reports/<run_id>/review` only after approval. Before approval, the PDF control should show a blocked state.
 
+- Confirm the exported PDF cover includes report title, date, data mode, candidate source, and approval/status disclaimer.
+- Confirm missing optional logo assets do not block PDF export.
+
 ## 6. Verify Final Packet
 
 ```bash
@@ -104,11 +107,13 @@ atlas greenrock final-packet <approval_id> --print
 
 ```bash
 atlas dashboard
+atlas morning-brief
 ```
 
 - Confirm latest GreenRock report status.
 - Confirm final PDF status is `exported`.
 - Confirm pending approvals are expected.
+- Open `/atlas/morning-brief` and confirm action buttons point to Market Pulse, pending approvals, latest report review, Analyst Slate staging, staging draft generation when ready, and final PDF archive.
 
 ## 8. Optional Draft Cleanup
 

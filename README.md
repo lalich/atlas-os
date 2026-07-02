@@ -191,9 +191,9 @@ Atlas Analyst is the deterministic intelligence layer for staging-sourced report
 
 Atlas Memory stores local Market Pulse scan history under `.atlas/output/greenrock/memory/`. After each successful population scan, Atlas records per-ticker rank, percentile, GreenRock Score, Confidence, Evidence Agreement, Research Priority, Guardrail, archetype, signals, provider membership, population, and data source. Memory powers ticker movement, biggest movers, the Market Pulse “Atlas Memory: What Changed” card, Score Calculator “Atlas Memory Snapshot,” Market Pulse “What Changed Since Last Scan,” and Atlas Analyst prior-scan summaries. It is local research context only.
 
-The Atlas Morning Brief is the Command Center attention layer. Open `/atlas/morning-brief` or run `atlas morning-brief` to see latest scan status, universe size, scored and skipped counts, high-confidence and research-priority counts, new archetype leaders, top movers, pending approvals, PDF readiness, and Atlas Inbox-style action items. It does not email, publish, trade, create client files, export PDFs, or call external LLM/API services.
+The Atlas Morning Brief is the Command Center attention layer. Open `/atlas/morning-brief` or run `atlas morning-brief` to see latest scan status, universe size, scored and skipped counts, high-confidence and research-priority counts, new archetype leaders, top movers, pending approvals, PDF readiness, and Atlas Inbox-style action items. The page includes action buttons for latest Market Pulse, pending approvals, latest report review, Analyst Slate staging, staging draft generation when ready, and final PDF archive. It does not email, publish, trade, create client files, export PDFs, or call external LLM/API services.
 
-GreenRock branding uses the local asset path `atlas_os/static/greenrock_logo.png`. If the logo file is missing, web pages and report/PDF generation continue without failing.
+GreenRock branding uses the local asset path `atlas_os/static/greenrock_logo.png`. Atlas OS branding can use `atlas_os/static/atlas_logo.png`; if it is missing, browser title pages show a fallback Atlas mark and report/PDF generation continues without failing.
 
 ## GreenRock Score Calculator
 
@@ -389,6 +389,8 @@ Approved exports are saved beside the Markdown report:
 
 Repeated PDF exports update/reuse the same PDF path and do not create duplicate `report_final_pdf` artifact records for the same run.
 
+Approved GreenRock PDFs include a branded cover page with GreenRock logo when available, Atlas OS mark/logo when available, report title, date, data mode, candidate source, and approval/status disclaimer. PDF export remains blocked until approval.
+
 ## Final Approved Packet
 
 Use the final packet view after approval to confirm the report, PDF, artifacts, and safety status:
@@ -431,15 +433,15 @@ The home page is the Atlas Inbox. It is designed to answer: what needs attention
 
 Command Center pages:
 
-- `/` Atlas Inbox with attention counters, actionable cards, recent workflow feed, and navigation.
+- `/` Atlas Inbox with branded Command Center title, attention counters, actionable cards, recent workflow feed, and navigation.
 - `/projects` project directory for GreenRock Analysts, Variance Capital / The Bat Signal, GreenRock Insurance, and Atlas Core.
 - `/greenrock` report review console with the preferred Generate Draft From Staging path, legacy/sample report buttons, latest run/report/PDF status, candidate summaries, approval actions, local artifact open links, and PDF export after approval.
-- `/greenrock/reports/<run_id>/review` GreenRock Report Review Center with report metadata, source disclosure, candidate tables, evidence notes, approval controls, and approved-only PDF controls.
+- `/greenrock/reports/<run_id>/review` GreenRock Report Review Center with branded title page, report metadata, source disclosure, candidate tables, evidence notes, approval controls, and approved-only PDF controls.
 - `/greenrock/discovery` guided GreenRock discovery workflow showing Discovery Scan, Review Results, Stage Candidates, Generate Draft Report, Human Approval, and Export PDF.
 - `/greenrock/picks` GreenRock Picks Board with the featured Mega Rock pick, 11 large-cap picks, 11 small/mid-cap picks, Evidence Agreement, top signals, Fundamental Guardrail fields, Finviz links, and explicit data-mode labeling.
 - `/greenrock/scanner` GreenRock Market Scanner for population scans, latest scan metadata, quick filters, ranked results, Finviz links, deliberate promote-to-list review, and direct scan-to-staging.
 - `/greenrock/market-pulse` latest successful scan overview by archetype, with one-click staging of top Market Pulse candidates, Atlas Analyst report slate generation, and approval-gated draft generation from staging.
-- `/atlas/morning-brief` operator summary of latest scan health, Atlas Memory movers, pending approvals, PDF readiness, and local action items.
+- `/atlas/morning-brief` branded operator summary of latest scan health, Atlas Memory movers, pending approvals, PDF readiness, action buttons, and linked Atlas Inbox items.
 - `/greenrock/watchlists` local GreenRock watchlist overview with ticker counts, tickers, Finviz links, promotion source, and latest promoted timestamp when available.
 - `/greenrock/staging` Report Candidate Staging page for final local curation into Mega Rock, Large Cap, Small/Mid, Research Only, and Excluded buckets before approval-gated report drafts.
 - `/greenrock/score` GreenRock Score Calculator with confidence, Evidence Agreement, Fundamental Guardrails, research priority, evidence cards, watch-next notes, methodology explanation, and preview-only score breakdown.

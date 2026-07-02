@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from atlas_os.cli import main
+from atlas_os.greenrock.pdf_export import render_markdown_report_to_pdf
 
 
 class GreenRockPdfExportTests(unittest.TestCase):
@@ -47,11 +48,32 @@ class GreenRockPdfExportTests(unittest.TestCase):
                 artifacts = _run_cli(["artifacts", "list"])
 
             expected_pdf = root / "output" / "greenrock" / run_id / "greenrock_report_final.pdf"
+            pdf_text = expected_pdf.read_bytes().decode("latin1", errors="ignore")
             self.assertTrue(expected_pdf.exists())
             self.assertTrue(expected_pdf.read_bytes().startswith(b"%PDF"))
+            self.assertIn("Atlas OS Command Center", pdf_text)
+            self.assertIn("GreenRock Analysts Monthly Opportunity Report", pdf_text)
+            self.assertIn("Date", pdf_text)
+            self.assertIn("Candidate Source", pdf_text)
+            self.assertIn("Approval/status disclaimer", pdf_text)
             self.assertIn(str(expected_pdf), export_output)
             self.assertIn("report_final_pdf", artifacts)
             self.assertIn(str(expected_pdf), artifacts)
+
+    def test_pdf_cover_handles_missing_logos(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            markdown_path = root / "report.md"
+            pdf_path = root / "report.pdf"
+            markdown_path.write_text("# GreenRock Analysts Monthly Opportunity Report\n\n**Date:** 2026-07-02\n\n**Candidate Source:** fixture\n", encoding="utf-8")
+            with patch("atlas_os.greenrock.pdf_export.greenrock_logo_path", return_value=None), patch("atlas_os.greenrock.pdf_export.atlas_logo_path", return_value=None):
+                render_output = render_markdown_report_to_pdf(markdown_path, pdf_path)
+
+            pdf_text = pdf_path.read_bytes().decode("latin1", errors="ignore")
+
+        self.assertEqual(render_output, pdf_path)
+        self.assertIn("Atlas OS Command Center", pdf_text)
+        self.assertIn("Candidate Source", pdf_text)
 
     def test_pdf_path_is_run_specific(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

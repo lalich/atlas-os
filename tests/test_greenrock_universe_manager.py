@@ -12,8 +12,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 from atlas_os.cli import main
-from atlas_os.core.approvals import create_approval_request
-from atlas_os.db.database import connect, initialize_database
 from atlas_os.greenrock.analyst import (
     analyst_candidate_from_staged_row,
     analyst_candidates,
@@ -42,7 +40,7 @@ from atlas_os.greenrock.population import (
 )
 from atlas_os.greenrock.sample_data import load_mock_stocks
 from atlas_os.greenrock.scanner import SCAN_HEADERS, cleanup_failed_tickers, run_population_scan, universe_health_rows
-from atlas_os.greenrock.staging import load_staged_candidates
+from atlas_os.greenrock.staging import add_staged_candidate, load_staged_candidates
 from atlas_os.greenrock.universe import add_ticker_to_greenrock_list
 from atlas_os.greenrock.universe_manager import (
     BUCKET_LARGE,
@@ -406,27 +404,46 @@ class UniverseManagerTests(unittest.TestCase):
             env = {"ATLAS_OUTPUT_DIR": str(output_dir), "ATLAS_DB_PATH": str(db_path)}
             with patch.dict("os.environ", env, clear=False):
                 _write_memory_fixture(output_dir)
-                initialize_database(db_path)
-                with connect(db_path) as connection:
-                    create_approval_request(
-                        connection,
-                        artifact_type="greenrock_report_draft",
-                        artifact_path=str(output_dir / "draft.md"),
-                    )
+                draft = _run_cli(["greenrock", "report-draft"])
+                run_id = _line_value(draft, "run_id")
+                add_staged_candidate(output_dir, "MISS", "research", source_list="manual", notes="missing analytics fixture")
                 page = dispatch_request("GET", "/atlas/morning-brief")
                 dashboard = dispatch_request("GET", "/")
+                review = dispatch_request("GET", f"/greenrock/reports/{run_id}/review")
                 cli = _run_cli(["morning-brief"])
 
         self.assertEqual(page.status, 200)
         self.assertIn("Atlas Morning Brief", page.body)
         self.assertIn("scan-all-20260702010101", page.body)
+        self.assertIn("Atlas OS Command Center", page.body)
+        self.assertIn("GreenRock Analysts", page.body)
+        self.assertIn("Open latest Market Pulse", page.body)
+        self.assertIn("/greenrock/market-pulse", page.body)
+        self.assertIn("Review pending approvals", page.body)
+        self.assertIn("Open latest GreenRock report review", page.body)
+        self.assertIn(f"/greenrock/reports/{run_id}/review", page.body)
+        self.assertIn("Stage Analyst Slate from latest Market Pulse", page.body)
+        self.assertIn("/greenrock/market-pulse/stage/confirm?slate=analyst", page.body)
+        self.assertIn("Open PDF archive / final reports", page.body)
+        self.assertIn("atlas_logo.png", page.body)
         self.assertIn("Reports Awaiting Approval", page.body)
         self.assertIn("Atlas Inbox Action Items", page.body)
+        self.assertIn("Pending approval", page.body)
+        self.assertIn("Staging underfilled", page.body)
+        self.assertIn("Missing analytics", page.body)
+        self.assertIn("Biggest rank mover", page.body)
         self.assertIn("Morning Brief", dashboard.body)
+        self.assertIn("Atlas OS Command Center", dashboard.body)
         self.assertIn("Open Morning Brief", dashboard.body)
+        self.assertEqual(review.status, 200)
+        self.assertIn("GreenRock Report Review Center", review.body)
+        self.assertIn("Atlas OS Command Center", review.body)
+        self.assertIn("/static/greenrock_logo.png", review.body)
+        self.assertIn("PDF export blocked until approval", review.body)
         self.assertIn("Atlas Morning Brief", cli)
         self.assertIn("pending_approvals: 1", cli)
         self.assertIn("No email, publishing, trading, client-file, or external action was created.", cli)
+        self.assertFalse(list(output_dir.rglob("*.pdf")))
 
     def test_report_analyst_summary_includes_memory_movement(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -675,6 +692,14 @@ def _run_cli(args: list[str]) -> str:
     if exit_code != 0:
         raise AssertionError(f"CLI exited with {exit_code}: {args}")
     return buffer.getvalue()
+
+
+def _line_value(output: str, label: str) -> str:
+    prefix = f"{label}: "
+    for line in output.splitlines():
+        if line.startswith(prefix):
+            return line.removeprefix(prefix).strip()
+    raise AssertionError(f"Missing {label} in output:\n{output}")
 
 
 if __name__ == "__main__":

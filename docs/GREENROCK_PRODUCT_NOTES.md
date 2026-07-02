@@ -44,6 +44,7 @@
 - Use Atlas Memory to explain what changed: rank movement, score movement, confidence movement, Evidence Agreement movement, Research Priority changes, Guardrail changes, and archetype changes.
 - Make Atlas Memory prominent in the product: Market Pulse should open with **Atlas Memory: What Changed**, and the Score Calculator should show **Atlas Memory Snapshot** when ticker history exists.
 - Treat Morning Brief as the Command Center attention layer. It should summarize latest scan health, high-confidence names, research-priority counts, new archetype leaders, top movers, pending approvals, PDF readiness, and Atlas Inbox-style operator actions.
+- Keep Morning Brief actions navigational and gate-aware: Market Pulse, pending approvals, latest report review, Analyst Slate staging, staging draft generation only when ready, and final PDF archive.
 - Keep `atlas morning-brief` and `/atlas/morning-brief` read-only. They may point the operator to local next steps, but must not create reports, approvals, PDFs, emails, publications, trading actions, client files, or external LLM/API calls.
 - Keep Memory local research context only. It must not trigger reports, approvals, publishing, email, trading actions, client files, credential access, or external LLM/API calls.
 - Scanner populations should not automatically feed reports. Universe -> Scanner -> Ranking Engine -> Staging -> Report is the required sourcing path, with staging as the preferred curated bridge into approval-gated draft generation.
@@ -80,7 +81,8 @@
 ## Future PDF/Graphics/Branding
 
 - Keep branded PDF export readable as report quality stabilizes.
-- Use the local GreenRock logo at `atlas_os/static/greenrock_logo.png` across browser pages and report/PDF output when available; missing logos must not break report generation.
+- Use the local GreenRock logo at `atlas_os/static/greenrock_logo.png` and optional Atlas OS logo at `atlas_os/static/atlas_logo.png` across browser title pages and report/PDF output when available; missing logos must not break report generation.
+- GreenRock PDF exports should include a clean branded cover page with report title, date, data mode, candidate source, and approval/status disclaimer.
 - Consider charts for price versus moving averages, Bollinger Bands, RSI, and volume trend.
 - Add GreenRock visual styling, cover page, section dividers, and score legends.
 

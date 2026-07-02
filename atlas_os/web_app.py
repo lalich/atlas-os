@@ -134,6 +134,8 @@ class WebResponse:
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 GREENROCK_LOGO_PATH = STATIC_DIR / "greenrock_logo.png"
 GREENROCK_LOGO_URL = "/static/greenrock_logo.png"
+ATLAS_LOGO_PATH = STATIC_DIR / "atlas_logo.png"
+ATLAS_LOGO_URL = "/static/atlas_logo.png"
 
 
 def create_app():
@@ -624,14 +626,7 @@ def render_dashboard(status_message: str | None = None) -> str:
 
     content = f"""
     {_status_banner(status_message)}
-    <section class="hero hive">
-      <div>
-        <p class="eyebrow">Atlas Mission Control</p>
-        <h1>Atlas Inbox</h1>
-        <p>What needs your attention</p>
-      </div>
-      <div class="orbital"><span></span><span></span><span></span></div>
-    </section>
+    {_branded_title_hero("Atlas Inbox", "Atlas OS Command Center", "What needs your attention", context)}
     <section class="panel warning-panel">
       <div class="section-head">
         <h2>Morning Brief</h2>
@@ -688,14 +683,11 @@ def render_morning_brief(status_message: str | None = None) -> str:
     context = _load_context()
     brief = _morning_brief_data(context)
     movers = brief["movers"]
-    actions = "".join(f"<li>{_safe(action)}</li>" for action in brief["actions"])
+    actions = "".join(_inbox_card(item) for item in brief["action_items"])
     content = f"""
     {_status_banner(status_message)}
-    <section class="hero compact">
-      <p class="eyebrow">Atlas Command Center</p>
-      <h1>Morning Brief</h1>
-      <p>Local operator attention view. No email, publishing, trading, client files, or external calls.</p>
-    </section>
+    {_branded_title_hero("Morning Brief", "Atlas OS Command Center", "Local operator attention view. No email, publishing, trading, client files, or external calls.", context)}
+    {_morning_brief_action_buttons(context, brief)}
     <section class="board-meta">
       {_attention_card("green" if brief["scan_complete"] else "yellow", brief["scan_status"], "Latest Scan", brief["latest_scan_id"] or "Run Market Pulse")}
       {_attention_card("neutral", str(brief["universe_size"]), "Universe Size", "Master Universe")}
@@ -728,7 +720,7 @@ def render_morning_brief(status_message: str | None = None) -> str:
     </section>
     <section class="panel">
       <div class="section-head"><h2>Atlas Inbox Action Items</h2><span class="subtle">Suggested operator actions</span></div>
-      <ul class="compact-list">{actions}</ul>
+      <div class="inbox-list">{actions}</div>
     </section>
     """
     return _page("Atlas Morning Brief", content, active="/")
@@ -1841,12 +1833,7 @@ def render_greenrock_report_review(run_id: str, status_message: str | None = Non
     metadata = _report_review_metadata(markdown, run, report, approval, pdf_artifact)
     content = f"""
     {_status_banner(status_message)}
-    <section class="hero compact greenrock-hero">
-      {_greenrock_brand_block()}
-      <p class="eyebrow">GreenRock Report Review Center</p>
-      <h1>Review Report Draft</h1>
-      <p>One local review surface for the draft, source disclosure, staged evidence, approval status, and PDF controls.</p>
-    </section>
+    {_branded_title_hero("Review Report Draft", "GreenRock Report Review Center", "One local review surface for the draft, source disclosure, staged evidence, approval status, and PDF controls.", context, metadata)}
     <section class="detail-grid report-review-meta">
       {_detail_panel("Run ID", run.run_id)}
       {_detail_panel("Data Mode", metadata["data_mode"])}
@@ -2410,6 +2397,7 @@ def _morning_brief_data(context) -> dict:
         actions.append("Review Atlas Memory movers before staging the next report slate.")
     if not actions:
         actions.append("No urgent local action items.")
+    action_items = _morning_brief_action_items(context, scan, movers, pending_approvals, pdf_ready)
     return {
         "scan_complete": bool(scan and scan.rows),
         "scan_status": "complete" if scan and scan.rows else "not complete",
@@ -2426,7 +2414,150 @@ def _morning_brief_data(context) -> dict:
         "pdf_ready": len(pdf_ready),
         "pdf_exported": len(pdf_exported),
         "actions": tuple(actions),
+        "action_items": action_items,
     }
+
+
+def _morning_brief_action_items(context, scan, movers, pending_approvals, pdf_ready) -> tuple[dict[str, str], ...]:
+    settings = get_settings()
+    items: list[dict[str, str]] = []
+    for approval in pending_approvals[:3]:
+        items.append(
+            {
+                "title": "Pending approval",
+                "detail": f"Approval {approval.id} is waiting for human review.",
+                "href": f"/greenrock/reports/{quote(approval.run_id)}/review" if approval.run_id else f"/approvals/{approval.id}/confirm?action=approve",
+                "status": "attention",
+                "label": "approval gate",
+            }
+        )
+    for report in context["reports"][:3]:
+        if report.status in {"draft", "pending", "awaiting_approval"}:
+            items.append(
+                {
+                    "title": "Report awaiting review",
+                    "detail": f"{report.title} needs local review.",
+                    "href": f"/greenrock/reports/{quote(report.run_id)}/review" if report.run_id else "/greenrock",
+                    "status": "attention",
+                    "label": "report review",
+                }
+            )
+    for item in staging_readiness(settings.output_dir):
+        if item.target is not None and item.count < item.target:
+            items.append(
+                {
+                    "title": "Staging underfilled",
+                    "detail": f"{item.label} has {item.count}/{item.target} candidates.",
+                    "href": "/greenrock/staging",
+                    "status": "ready",
+                    "label": "staging",
+                }
+            )
+    analytics = staging_analytics_status(settings.output_dir)
+    if analytics.missing_count:
+        items.append(
+            {
+                "title": "Missing analytics",
+                "detail": f"{analytics.missing_count} staged candidate(s) need refreshed analytics.",
+                "href": "/greenrock/staging",
+                "status": "ready",
+                "label": "enrichment",
+            }
+        )
+    if scan and scan.provider_failure_count:
+        items.append(
+            {
+                "title": "Provider failures",
+                "detail": f"{scan.provider_failure_count} ticker(s) failed in the latest provider fetch.",
+                "href": "/greenrock/universe",
+                "status": "attention",
+                "label": "health",
+            }
+        )
+    for line in _new_archetype_leader_items(settings.output_dir)[:3]:
+        items.append(
+            {
+                "title": "New archetype leader",
+                "detail": line,
+                "href": "/greenrock/market-pulse",
+                "status": "ready",
+                "label": "leader",
+            }
+        )
+    for key, label in (
+        ("rank_improvers", "Biggest rank mover"),
+        ("score_improvers", "Biggest score mover"),
+        ("confidence_improvers", "Biggest confidence mover"),
+        ("evidence_improvers", "Biggest evidence mover"),
+        ("deteriorations", "Biggest deterioration"),
+    ):
+        if movers[key]:
+            item = movers[key][0]
+            items.append(
+                {
+                    "title": label,
+                    "detail": f"{item.ticker}: rank {item.previous.get('rank', '')}->{item.current.get('rank', '')}; score {item.previous.get('greenrock_score', '')}->{item.current.get('greenrock_score', '')}.",
+                    "href": "/greenrock/market-pulse",
+                    "status": "neutral" if key != "deteriorations" else "attention",
+                    "label": "Atlas Memory",
+                }
+            )
+    if pdf_ready:
+        items.append(
+            {
+                "title": "PDF ready",
+                "detail": f"{len(pdf_ready)} approved report(s) can be exported locally.",
+                "href": f"/greenrock/reports/{quote(pdf_ready[0].run_id)}/review" if pdf_ready[0].run_id else "/greenrock/final-reports",
+                "status": "ready",
+                "label": "approved PDF",
+            }
+        )
+    if not items:
+        items.append(
+            {
+                "title": "No urgent local action items",
+                "detail": "Run a Market Pulse scan or review staging when ready.",
+                "href": "/greenrock/market-pulse",
+                "status": "neutral",
+                "label": "clear",
+            }
+        )
+    return tuple(items[:12])
+
+
+def _morning_brief_action_buttons(context, brief: dict) -> str:
+    latest_report = context["latest_report"]
+    latest_review = f"/greenrock/reports/{quote(latest_report.run_id)}/review" if latest_report and latest_report.run_id else ""
+    readiness = staging_report_readiness(get_settings().output_dir, allow_underfilled=False)
+    analytics = staging_analytics_status(get_settings().output_dir)
+    staging_ready = readiness.can_generate and analytics.complete
+    draft_button = (
+        '<a class="button" href="/greenrock/staging/generate/confirm">Generate Draft From Staged Slate</a>'
+        if staging_ready
+        else '<span class="button disabled">Generate Draft From Staged Slate: staging not ready</span>'
+    )
+    latest_report_button = (
+        f'<a class="button secondary" href="{latest_review}">Open latest GreenRock report review</a>'
+        if latest_review
+        else '<span class="button disabled">Open latest GreenRock report review: no report yet</span>'
+    )
+    return f"""
+    <section class="panel command-actions">
+      <div class="section-head">
+        <h2>Morning Brief Actions</h2>
+        <span class="subtle">Navigation only. Approval gates remain intact.</span>
+      </div>
+      <div class="action-row">
+        <a class="button" href="/greenrock/market-pulse">Open latest Market Pulse</a>
+        <a class="button secondary" href="/greenrock">Review pending approvals</a>
+        {latest_report_button}
+        <a class="button" href="/greenrock/market-pulse/stage/confirm?slate=analyst">Stage Analyst Slate from latest Market Pulse</a>
+        {draft_button}
+        <a class="button secondary" href="/greenrock/final-reports">Open PDF archive / final reports</a>
+      </div>
+      <p class="subtle">Scan status: {_safe(brief["scan_status"])}. Pending approvals: {_safe(brief["pending_approvals"])}.</p>
+    </section>
+    """
 
 
 def _approved_reports_missing_pdf(context) -> list:
@@ -2933,20 +3064,25 @@ def _memory_mover_block(title: str, rows) -> str:
 
 
 def _new_archetype_leaders(output_dir: Path) -> str:
+    changes = _new_archetype_leader_items(output_dir)
+    body = "".join(f"<li>{_safe(change)}</li>" for change in changes) or "<li>No new archetype leaders.</li>"
+    return f"<section class='panel inner-panel'><h3>New Archetype Leaders</h3><ul class='compact-list'>{body}</ul></section>"
+
+
+def _new_archetype_leader_items(output_dir: Path) -> tuple[str, ...]:
     rows = load_memory_rows(output_dir)
     scan_ids = sorted({row["scan_id"] for row in rows}, reverse=True)
     if len(scan_ids) < 2:
-        return "<p class='subtle'>New archetype leaders need at least two remembered scans.</p>"
+        return ()
     latest, previous = scan_ids[0], scan_ids[1]
     latest_leaders = _leaders_by_archetype(tuple(row for row in rows if row["scan_id"] == latest))
     previous_leaders = _leaders_by_archetype(tuple(row for row in rows if row["scan_id"] == previous))
-    changes = [
+    changes = tuple(
         f"{archetype}: {leader.get('ticker', '')} replaced {previous_leaders.get(archetype, {}).get('ticker', 'none')}"
         for archetype, leader in latest_leaders.items()
         if previous_leaders.get(archetype, {}).get("ticker") != leader.get("ticker")
-    ]
-    body = "".join(f"<li>{_safe(change)}</li>" for change in changes) or "<li>No new archetype leaders.</li>"
-    return f"<section class='panel inner-panel'><h3>New Archetype Leaders</h3><ul class='compact-list'>{body}</ul></section>"
+    )
+    return changes
 
 
 def _leaders_by_archetype(rows: tuple[dict[str, str], ...]) -> dict[str, dict[str, str]]:
@@ -4169,8 +4305,54 @@ def _greenrock_logo(class_name: str = "greenrock-logo") -> str:
     )
 
 
+def _atlas_logo(class_name: str = "atlas-logo") -> str:
+    if ATLAS_LOGO_PATH.exists():
+        return (
+            f"<img class='{_safe(class_name)}' src='{ATLAS_LOGO_URL}' "
+            "alt='Atlas OS logo' loading='lazy' onerror=\"this.outerHTML='<span class=&quot;atlas-mark&quot;>A</span>'\">"
+        )
+    return "<span class='atlas-mark' title='Place atlas_logo.png in atlas_os/static/ to use a custom Atlas OS logo.'>A</span>"
+
+
 def _greenrock_brand_block() -> str:
     return f"<div class='greenrock-brand'>{_greenrock_logo()}<span>GreenRock Analysts</span></div>"
+
+
+def _branded_title_hero(title: str, eyebrow: str, subtitle: str, context, metadata: dict[str, str] | None = None) -> str:
+    provider = _real_data_provider_status()
+    latest_scan_record = latest_scan(get_settings().output_dir)
+    latest_refresh = latest_scan_record.scan_id if latest_scan_record else datetime.now().strftime("%Y-%m-%d")
+    data_mode = metadata.get("data_mode", context["latest_run"].data_mode.upper() if context.get("latest_run") else "LOCAL") if metadata else (context["latest_run"].data_mode.upper() if context.get("latest_run") else "LOCAL")
+    candidate_source = metadata.get("candidate_source", "GreenRock Analysts") if metadata else "GreenRock Analysts"
+    return f"""
+    <section class="hero branded-hero">
+      <div class="brand-title-copy">
+        <div class="brand-lockup">
+          <div class="brand-logo-pair">{_atlas_logo()}{_greenrock_logo()}</div>
+          <div>
+            <p class="eyebrow">{_safe(eyebrow)}</p>
+            <h1>{_safe(title)}</h1>
+            <p>{_safe(subtitle)}</p>
+          </div>
+        </div>
+        <div class="brand-title-line">
+          <span>Atlas OS Command Center</span>
+          <span>GreenRock Analysts</span>
+          <span>Local development mode</span>
+        </div>
+      </div>
+      <div class="brand-status-stack">
+        <span class="badge data-mode">{_safe(data_mode)} DATA</span>
+        <dl>
+          <div><dt>Date / Last Refresh</dt><dd>{_safe(latest_refresh)}</dd></div>
+          <div><dt>Provider Status</dt><dd>{_safe(provider["configured_label"])}</dd></div>
+          <div><dt>Current Provider</dt><dd>{_safe(provider["current_provider"])}</dd></div>
+          <div><dt>Candidate Source</dt><dd>{_safe(candidate_source)}</dd></div>
+        </dl>
+        <p class="subtle">Missing Atlas logo? Place <code>atlas_os/static/atlas_logo.png</code> to replace the fallback mark.</p>
+      </div>
+    </section>
+    """
 
 
 def _parse_form(body: str) -> dict[str, str]:
@@ -4311,6 +4493,22 @@ def _page(title: str, content: str, active: str = "/") -> str:
     .hero.compact {{ min-height: 145px; display: block; }}
     .hero p {{ color: var(--muted); margin-bottom: 0; }}
     .hive {{ background: linear-gradient(135deg, rgba(18,22,34,.92), rgba(23,34,39,.88)); }}
+    .branded-hero {{ min-height: 250px; gap: 24px; background: linear-gradient(135deg, rgba(7,18,24,.96), rgba(20,38,32,.9) 48%, rgba(28,25,45,.86)); border-color: rgba(55,214,122,.32); }}
+    .brand-lockup {{ display: flex; align-items: center; gap: 18px; }}
+    .brand-logo-pair {{ display: flex; align-items: center; gap: 10px; flex: 0 0 auto; }}
+    .atlas-logo, .atlas-mark {{ width: 58px; height: 58px; object-fit: contain; border-radius: 8px; background: rgba(255,255,255,.07); border: 1px solid rgba(100,181,255,.34); padding: 5px; }}
+    .atlas-mark {{ display: inline-grid; place-items: center; color: #d8efff; font-weight: 900; font-size: 28px; box-shadow: 0 0 22px rgba(100,181,255,.18); }}
+    .branded-hero .greenrock-logo {{ width: 58px; height: 58px; }}
+    .brand-title-copy {{ min-width: 0; }}
+    .brand-title-line {{ display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }}
+    .brand-title-line span {{ border: 1px solid rgba(55,214,122,.24); border-radius: 999px; padding: 6px 10px; color: #d8ffe6; background: rgba(55,214,122,.08); font-size: 12px; font-weight: 800; }}
+    .brand-status-stack {{ width: min(360px, 100%); border: 1px solid rgba(243,201,105,.34); border-radius: 8px; padding: 16px; background: rgba(0,0,0,.2); }}
+    .brand-status-stack dl {{ margin: 14px 0 0; display: grid; gap: 9px; }}
+    .brand-status-stack div {{ display: grid; grid-template-columns: 135px 1fr; gap: 10px; }}
+    .brand-status-stack dt {{ color: var(--muted); font-size: 12px; }}
+    .brand-status-stack dd {{ margin: 0; font-weight: 800; overflow-wrap: anywhere; }}
+    .brand-status-stack code {{ color: #d8efff; }}
+    .command-actions {{ border-color: rgba(55,214,122,.32); background: rgba(55,214,122,.055); }}
     .picks-hero {{ background: linear-gradient(135deg, rgba(7,42,25,.95), rgba(31,24,55,.88) 58%, rgba(50,39,18,.86)); }}
     .greenrock-brand {{ display: flex; align-items: center; gap: 10px; margin-bottom: 12px; color: #d8ffe6; font-weight: 800; }}
     .greenrock-logo {{ width: 46px; height: 46px; object-fit: contain; border-radius: 8px; background: rgba(255,255,255,.06); border: 1px solid rgba(55,214,122,.22); padding: 4px; }}
