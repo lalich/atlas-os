@@ -29,6 +29,7 @@ from atlas_os.greenrock.market_engine import (
     classify_market_archetype,
 )
 from atlas_os.greenrock.market_pulse import stage_analyst_slate_candidates, stage_top_market_pulse_candidates
+from atlas_os.greenrock.memory import compare_ticker, ingest_scan_result, load_memory_rows, memory_movers, memory_summary
 from atlas_os.greenrock.population import (
     MICRO_MOONSHOT_POPULATION,
     QQQ_POPULATION,
@@ -38,7 +39,7 @@ from atlas_os.greenrock.population import (
     load_population,
 )
 from atlas_os.greenrock.sample_data import load_mock_stocks
-from atlas_os.greenrock.scanner import cleanup_failed_tickers, run_population_scan, universe_health_rows
+from atlas_os.greenrock.scanner import SCAN_HEADERS, cleanup_failed_tickers, run_population_scan, universe_health_rows
 from atlas_os.greenrock.staging import load_staged_candidates
 from atlas_os.greenrock.universe import add_ticker_to_greenrock_list
 from atlas_os.greenrock.universe_manager import (
@@ -332,6 +333,75 @@ class UniverseManagerTests(unittest.TestCase):
         self.assertIn("Generate Atlas Analyst Report Slate", page.body)
         self.assertIn("one leader from each available archetype", confirm.body)
 
+    def test_scan_writes_memory_rows_and_repeated_ingest_does_not_duplicate(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output_dir = Path(directory) / "output"
+            save_population(output_dir, QQQ_POPULATION, ("MEGA1", "LG01", "MD01"))
+            scan = run_population_scan(output_dir, "all", provider=SevenArchetypeProvider())
+            first_count = len(load_memory_rows(output_dir))
+            added = ingest_scan_result(output_dir, scan)
+            summary = memory_summary(output_dir)
+
+        self.assertEqual(first_count, len(scan.rows))
+        self.assertEqual(added, 0)
+        self.assertEqual(summary["total_scans"], 1)
+        self.assertEqual(summary["total_observations"], len(scan.rows))
+
+    def test_memory_comparison_and_movers_work(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output_dir = Path(directory) / "output"
+            _write_memory_fixture(output_dir)
+
+            comparison = compare_ticker(output_dir, "SOFI")
+            movers = memory_movers(output_dir)
+            env = {"ATLAS_OUTPUT_DIR": str(output_dir), "ATLAS_DB_PATH": str(Path(directory) / "atlas.db")}
+            with patch.dict("os.environ", env, clear=False):
+                cli_summary = _run_cli(["greenrock", "memory", "summary"])
+                cli_ticker = _run_cli(["greenrock", "memory", "ticker", "SOFI"])
+                cli_movers = _run_cli(["greenrock", "memory", "movers"])
+
+        self.assertIsNotNone(comparison)
+        self.assertEqual(comparison.rank_change, -11)
+        self.assertEqual(comparison.score_change, 7.0)
+        self.assertTrue(comparison.research_priority_changed)
+        self.assertEqual(movers["rank_improvers"][0].ticker, "SOFI")
+        self.assertEqual(movers["score_improvers"][0].ticker, "SOFI")
+        self.assertEqual(movers["confidence_improvers"][0].ticker, "SOFI")
+        self.assertTrue(any(item.ticker == "WEAK" for item in movers["deteriorations"]))
+        self.assertIn("total_scans: 2", cli_summary)
+        self.assertIn("rank improved by 11 positions", cli_ticker)
+        self.assertIn("rank_improvers", cli_movers)
+
+    def test_market_pulse_and_score_render_memory_movement(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output_dir = Path(directory) / "output"
+            env = {"ATLAS_OUTPUT_DIR": str(output_dir), "ATLAS_DB_PATH": str(Path(directory) / "atlas.db")}
+            with patch.dict("os.environ", env, clear=False):
+                _write_memory_fixture(output_dir)
+                page = dispatch_request("GET", "/greenrock/market-pulse")
+                score = dispatch_request("GET", "/greenrock/score?ticker=SOFI")
+
+        self.assertIn("What Changed Since Last Scan", page.body)
+        self.assertIn("SOFI", page.body)
+        self.assertIn("rank 29->18", page.body)
+        self.assertIn("Atlas Memory", score.body)
+        self.assertIn("Latest Rank", score.body)
+        self.assertIn("rank improved by 11 positions", score.body)
+
+    def test_report_analyst_summary_includes_memory_movement(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output_dir = Path(directory) / "output"
+            save_population(output_dir, QQQ_POPULATION, ("MEGA1", "LG01", "MD01"))
+            current = run_population_scan(output_dir, "all", provider=ImprovedSevenArchetypeProvider())
+            _prepend_prior_memory(output_dir, current.scan_id, "MEGA1")
+            result = stage_analyst_slate_candidates(output_dir, overwrite=True)
+
+            candidate = analyst_candidate_from_staged_row(output_dir, next(row for row in result.staged_rows if row["ticker"] == "MEGA1"))
+
+        self.assertEqual(current.population, "all")
+        self.assertIn("Prior scan comparison", candidate.summary)
+        self.assertTrue("GreenRock Score improved" in candidate.summary or "GreenRock Score increased" in candidate.summary)
+
 
 class MockScanProvider(MarketDataProvider):
     data_mode = "mock"
@@ -413,6 +483,128 @@ class SevenArchetypeProvider(MarketDataProvider):
         )
         special = (replace(base, symbol="GRRR", company_name="Special Situation Fixture", market_cap=120_000_000),)
         return mega + large + meme + mid + small + micro + special
+
+
+class ImprovedSevenArchetypeProvider(SevenArchetypeProvider):
+    source_name = "improved_seven_archetype_provider"
+
+    def fetch_stocks(self):
+        rows = list(super().fetch_stocks())
+        base = rows[0]
+        rows[0] = replace(base, market_cap=base.market_cap, company_name="Mega Fixture Improved")
+        return tuple(rows)
+
+
+class MemoryScoreProvider(MarketDataProvider):
+    data_mode = "mock"
+    source_name = "memory_score_provider"
+
+    def fetch_stocks(self):
+        base = next(stock for stock in load_mock_stocks() if stock.symbol == "LC01")
+        return (replace(base, symbol="SOFI", company_name="SOFI Memory Fixture", market_cap=8_000_000_000),)
+
+
+def _write_memory_fixture(output_dir: Path) -> None:
+    from atlas_os.greenrock.memory import save_memory_rows
+
+    rows = (
+        _memory_row("scan-all-20260701010101", "SOFI", "29", "67.00", "82.00", "61.00", "Monitor"),
+        _memory_row("scan-all-20260702010101", "SOFI", "18", "74.00", "91.00", "77.00", "This Week"),
+        _memory_row("scan-all-20260701010101", "WEAK", "10", "80.00", "85.00", "80.00", "This Week"),
+        _memory_row("scan-all-20260702010101", "WEAK", "25", "70.00", "70.00", "60.00", "Monitor"),
+    )
+    save_memory_rows(output_dir, rows)
+    _write_memory_scan(output_dir, "scan-all-20260702010101", rows)
+
+
+def _memory_row(scan_id: str, ticker: str, rank: str, score: str, confidence: str, evidence: str, priority: str) -> dict[str, str]:
+    return {
+        "scan_id": scan_id,
+        "scan_timestamp": scan_id.rsplit("-", maxsplit=1)[-1],
+        "ticker": ticker,
+        "company": ticker,
+        "rank": rank,
+        "percentile": "90.00",
+        "greenrock_score": score,
+        "confidence": confidence,
+        "evidence_agreement": evidence,
+        "research_priority": priority,
+        "fundamental_guardrail": "Acceptable",
+        "market_archetype": "Meme" if ticker == "SOFI" else "Large",
+        "top_bullish_signal": "Stronger technical evidence",
+        "top_caution_signal": "Volume confirmation",
+        "provider_membership": "qqq",
+        "source_population": "all",
+        "data_source": "fixture",
+    }
+
+
+def _write_memory_scan(output_dir: Path, scan_id: str, memory_rows: tuple[dict[str, str], ...]) -> None:
+    scan_dir = output_dir / "greenrock" / "scans" / scan_id
+    scan_dir.mkdir(parents=True, exist_ok=True)
+    latest_rows = [row for row in memory_rows if row["scan_id"] == scan_id]
+    with (scan_dir / "scan_results.csv").open("w", newline="", encoding="utf-8") as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=SCAN_HEADERS)
+        writer.writeheader()
+        for row in latest_rows:
+            writer.writerow(
+                {
+                    "rank": row["rank"],
+                    "symbol": row["ticker"],
+                    "company_name": row["company"],
+                    "market_cap_bucket": "large_cap",
+                    "market_archetype": row["market_archetype"],
+                    "market_cap": "8000000000",
+                    "price": "10.00",
+                    "greenrock_score": row["greenrock_score"],
+                    "greenrock_confidence": row["confidence"],
+                    "confidence_band": "High Confidence",
+                    "evidence_agreement": row["evidence_agreement"],
+                    "fundamental_guardrail": row["fundamental_guardrail"],
+                    "research_priority": row["research_priority"],
+                    "percentile": row["percentile"],
+                    "universe_membership": row["provider_membership"],
+                    "top_bullish_signal": row["top_bullish_signal"],
+                    "top_caution_signal": row["top_caution_signal"],
+                    "data_quality_warnings": "none",
+                    "finviz": f"https://finviz.com/quote.ashx?t={row['ticker']}",
+                }
+            )
+    (scan_dir / "scan_summary.md").write_text(
+        "\n".join(
+            [
+                "# GreenRock Population Scan Summary",
+                "",
+                f"**Scan ID:** {scan_id}",
+                "**Population:** Master Universe",
+                "**Data Source:** fixture",
+                "**Total Configured Tickers:** 2",
+                "**Tickers Successfully Fetched/Scored:** 2",
+                "**Skipped Tickers:** 0",
+                "**Provider Failures:** 0",
+                "**Duplicates Removed:** 0",
+                "**Ranked Count:** 2",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _prepend_prior_memory(output_dir: Path, current_scan_id: str, ticker: str) -> None:
+    from atlas_os.greenrock.memory import load_memory_rows, save_memory_rows
+
+    rows = list(load_memory_rows(output_dir))
+    current = next(row for row in rows if row["scan_id"] == current_scan_id and row["ticker"] == ticker)
+    prior = dict(current)
+    prior["scan_id"] = "scan-all-20000101000000"
+    prior["scan_timestamp"] = "2000-01-01T00:00:00Z"
+    prior["rank"] = "9"
+    prior["greenrock_score"] = "60.00"
+    prior["confidence"] = "55.00"
+    prior["evidence_agreement"] = "50.00"
+    rows.append(prior)
+    save_memory_rows(output_dir, tuple(rows))
 
 
 def _write_prior_scan(output_dir: Path, current_scan_id: str, ticker: str, previous_rank: str, previous_score: str) -> None:

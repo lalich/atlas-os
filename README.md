@@ -130,6 +130,9 @@ atlas greenrock stage-from-market-pulse --overwrite-staging
 atlas greenrock report-from-market-pulse --overwrite-staging
 atlas greenrock stage-analyst-slate --overwrite-staging
 atlas greenrock report-analyst-slate --overwrite-staging
+atlas greenrock memory summary
+atlas greenrock memory ticker SOFI
+atlas greenrock memory movers
 atlas greenrock archetypes audit
 atlas greenrock universe health
 atlas greenrock universe cleanup-failures --dry-run
@@ -183,6 +186,8 @@ Staged candidates should have analytics before clean report generation. Use `atl
 `atlas greenrock report-from-market-pulse` is the one-command version of the same gated path: latest scan -> Market Pulse selection -> staging -> normal workflow run -> pending approval -> Review Center. It does not email, publish, trade, create client files, or export a PDF automatically.
 
 Atlas Analyst is the deterministic intelligence layer for staging-sourced reports. GreenRock Score remains the branded score; Atlas Analyst explains rank context, archetype, confidence, Evidence Agreement, prior-scan changes when available, primary bullish/caution evidence, and what to watch next. `atlas greenrock stage-analyst-slate` stages one leader from each available archetype, then fills the remaining report slate by rank. `atlas greenrock report-analyst-slate` uses that slate and creates the same approval-gated draft workflow.
+
+Atlas Memory stores local Market Pulse scan history under `.atlas/output/greenrock/memory/`. After each successful population scan, Atlas records per-ticker rank, percentile, GreenRock Score, Confidence, Evidence Agreement, Research Priority, Guardrail, archetype, signals, provider membership, population, and data source. Memory powers ticker movement, biggest movers, Score Calculator history cards, Market Pulse “What Changed Since Last Scan,” and Atlas Analyst prior-scan summaries. It is local research context only.
 
 GreenRock branding uses the local asset path `atlas_os/static/greenrock_logo.png`. If the logo file is missing, web pages and report/PDF generation continue without failing.
 

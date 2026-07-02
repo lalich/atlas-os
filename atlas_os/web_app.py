@@ -43,6 +43,7 @@ from atlas_os.greenrock.market_pulse import (
     stage_analyst_slate_candidates,
     stage_top_market_pulse_candidates,
 )
+from atlas_os.greenrock.memory import compare_ticker, load_memory_rows, memory_movers, movement_explanation, movement_symbol, ticker_history
 from atlas_os.greenrock.population import GREENROCK_POPULATION_LABELS
 from atlas_os.greenrock.score import calculate_score_preview, score_signal
 from atlas_os.greenrock.scanner import (
@@ -421,7 +422,7 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
     if method == "GET" and route == "/greenrock/staging/generate/confirm":
         return WebResponse(200, render_greenrock_staging_generation_confirmation(_first(query, "status")))
     if method == "GET" and route == "/greenrock/score":
-        return WebResponse(200, render_greenrock_score())
+        return WebResponse(200, render_greenrock_score(_first(query, "ticker") or ""))
     if method == "GET" and route == "/greenrock/final-reports":
         return WebResponse(200, render_greenrock_final_reports(_first(query, "status")))
     if method == "GET" and route.startswith("/greenrock/reports/") and route.endswith("/review"):
@@ -1129,11 +1130,13 @@ def render_greenrock_market_pulse(status_message: str | None = None) -> str:
         </section>
         """
         actions = _market_pulse_actions(settings.output_dir, scan.scan_id)
+        changes = _market_pulse_memory_panel(settings.output_dir)
     else:
         cards = ""
         sections = "<section class='panel warning-panel'><h2>No Latest Scan</h2><p>Run a population scan first. Market Pulse does not create reports or approvals.</p></section>"
         diagnostics = ""
         actions = ""
+        changes = ""
     content = f"""
     {_status_banner(status_message)}
     <section class="hero compact greenrock-hero">
@@ -1143,6 +1146,7 @@ def render_greenrock_market_pulse(status_message: str | None = None) -> str:
       <p><a class="button secondary" href="/greenrock/scanner">Run Scanner</a> <a class="button secondary" href="/greenrock/staging">Open Staging</a></p>
     </section>
     {diagnostics}
+    {changes}
     {actions}
     <section class="board-meta">{cards}</section>
     {sections}
@@ -1571,7 +1575,7 @@ def render_greenrock_score(
                 data_mode="real",
                 output_dir=settings.output_dir,
             )
-            result_html = _score_preview_panel(preview)
+            result_html = _score_preview_panel(preview) + _score_memory_panel(settings.output_dir, cleaned_ticker)
         except (MarketDataConfigurationError, ValueError) as error:
             result_html = f"""
             <section class="panel warning-panel">
@@ -1581,6 +1585,7 @@ def render_greenrock_score(
               <p class="subtle">No report, approval, artifact, email, publication, or external action was created.</p>
             </section>
             """
+            result_html += _score_memory_panel(settings.output_dir, cleaned_ticker)
 
     content = f"""
     {_status_banner(status_message)}
@@ -2712,6 +2717,99 @@ def _market_pulse_actions(output_dir: Path, scan_id: str) -> str:
     """
 
 
+def _market_pulse_memory_panel(output_dir: Path) -> str:
+    movers = memory_movers(output_dir)
+    blocks = "".join(_memory_mover_block(title, rows) for title, rows in (
+        ("Top Rank Improvers", movers["rank_improvers"]),
+        ("Top Score Improvers", movers["score_improvers"]),
+        ("Top Confidence Improvers", movers["confidence_improvers"]),
+        ("Top Deteriorations", movers["deteriorations"]),
+    ))
+    if not blocks:
+        blocks = "<p class='subtle'>No prior scan movement is available yet. Run another Market Pulse scan to build comparison history.</p>"
+    return f"""
+    <section class="panel">
+      <div class="section-head">
+        <h2>What Changed Since Last Scan</h2>
+        <span class="subtle">Atlas Memory local scan history</span>
+      </div>
+      {_new_archetype_leaders(output_dir)}
+      <div class="watchlist-grid">{blocks}</div>
+    </section>
+    """
+
+
+def _memory_mover_block(title: str, rows) -> str:
+    if not rows:
+        body = "<p class='subtle'>No movement yet.</p>"
+    else:
+        body = "".join(
+            f"<li><strong>{_safe(item.ticker)}</strong> {_safe(movement_symbol(item))} "
+            f"rank {_safe(item.previous.get('rank', ''))}->{_safe(item.current.get('rank', ''))}; "
+            f"score {_safe(item.previous.get('greenrock_score', ''))}->{_safe(item.current.get('greenrock_score', ''))}; "
+            f"confidence {_safe(item.previous.get('confidence', ''))}->{_safe(item.current.get('confidence', ''))}</li>"
+            for item in rows
+        )
+        body = f"<ul class='compact-list'>{body}</ul>"
+    return f"<article class='watchlist-card'><h3>{_safe(title)}</h3>{body}</article>"
+
+
+def _new_archetype_leaders(output_dir: Path) -> str:
+    rows = load_memory_rows(output_dir)
+    scan_ids = sorted({row["scan_id"] for row in rows}, reverse=True)
+    if len(scan_ids) < 2:
+        return "<p class='subtle'>New archetype leaders need at least two remembered scans.</p>"
+    latest, previous = scan_ids[0], scan_ids[1]
+    latest_leaders = _leaders_by_archetype(tuple(row for row in rows if row["scan_id"] == latest))
+    previous_leaders = _leaders_by_archetype(tuple(row for row in rows if row["scan_id"] == previous))
+    changes = [
+        f"{archetype}: {leader.get('ticker', '')} replaced {previous_leaders.get(archetype, {}).get('ticker', 'none')}"
+        for archetype, leader in latest_leaders.items()
+        if previous_leaders.get(archetype, {}).get("ticker") != leader.get("ticker")
+    ]
+    body = "".join(f"<li>{_safe(change)}</li>" for change in changes) or "<li>No new archetype leaders.</li>"
+    return f"<section class='panel inner-panel'><h3>New Archetype Leaders</h3><ul class='compact-list'>{body}</ul></section>"
+
+
+def _leaders_by_archetype(rows: tuple[dict[str, str], ...]) -> dict[str, dict[str, str]]:
+    leaders: dict[str, dict[str, str]] = {}
+    for row in sorted(rows, key=lambda item: _parse_int(item.get("rank", "")) or 999999):
+        archetype = row.get("market_archetype", "")
+        if archetype and archetype not in leaders:
+            leaders[archetype] = row
+    return leaders
+
+
+def _score_memory_panel(output_dir: Path, ticker: str) -> str:
+    history = ticker_history(output_dir, ticker)
+    if not history:
+        return """
+        <section class="panel warning-panel">
+          <h2>Atlas Memory</h2>
+          <p>No Atlas Memory history yet. Run a Market Pulse scan to begin tracking this ticker.</p>
+        </section>
+        """
+    latest = history[0]
+    comparison = compare_ticker(output_dir, ticker)
+    prior = comparison.previous if comparison else {}
+    return f"""
+    <section class="panel">
+      <div class="section-head">
+        <h2>Atlas Memory</h2>
+        <span class="subtle">Local scan movement</span>
+      </div>
+      <section class="board-meta">
+        {_attention_card("neutral", latest.get("rank", "-"), "Latest Rank", latest.get("scan_id", ""))}
+        {_attention_card("neutral", prior.get("rank", "-") if prior else "-", "Prior Rank", prior.get("scan_id", "") if prior else "No prior scan")}
+        {_attention_card("neutral", latest.get("greenrock_score", "-"), "Latest Score", f"prior {prior.get('greenrock_score', '-') if prior else '-'}")}
+        {_attention_card("neutral", latest.get("confidence", "-"), "Latest Confidence", f"prior {prior.get('confidence', '-') if prior else '-'}")}
+      </section>
+      <p>{_safe(movement_explanation(comparison))}</p>
+      <p class="subtle">Last seen: {_safe(latest.get("scan_timestamp", ""))}</p>
+    </section>
+    """
+
+
 def _review_path_from_status(status: str) -> str | None:
     marker = "Review at "
     if marker not in status:
@@ -2743,16 +2841,17 @@ def _market_pulse_section(archetype: str, rows: tuple[dict[str, str], ...], scan
         "<tr>"
         f"<td>{_safe(row.get('rank', ''))}</td>"
         f"<td><strong>{_safe(row.get('symbol', ''))}</strong><br>{_finviz_link(row.get('symbol', ''))}</td>"
-        f"<td>{_safe(row.get('greenrock_score', ''))}</td>"
-        f"<td>{_safe(row.get('greenrock_confidence', ''))}</td>"
+        f"<td>{_safe(row.get('greenrock_score', ''))}{_pulse_prior_value(row, 'greenrock_score')}</td>"
+        f"<td>{_safe(row.get('greenrock_confidence', ''))}{_pulse_prior_value(row, 'confidence')}</td>"
         f"<td>{_safe(row.get('evidence_agreement', ''))}</td>"
         f"<td>{_safe(row.get('research_priority', ''))}</td>"
+        f"<td>{_pulse_movement_cell(row)}</td>"
         f"<td>{_staging_add_form(row.get('symbol', ''), 'latest_scan', compact=True)}</td>"
         "</tr>"
         for row in rows
     )
     if not body:
-        body = f"<tr><td colspan='7' class='empty'>No scored names in this archetype: {_safe(archetype)}.</td></tr>"
+        body = f"<tr><td colspan='8' class='empty'>No scored names in this archetype: {_safe(archetype)}.</td></tr>"
     return f"""
     <section class="panel picks-panel">
       <div class="section-head">
@@ -2760,11 +2859,32 @@ def _market_pulse_section(archetype: str, rows: tuple[dict[str, str], ...], scan
         <span class="subtle">Latest scan: {_safe(scan_id)}</span>
       </div>
       <table>
-        <thead><tr><th>Rank</th><th>Ticker</th><th>Score</th><th>Confidence</th><th>Evidence</th><th>Priority</th><th>Stage</th></tr></thead>
+        <thead><tr><th>Rank</th><th>Ticker</th><th>Score</th><th>Confidence</th><th>Evidence</th><th>Priority</th><th>Movement</th><th>Stage</th></tr></thead>
         <tbody>{body}</tbody>
       </table>
     </section>
     """
+
+
+def _pulse_movement_cell(row: dict[str, str]) -> str:
+    settings = get_settings()
+    comparison = compare_ticker(settings.output_dir, row.get("symbol", ""))
+    symbol = movement_symbol(comparison)
+    if comparison is None:
+        return f"{_safe(symbol)} unchanged<br><span class='subtle'>no prior scan</span>"
+    return (
+        f"{_safe(symbol)} rank {comparison.previous.get('rank', '')}->{comparison.current.get('rank', '')}"
+        f"<br><span class='subtle'>prior score {comparison.previous.get('greenrock_score', '')}; prior confidence {comparison.previous.get('confidence', '')}</span>"
+    )
+
+
+def _pulse_prior_value(row: dict[str, str], field: str) -> str:
+    settings = get_settings()
+    comparison = compare_ticker(settings.output_dir, row.get("symbol", ""))
+    if comparison is None:
+        return ""
+    value = comparison.previous.get(field, "")
+    return f"<br><span class='subtle'>prior {value}</span>" if value else ""
 
 
 def _watchlist_ticker_row(list_key: str, ticker: str, metadata: dict[str, str] | None) -> str:

@@ -139,7 +139,7 @@ def run_population_scan(
         provider_failure_count=len(provider_failures),
         duplicates_removed=duplicates_removed,
     )
-    return ScanResult(
+    result = ScanResult(
         scan_id=scan_id,
         population=normalized_population,
         data_source=market_data_provider.source_name,
@@ -153,6 +153,10 @@ def run_population_scan(
         provider_failure_count=len(provider_failures),
         duplicates_removed=duplicates_removed,
     )
+    from atlas_os.greenrock.memory import ingest_scan_result
+
+    ingest_scan_result(output_dir, result)
+    return result
 
 
 def latest_scan(output_dir: Path) -> ScanResult | None:

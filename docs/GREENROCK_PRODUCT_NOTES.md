@@ -40,6 +40,9 @@
 - Market Pulse report generation must reuse the staging-sourced report workflow. The one-click UI path is latest scan, Market Pulse staging, staged draft generation, pending approval, and Review Center. It must not bypass staging, auto-approve, publish, email, trade, create client files, or export a PDF.
 - Atlas Analyst reports should lead with seven possible archetype leaders: Mega, Large, Mid, Small, Micro, Meme, and Special Situation. Remaining staged candidates belong in compact tables.
 - Atlas Analyst summaries should include rank context, archetype, GreenRock Score, Confidence, Evidence Agreement, Research Priority, why Atlas surfaced it, prior-scan comparison when available, primary bullish evidence, primary caution, and what to watch next.
+- Add Atlas Memory as the local scan-history layer. It should store one ticker observation per scan, avoid duplicate scan/ticker rows, and preserve scan provenance.
+- Use Atlas Memory to explain what changed: rank movement, score movement, confidence movement, Evidence Agreement movement, Research Priority changes, Guardrail changes, and archetype changes.
+- Keep Memory local research context only. It must not trigger reports, approvals, publishing, email, trading actions, client files, credential access, or external LLM/API calls.
 - Scanner populations should not automatically feed reports. Universe -> Scanner -> Ranking Engine -> Staging -> Report is the required sourcing path, with staging as the preferred curated bridge into approval-gated draft generation.
 - Scanner rows should remain ranked candidates, not arbitrary result rows. Required fields include GreenRock Score, Confidence, Evidence Agreement, Guardrail, Research Priority, Rank, Percentile, and Universe Membership.
 - Scanner summaries should show total configured tickers, fetched/scored tickers, skipped tickers, provider failures, duplicates removed, and ranked count.

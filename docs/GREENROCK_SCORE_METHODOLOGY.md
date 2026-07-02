@@ -33,6 +33,14 @@ For each featured leader, Atlas Analyst may include:
 
 If no prior scan row exists for that ticker, reports state: `No prior scan comparison available.`
 
+## Atlas Memory
+
+Atlas Memory is the local scan-history layer behind movement analysis. After successful Market Pulse/population scans, Atlas stores ticker observations locally with rank, percentile, GreenRock Score, Confidence, Evidence Agreement, Research Priority, Fundamental Guardrail, market archetype, top signals, provider membership, source population, and data source.
+
+Movement matters because a ticker can look acceptable today while still weakening versus the prior scan, or look moderate today while improving quickly. Atlas Memory therefore explains whether rank improved or deteriorated, whether Score/Confidence/Evidence Agreement improved or weakened, and whether priority, guardrail, or archetype changed.
+
+Atlas Memory is research context only. It does not create recommendations, reports, approvals, PDFs, email, publishing, trading actions, client files, or external API calls.
+
 ## GreenRock Evidence Engine
 
 The GreenRock Evidence Engine turns existing GreenRock signals into structured evidence items. It does not add new indicators yet. It improves how current indicators interact.

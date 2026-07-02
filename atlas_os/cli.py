@@ -28,6 +28,7 @@ from atlas_os.greenrock.lifecycle import cleanup_greenrock_drafts
 from atlas_os.greenrock.market_data import MarketDataConfigurationError
 from atlas_os.greenrock.market_engine import MARKET_ARCHETYPES, classify_market_archetype
 from atlas_os.greenrock.market_pulse import stage_analyst_slate_candidates, stage_top_market_pulse_candidates
+from atlas_os.greenrock.memory import compare_ticker, load_memory_rows, memory_movers, memory_summary, movement_explanation, ticker_history
 from atlas_os.greenrock.pdf_export import render_markdown_report_to_pdf
 from atlas_os.greenrock.population import (
     ALL_POPULATION,
@@ -350,6 +351,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     archetype_subparsers = archetypes.add_subparsers(dest="archetypes_command")
     archetype_subparsers.add_parser("audit", help="Audit latest scan archetype counts and samples.")
+    memory = greenrock_subparsers.add_parser(
+        "memory",
+        help="Inspect local Atlas Memory for GreenRock scan history.",
+    )
+    memory_subparsers = memory.add_subparsers(dest="memory_command")
+    memory_subparsers.add_parser("summary", help="Summarize remembered scans and observations.")
+    memory_ticker = memory_subparsers.add_parser("ticker", help="Show scan history for one ticker.")
+    memory_ticker.add_argument("ticker")
+    memory_subparsers.add_parser("movers", help="Show biggest movements from the latest remembered scan.")
 
     population = greenrock_subparsers.add_parser(
         "population",
@@ -1042,6 +1052,56 @@ def run_greenrock_archetypes(command: str | None) -> int:
         top = archetype_rows[0].get("symbol", "none") if archetype_rows else "none"
         print(f"{archetype}: count={len(archetype_rows)} samples={samples} top_ranked={top}")
     return 0
+
+
+def run_greenrock_memory(command: str | None, ticker: str | None = None) -> int:
+    settings = get_settings()
+    if command == "summary":
+        summary = memory_summary(settings.output_dir)
+        print("GreenRock Atlas Memory")
+        print(f"total_scans: {summary['total_scans']}")
+        print(f"total_ticker_observations: {summary['total_observations']}")
+        print(f"unique_tickers: {summary['unique_tickers']}")
+        print(f"latest_scan_id: {summary['latest_scan_id'] or 'none'}")
+        return 0
+    if command == "ticker" and ticker:
+        history = ticker_history(settings.output_dir, ticker)
+        print("GreenRock Atlas Memory Ticker")
+        print(f"ticker: {ticker.strip().upper()}")
+        if not history:
+            print("No Atlas Memory history yet. Run a Market Pulse scan to begin tracking this ticker.")
+            return 0
+        comparison = compare_ticker(settings.output_dir, ticker)
+        print(f"observations: {len(history)}")
+        print(f"latest_scan_id: {history[0].get('scan_id', '')}")
+        print(f"movement: {movement_explanation(comparison)}")
+        print("history:")
+        for row in history[:12]:
+            print(
+                f"  {row.get('scan_timestamp', '')} {row.get('scan_id', '')} "
+                f"rank={row.get('rank', '')} score={row.get('greenrock_score', '')} "
+                f"confidence={row.get('confidence', '')} evidence={row.get('evidence_agreement', '')} "
+                f"priority={row.get('research_priority', '')}"
+            )
+        return 0
+    if command == "movers":
+        print("GreenRock Atlas Memory Movers")
+        print(f"observations: {len(load_memory_rows(settings.output_dir))}")
+        movers = memory_movers(settings.output_dir)
+        for label, rows in movers.items():
+            print(label + ":")
+            if not rows:
+                print("  none")
+            for item in rows:
+                print(
+                    f"  {item.ticker} rank={item.previous.get('rank', '')}->{item.current.get('rank', '')} "
+                    f"score={item.previous.get('greenrock_score', '')}->{item.current.get('greenrock_score', '')} "
+                    f"confidence={item.previous.get('confidence', '')}->{item.current.get('confidence', '')} "
+                    f"evidence={item.previous.get('evidence_agreement', '')}->{item.current.get('evidence_agreement', '')}"
+                )
+        return 0
+    print("Choose a memory command: summary, ticker, or movers.")
+    return 1
 
 
 def run_greenrock_universe_health() -> int:
@@ -1952,6 +2012,8 @@ def main(argv: list[str] | None = None) -> int:
             )
         if args.greenrock_command == "archetypes":
             return run_greenrock_archetypes(args.archetypes_command)
+        if args.greenrock_command == "memory":
+            return run_greenrock_memory(args.memory_command, getattr(args, "ticker", None))
         if args.greenrock_command == "score":
             return run_greenrock_score(args.ticker, args.data, args.selection)
         if args.greenrock_command == "population":

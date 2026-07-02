@@ -120,6 +120,9 @@ atlas greenrock stage-from-market-pulse --overwrite-staging
 atlas greenrock report-from-market-pulse --overwrite-staging
 atlas greenrock stage-analyst-slate --overwrite-staging
 atlas greenrock report-analyst-slate --overwrite-staging
+atlas greenrock memory summary
+atlas greenrock memory ticker SOFI
+atlas greenrock memory movers
 atlas greenrock archetypes audit
 atlas greenrock universe health
 atlas greenrock universe cleanup-failures --dry-run
@@ -178,6 +181,8 @@ Promotion saves only to local GreenRock list CSVs. Direct scan-to-staging saves 
 Market Pulse staging is local-only and writes to `.atlas/output/greenrock/staging/report_candidates.csv`. It preserves scan score, confidence, Evidence Agreement, Guardrail, Research Priority, top signals, scan ID, and source. CLI staging blocks if staging already contains candidates unless `--overwrite-staging` is supplied.
 
 Atlas Analyst is the report intelligence layer. GreenRock Score remains the branded score; Atlas Analyst adds deterministic summary text, archetype leadership, prior-scan comparison when available, bullish evidence, caution evidence, and what to watch next. It uses local scan/staging data only and no external LLM/API.
+
+Atlas Memory is local scan history. It is written after successful scans and stored at `.atlas/output/greenrock/memory/`. Use it to understand rank, score, confidence, evidence, priority, guardrail, and archetype movement between scans. It is research context only; it does not create reports, approvals, PDFs, emails, publications, trading actions, or client files.
 
 GreenRock branding expects the local logo at `atlas_os/static/greenrock_logo.png`. If it is missing, browser pages and report/PDF generation continue without failing.
 

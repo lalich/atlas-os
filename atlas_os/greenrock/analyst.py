@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from atlas_os.greenrock.market_engine import MARKET_ARCHETYPES, classify_market_archetype
+from atlas_os.greenrock.memory import compare_ticker, movement_explanation
 from atlas_os.greenrock.scanner import ScanResult, load_scan
 
 
@@ -20,6 +21,7 @@ class PriorScanComparison:
     confidence_change: float | None
     previous_evidence_agreement: str
     evidence_change: float | None
+    movement_text: str = ""
 
 
 @dataclass(frozen=True)
@@ -123,6 +125,20 @@ def remaining_candidates(
 
 
 def prior_scan_comparison(output_dir: Path, current_scan_id: str, ticker: str) -> PriorScanComparison | None:
+    memory_comparison = compare_ticker(output_dir, ticker, current_scan_id)
+    if memory_comparison is not None:
+        return PriorScanComparison(
+            previous_scan_id=memory_comparison.previous.get("scan_id", ""),
+            previous_rank=memory_comparison.previous.get("rank", ""),
+            rank_change=memory_comparison.rank_change,
+            previous_score=memory_comparison.previous.get("greenrock_score", ""),
+            score_change=memory_comparison.score_change,
+            previous_confidence=memory_comparison.previous.get("confidence", ""),
+            confidence_change=memory_comparison.confidence_change,
+            previous_evidence_agreement=memory_comparison.previous.get("evidence_agreement", ""),
+            evidence_change=memory_comparison.evidence_change,
+            movement_text=movement_explanation(memory_comparison),
+        )
     scan_ids = _scan_ids_newest_first(output_dir)
     if current_scan_id not in scan_ids:
         return None
@@ -146,6 +162,7 @@ def prior_scan_comparison(output_dir: Path, current_scan_id: str, ticker: str) -
             confidence_change=_delta(current_row.get("greenrock_confidence", "") if current_row else "", row.get("greenrock_confidence", "")),
             previous_evidence_agreement=row.get("evidence_agreement", ""),
             evidence_change=_delta(current_row.get("evidence_agreement", "") if current_row else "", row.get("evidence_agreement", "")),
+            movement_text="",
         )
     return None
 
@@ -196,6 +213,8 @@ def _analyst_summary(
 def _prior_summary(prior: PriorScanComparison | None) -> str:
     if prior is None:
         return "No prior scan comparison available."
+    if prior.movement_text:
+        return f"Prior scan comparison: previous rank {prior.previous_rank or 'not recorded'} in {prior.previous_scan_id}; {prior.movement_text}"
     changes = [
         _rank_change_text(prior.rank_change),
         _change_text("GreenRock Score", prior.score_change),
