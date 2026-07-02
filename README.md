@@ -22,6 +22,7 @@ cd ~/Desktop/atlas-os
 export PATH="$PWD/bin:$PATH"
 atlas --help
 atlas status
+atlas morning-brief
 atlas greenrock sample-report
 ```
 
@@ -133,6 +134,7 @@ atlas greenrock report-analyst-slate --overwrite-staging
 atlas greenrock memory summary
 atlas greenrock memory ticker SOFI
 atlas greenrock memory movers
+atlas morning-brief
 atlas greenrock archetypes audit
 atlas greenrock universe health
 atlas greenrock universe cleanup-failures --dry-run
@@ -187,7 +189,9 @@ Staged candidates should have analytics before clean report generation. Use `atl
 
 Atlas Analyst is the deterministic intelligence layer for staging-sourced reports. GreenRock Score remains the branded score; Atlas Analyst explains rank context, archetype, confidence, Evidence Agreement, prior-scan changes when available, primary bullish/caution evidence, and what to watch next. `atlas greenrock stage-analyst-slate` stages one leader from each available archetype, then fills the remaining report slate by rank. `atlas greenrock report-analyst-slate` uses that slate and creates the same approval-gated draft workflow.
 
-Atlas Memory stores local Market Pulse scan history under `.atlas/output/greenrock/memory/`. After each successful population scan, Atlas records per-ticker rank, percentile, GreenRock Score, Confidence, Evidence Agreement, Research Priority, Guardrail, archetype, signals, provider membership, population, and data source. Memory powers ticker movement, biggest movers, Score Calculator history cards, Market Pulse “What Changed Since Last Scan,” and Atlas Analyst prior-scan summaries. It is local research context only.
+Atlas Memory stores local Market Pulse scan history under `.atlas/output/greenrock/memory/`. After each successful population scan, Atlas records per-ticker rank, percentile, GreenRock Score, Confidence, Evidence Agreement, Research Priority, Guardrail, archetype, signals, provider membership, population, and data source. Memory powers ticker movement, biggest movers, the Market Pulse “Atlas Memory: What Changed” card, Score Calculator “Atlas Memory Snapshot,” Market Pulse “What Changed Since Last Scan,” and Atlas Analyst prior-scan summaries. It is local research context only.
+
+The Atlas Morning Brief is the Command Center attention layer. Open `/atlas/morning-brief` or run `atlas morning-brief` to see latest scan status, universe size, scored and skipped counts, high-confidence and research-priority counts, new archetype leaders, top movers, pending approvals, PDF readiness, and Atlas Inbox-style action items. It does not email, publish, trade, create client files, export PDFs, or call external LLM/API services.
 
 GreenRock branding uses the local asset path `atlas_os/static/greenrock_logo.png`. If the logo file is missing, web pages and report/PDF generation continue without failing.
 
@@ -435,6 +439,7 @@ Command Center pages:
 - `/greenrock/picks` GreenRock Picks Board with the featured Mega Rock pick, 11 large-cap picks, 11 small/mid-cap picks, Evidence Agreement, top signals, Fundamental Guardrail fields, Finviz links, and explicit data-mode labeling.
 - `/greenrock/scanner` GreenRock Market Scanner for population scans, latest scan metadata, quick filters, ranked results, Finviz links, deliberate promote-to-list review, and direct scan-to-staging.
 - `/greenrock/market-pulse` latest successful scan overview by archetype, with one-click staging of top Market Pulse candidates, Atlas Analyst report slate generation, and approval-gated draft generation from staging.
+- `/atlas/morning-brief` operator summary of latest scan health, Atlas Memory movers, pending approvals, PDF readiness, and local action items.
 - `/greenrock/watchlists` local GreenRock watchlist overview with ticker counts, tickers, Finviz links, promotion source, and latest promoted timestamp when available.
 - `/greenrock/staging` Report Candidate Staging page for final local curation into Mega Rock, Large Cap, Small/Mid, Research Only, and Excluded buckets before approval-gated report drafts.
 - `/greenrock/score` GreenRock Score Calculator with confidence, Evidence Agreement, Fundamental Guardrails, research priority, evidence cards, watch-next notes, methodology explanation, and preview-only score breakdown.

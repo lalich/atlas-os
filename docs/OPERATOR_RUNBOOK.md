@@ -123,6 +123,7 @@ atlas greenrock report-analyst-slate --overwrite-staging
 atlas greenrock memory summary
 atlas greenrock memory ticker SOFI
 atlas greenrock memory movers
+atlas morning-brief
 atlas greenrock archetypes audit
 atlas greenrock universe health
 atlas greenrock universe cleanup-failures --dry-run
@@ -142,6 +143,7 @@ Browser:
 
 ```text
 http://127.0.0.1:8000/greenrock/discovery
+http://127.0.0.1:8000/atlas/morning-brief
 http://127.0.0.1:8000/greenrock/universe
 http://127.0.0.1:8000/greenrock/market-pulse
 http://127.0.0.1:8000/greenrock/scanner
@@ -183,6 +185,8 @@ Market Pulse staging is local-only and writes to `.atlas/output/greenrock/stagin
 Atlas Analyst is the report intelligence layer. GreenRock Score remains the branded score; Atlas Analyst adds deterministic summary text, archetype leadership, prior-scan comparison when available, bullish evidence, caution evidence, and what to watch next. It uses local scan/staging data only and no external LLM/API.
 
 Atlas Memory is local scan history. It is written after successful scans and stored at `.atlas/output/greenrock/memory/`. Use it to understand rank, score, confidence, evidence, priority, guardrail, and archetype movement between scans. It is research context only; it does not create reports, approvals, PDFs, emails, publications, trading actions, or client files.
+
+The Command Center now surfaces Atlas Memory through two prominent cards: **Atlas Memory: What Changed** near the top of Market Pulse, and **Atlas Memory Snapshot** near the top of the Score Calculator when a ticker has history. The Morning Brief at `/atlas/morning-brief` and `atlas morning-brief` summarizes the latest scan, top movers, new leaders, pending approvals, PDF readiness, and Atlas Inbox-style action items. It is local-only and does not trigger email, publishing, trading, client-file creation, PDF export, or external LLM/API calls.
 
 GreenRock branding expects the local logo at `atlas_os/static/greenrock_logo.png`. If it is missing, browser pages and report/PDF generation continue without failing.
 

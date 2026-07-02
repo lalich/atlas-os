@@ -170,6 +170,7 @@ def memory_movers(output_dir: Path, limit: int = 5) -> dict[str, tuple[MemoryCom
     rank_improvers = tuple(sorted((item for item in comparisons if item.rank_change is not None and item.rank_change < 0), key=lambda item: item.rank_change)[:limit])
     score_improvers = tuple(sorted((item for item in comparisons if (item.score_change or 0) > 0), key=lambda item: item.score_change or 0, reverse=True)[:limit])
     confidence_improvers = tuple(sorted((item for item in comparisons if (item.confidence_change or 0) > 0), key=lambda item: item.confidence_change or 0, reverse=True)[:limit])
+    evidence_improvers = tuple(sorted((item for item in comparisons if (item.evidence_change or 0) > 0), key=lambda item: item.evidence_change or 0, reverse=True)[:limit])
     deteriorations = tuple(
         sorted(
             (
@@ -188,6 +189,7 @@ def memory_movers(output_dir: Path, limit: int = 5) -> dict[str, tuple[MemoryCom
         "rank_improvers": rank_improvers,
         "score_improvers": score_improvers,
         "confidence_improvers": confidence_improvers,
+        "evidence_improvers": evidence_improvers,
         "deteriorations": deteriorations,
     }
 

@@ -12,6 +12,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from atlas_os.cli import main
+from atlas_os.core.approvals import create_approval_request
+from atlas_os.db.database import connect, initialize_database
 from atlas_os.greenrock.analyst import (
     analyst_candidate_from_staged_row,
     analyst_candidates,
@@ -367,6 +369,7 @@ class UniverseManagerTests(unittest.TestCase):
         self.assertEqual(movers["rank_improvers"][0].ticker, "SOFI")
         self.assertEqual(movers["score_improvers"][0].ticker, "SOFI")
         self.assertEqual(movers["confidence_improvers"][0].ticker, "SOFI")
+        self.assertEqual(movers["evidence_improvers"][0].ticker, "SOFI")
         self.assertTrue(any(item.ticker == "WEAK" for item in movers["deteriorations"]))
         self.assertIn("total_scans: 2", cli_summary)
         self.assertIn("rank improved by 11 positions", cli_ticker)
@@ -381,12 +384,49 @@ class UniverseManagerTests(unittest.TestCase):
                 page = dispatch_request("GET", "/greenrock/market-pulse")
                 score = dispatch_request("GET", "/greenrock/score?ticker=SOFI")
 
+        self.assertIn("Atlas Memory: What Changed", page.body)
+        self.assertIn("Biggest Rank Improver", page.body)
+        self.assertIn("Biggest Evidence Improver", page.body)
+        self.assertIn("New Archetype Leader", page.body)
         self.assertIn("What Changed Since Last Scan", page.body)
         self.assertIn("SOFI", page.body)
         self.assertIn("rank 29->18", page.body)
-        self.assertIn("Atlas Memory", score.body)
+        self.assertIn("Atlas Memory Snapshot", score.body)
         self.assertIn("Latest Rank", score.body)
+        self.assertIn("Rank Movement", score.body)
+        self.assertIn("Evidence Movement", score.body)
+        self.assertIn("Priority Change", score.body)
+        self.assertIn("Last Seen Scan", score.body)
         self.assertIn("rank improved by 11 positions", score.body)
+
+    def test_morning_brief_page_dashboard_and_cli_work(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output_dir = Path(directory) / "output"
+            db_path = Path(directory) / "atlas.db"
+            env = {"ATLAS_OUTPUT_DIR": str(output_dir), "ATLAS_DB_PATH": str(db_path)}
+            with patch.dict("os.environ", env, clear=False):
+                _write_memory_fixture(output_dir)
+                initialize_database(db_path)
+                with connect(db_path) as connection:
+                    create_approval_request(
+                        connection,
+                        artifact_type="greenrock_report_draft",
+                        artifact_path=str(output_dir / "draft.md"),
+                    )
+                page = dispatch_request("GET", "/atlas/morning-brief")
+                dashboard = dispatch_request("GET", "/")
+                cli = _run_cli(["morning-brief"])
+
+        self.assertEqual(page.status, 200)
+        self.assertIn("Atlas Morning Brief", page.body)
+        self.assertIn("scan-all-20260702010101", page.body)
+        self.assertIn("Reports Awaiting Approval", page.body)
+        self.assertIn("Atlas Inbox Action Items", page.body)
+        self.assertIn("Morning Brief", dashboard.body)
+        self.assertIn("Open Morning Brief", dashboard.body)
+        self.assertIn("Atlas Morning Brief", cli)
+        self.assertIn("pending_approvals: 1", cli)
+        self.assertIn("No email, publishing, trading, client-file, or external action was created.", cli)
 
     def test_report_analyst_summary_includes_memory_movement(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

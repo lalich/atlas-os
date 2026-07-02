@@ -91,6 +91,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("status", help="Show local Atlas OS status.")
     subparsers.add_parser("dashboard", help="Show analyst-friendly Atlas OS overview.")
+    subparsers.add_parser("morning-brief", help="Show the local Atlas Morning Brief.")
     serve = subparsers.add_parser("serve", help="Start the local Atlas Command Center web app.")
     serve.add_argument("--host", default="127.0.0.1", help="Host for the local web app.")
     serve.add_argument("--port", default=8000, type=int, help="Port for the local web app.")
@@ -434,6 +435,112 @@ def run_status() -> int:
     print("external services: disabled")
     print("approval gate: required for client-facing publication")
     return 0
+
+
+def run_morning_brief() -> int:
+    settings = get_settings()
+    db_path = initialize_database(settings.db_path)
+    scan = latest_scan(settings.output_dir)
+    master = default_universe_manager(settings.output_dir).master_universe()
+    movers = memory_movers(settings.output_dir)
+    with connect(db_path) as connection:
+        approvals = list_approvals(connection)
+        artifacts = list_artifacts(connection)
+        reports = list_reports(connection)
+    pending = tuple(approval for approval in approvals if approval.status == ApprovalStatus.PENDING)
+    pdf_exported = tuple(artifact for artifact in artifacts if artifact.artifact_type == "report_final_pdf")
+    exported_run_ids = {artifact.run_id for artifact in pdf_exported}
+    approved_run_ids = {approval.run_id for approval in approvals if approval.status == ApprovalStatus.APPROVED and approval.run_id}
+    pdf_ready = tuple(report for report in reports if report.run_id in approved_run_ids and report.run_id not in exported_run_ids)
+    high_confidence = sum(1 for row in (scan.rows if scan else ()) if _cli_float_or_none(row.get("greenrock_confidence", "")) >= 75)
+    priorities: dict[str, int] = {}
+    for row in scan.rows if scan else ():
+        priority = row.get("research_priority", "") or "Unassigned"
+        priorities[priority] = priorities.get(priority, 0) + 1
+    print("Atlas Morning Brief")
+    print(f"latest_scan_id: {scan.scan_id if scan else 'none'}")
+    print(f"scan_status: {'complete' if scan and scan.rows else 'not complete'}")
+    print(f"universe_size: {master.size}")
+    print(f"scored_count: {len(scan.rows) if scan else 0}")
+    print(f"skipped_tickers: {scan.skipped_ticker_count if scan else 0}")
+    print(f"provider_failures: {scan.provider_failure_count if scan else 0}")
+    print(f"high_confidence_count: {high_confidence}")
+    print("research_priority_count:")
+    if priorities:
+        for label, count in sorted(priorities.items()):
+            print(f"  {label}: {count}")
+    else:
+        print("  none: 0")
+    print("top_movers:")
+    _print_mover_group("rank_improvers", movers["rank_improvers"][:3])
+    _print_mover_group("score_improvers", movers["score_improvers"][:3])
+    _print_mover_group("confidence_improvers", movers["confidence_improvers"][:3])
+    _print_mover_group("evidence_improvers", movers["evidence_improvers"][:3])
+    _print_mover_group("deteriorations", movers["deteriorations"][:3])
+    print("new_leaders:")
+    for line in _cli_new_leaders(settings.output_dir):
+        print(f"  {line}")
+    print(f"pending_approvals: {len(pending)}")
+    print(f"pdfs_ready: {len(pdf_ready)}")
+    print(f"pdfs_exported: {len(pdf_exported)}")
+    print("suggested_actions:")
+    for action in _morning_actions(scan, len(pending), len(pdf_ready), movers):
+        print(f"  {action}")
+    print("No email, publishing, trading, client-file, or external action was created.")
+    return 0
+
+
+def _print_mover_group(label: str, rows) -> None:
+    print(f"  {label}:")
+    if not rows:
+        print("    none")
+    for item in rows:
+        print(
+            f"    {item.ticker} rank={item.previous.get('rank', '')}->{item.current.get('rank', '')} "
+            f"score={item.previous.get('greenrock_score', '')}->{item.current.get('greenrock_score', '')} "
+            f"confidence={item.previous.get('confidence', '')}->{item.current.get('confidence', '')} "
+            f"evidence={item.previous.get('evidence_agreement', '')}->{item.current.get('evidence_agreement', '')}"
+        )
+
+
+def _cli_new_leaders(output_dir: Path) -> tuple[str, ...]:
+    rows = load_memory_rows(output_dir)
+    scan_ids = sorted({row["scan_id"] for row in rows}, reverse=True)
+    if len(scan_ids) < 2:
+        return ("none",)
+    latest, previous = scan_ids[0], scan_ids[1]
+    latest_leaders = _cli_leaders_by_archetype(tuple(row for row in rows if row["scan_id"] == latest))
+    previous_leaders = _cli_leaders_by_archetype(tuple(row for row in rows if row["scan_id"] == previous))
+    changes = tuple(
+        f"{archetype}: {leader.get('ticker', '')} replaced {previous_leaders.get(archetype, {}).get('ticker', 'none')}"
+        for archetype, leader in latest_leaders.items()
+        if leader.get("ticker", "") != previous_leaders.get(archetype, {}).get("ticker", "")
+    )
+    return changes or ("none",)
+
+
+def _cli_leaders_by_archetype(rows: tuple[dict[str, str], ...]) -> dict[str, dict[str, str]]:
+    leaders: dict[str, dict[str, str]] = {}
+    for row in sorted(rows, key=lambda item: int(float(item.get("rank", "999999") or "999999"))):
+        archetype = row.get("market_archetype", "")
+        if archetype and archetype not in leaders:
+            leaders[archetype] = row
+    return leaders
+
+
+def _morning_actions(scan, pending_count: int, pdf_ready_count: int, movers) -> tuple[str, ...]:
+    actions = []
+    if not scan:
+        actions.append("Run atlas greenrock scan --population all.")
+    if pending_count:
+        actions.append(f"Review {pending_count} pending approval(s).")
+    if pdf_ready_count:
+        actions.append(f"Export {pdf_ready_count} approved PDF(s) when ready.")
+    if any(movers[key] for key in ("rank_improvers", "score_improvers", "confidence_improvers", "evidence_improvers", "deteriorations")):
+        actions.append("Review Atlas Memory movers before staging the next report slate.")
+    if not actions:
+        actions.append("No urgent local action items.")
+    return tuple(actions)
 
 
 def run_greenrock_sample_report() -> int:
@@ -1969,6 +2076,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "dashboard":
         return run_dashboard()
+
+    if args.command == "morning-brief":
+        return run_morning_brief()
 
     if args.command == "serve":
         return run_serve(args.host, args.port)

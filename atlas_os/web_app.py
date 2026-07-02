@@ -154,6 +154,10 @@ def create_app():
     def projects() -> str:
         return render_projects()
 
+    @app.get("/atlas/morning-brief", response_class=HTMLResponse)
+    def morning_brief() -> str:
+        return render_morning_brief()
+
     @app.get("/greenrock", response_class=HTMLResponse)
     def greenrock() -> str:
         return render_greenrock()
@@ -399,6 +403,8 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
         return WebResponse(200, render_dashboard(_first(query, "status")))
     if method == "GET" and route == "/projects":
         return WebResponse(200, render_projects(_first(query, "status")))
+    if method == "GET" and route == "/atlas/morning-brief":
+        return WebResponse(200, render_morning_brief(_first(query, "status")))
     if method == "GET" and route == "/greenrock":
         return WebResponse(200, render_greenrock(_first(query, "status")))
     if method == "GET" and route == "/greenrock/picks":
@@ -614,6 +620,7 @@ def render_dashboard(status_message: str | None = None) -> str:
     failed_runs = [run for run in context["runs"] if run.status == "failed"]
     inbox_items = _build_inbox_items(context, pending_approvals, reports_ready, failed_runs)
     latest_source = _latest_report_data_source(context["latest_report"])
+    brief = _morning_brief_data(context)
 
     content = f"""
     {_status_banner(status_message)}
@@ -624,6 +631,19 @@ def render_dashboard(status_message: str | None = None) -> str:
         <p>What needs your attention</p>
       </div>
       <div class="orbital"><span></span><span></span><span></span></div>
+    </section>
+    <section class="panel warning-panel">
+      <div class="section-head">
+        <h2>Morning Brief</h2>
+        <span class="badge">Operator attention layer</span>
+      </div>
+      <section class="board-meta">
+        {_attention_card("green" if brief["scan_complete"] else "yellow", brief["scan_status"], "Scan Status", brief["latest_scan_id"] or "No latest scan")}
+        {_attention_card("yellow" if brief["important_changes"] else "neutral", str(brief["important_changes"]), "Important Changes", "Memory movers and new leaders")}
+        {_attention_card("red" if brief["pending_approvals"] else "neutral", str(brief["pending_approvals"]), "Pending Approvals", "Human review queue")}
+        {_attention_card("neutral", "Open", "Morning Brief", "Daily local command view")}
+      </section>
+      <p><a class="button" href="/atlas/morning-brief">Open Morning Brief</a></p>
     </section>
     <section class="attention-grid">
       {_attention_card("red", str(len(pending_approvals)), "Pending Approvals", "Human review required")}
@@ -662,6 +682,56 @@ def render_dashboard(status_message: str | None = None) -> str:
     </section>
     """
     return _page("Atlas Command Center", content, active="/")
+
+
+def render_morning_brief(status_message: str | None = None) -> str:
+    context = _load_context()
+    brief = _morning_brief_data(context)
+    movers = brief["movers"]
+    actions = "".join(f"<li>{_safe(action)}</li>" for action in brief["actions"])
+    content = f"""
+    {_status_banner(status_message)}
+    <section class="hero compact">
+      <p class="eyebrow">Atlas Command Center</p>
+      <h1>Morning Brief</h1>
+      <p>Local operator attention view. No email, publishing, trading, client files, or external calls.</p>
+    </section>
+    <section class="board-meta">
+      {_attention_card("green" if brief["scan_complete"] else "yellow", brief["scan_status"], "Latest Scan", brief["latest_scan_id"] or "Run Market Pulse")}
+      {_attention_card("neutral", str(brief["universe_size"]), "Universe Size", "Master Universe")}
+      {_attention_card("green", str(brief["scored_count"]), "Scored Count", f"skipped/failures {brief['skipped_count']}/{brief['provider_failures']}")}
+      {_attention_card("neutral", str(brief["high_confidence_count"]), "High Confidence", "Confidence >= 75")}
+    </section>
+    <section class="panel">
+      <div class="section-head"><h2>Research Priority Count</h2><span class="subtle">Latest scan</span></div>
+      <div class="board-meta">{''.join(_attention_card("neutral", str(count), label, "ranked scan rows") for label, count in brief["priority_counts"].items())}</div>
+    </section>
+    <section class="panel">
+      <div class="section-head"><h2>Top Movers</h2><span class="subtle">Atlas Memory</span></div>
+      <div class="watchlist-grid">
+        {_memory_mover_block("Rank Improvers", movers["rank_improvers"][:3])}
+        {_memory_mover_block("Score Improvers", movers["score_improvers"][:3])}
+        {_memory_mover_block("Confidence Improvers", movers["confidence_improvers"][:3])}
+        {_memory_mover_block("Evidence Improvers", movers["evidence_improvers"][:3])}
+        {_memory_mover_block("Deteriorations", movers["deteriorations"][:3])}
+      </div>
+    </section>
+    <section class="panel">
+      <h2>New Archetype Leaders</h2>
+      {_new_archetype_leaders(get_settings().output_dir)}
+    </section>
+    <section class="board-meta">
+      {_attention_card("red" if brief["pending_approvals"] else "neutral", str(brief["pending_approvals"]), "Reports Awaiting Approval", "Approval-gated drafts")}
+      {_attention_card("yellow" if brief["pdf_ready"] else "neutral", str(brief["pdf_ready"]), "PDFs Ready", "Approved, not exported")}
+      {_attention_card("green" if brief["pdf_exported"] else "neutral", str(brief["pdf_exported"]), "PDFs Exported", "Local final PDFs")}
+      {_attention_card("neutral", str(brief["important_changes"]), "Important Changes", "Memory POW count")}
+    </section>
+    <section class="panel">
+      <div class="section-head"><h2>Atlas Inbox Action Items</h2><span class="subtle">Suggested operator actions</span></div>
+      <ul class="compact-list">{actions}</ul>
+    </section>
+    """
+    return _page("Atlas Morning Brief", content, active="/")
 
 
 def render_projects(status_message: str | None = None) -> str:
@@ -1130,12 +1200,14 @@ def render_greenrock_market_pulse(status_message: str | None = None) -> str:
         </section>
         """
         actions = _market_pulse_actions(settings.output_dir, scan.scan_id)
+        pow_card = _memory_pow_card(settings.output_dir)
         changes = _market_pulse_memory_panel(settings.output_dir)
     else:
         cards = ""
         sections = "<section class='panel warning-panel'><h2>No Latest Scan</h2><p>Run a population scan first. Market Pulse does not create reports or approvals.</p></section>"
         diagnostics = ""
         actions = ""
+        pow_card = ""
         changes = ""
     content = f"""
     {_status_banner(status_message)}
@@ -1145,6 +1217,7 @@ def render_greenrock_market_pulse(status_message: str | None = None) -> str:
       <p>Scanner finds opportunities. Operators stage candidates. Reports still generate only from staging and remain approval-gated.</p>
       <p><a class="button secondary" href="/greenrock/scanner">Run Scanner</a> <a class="button secondary" href="/greenrock/staging">Open Staging</a></p>
     </section>
+    {pow_card}
     {diagnostics}
     {changes}
     {actions}
@@ -2306,6 +2379,56 @@ def _build_inbox_items(context, pending_approvals, reports_ready, failed_runs) -
     return items
 
 
+def _morning_brief_data(context) -> dict:
+    settings = get_settings()
+    scan = latest_scan(settings.output_dir)
+    master = default_universe_manager(settings.output_dir).master_universe()
+    movers = memory_movers(settings.output_dir)
+    pending_approvals = [approval for approval in context["approvals"] if approval.status == ApprovalStatus.PENDING]
+    pdf_ready = _approved_reports_missing_pdf(context)
+    pdf_exported = [artifact for artifact in context["artifacts"] if artifact.artifact_type == "report_final_pdf"]
+    priority_counts: dict[str, int] = {}
+    high_confidence = 0
+    if scan:
+        for row in scan.rows:
+            priority = row.get("research_priority", "") or "Unassigned"
+            priority_counts[priority] = priority_counts.get(priority, 0) + 1
+            if _as_float(row.get("greenrock_confidence", "")) >= 75:
+                high_confidence += 1
+    important_changes = sum(
+        len(movers[key])
+        for key in ("rank_improvers", "score_improvers", "confidence_improvers", "evidence_improvers", "deteriorations")
+    )
+    actions = []
+    if not scan:
+        actions.append("Run a Market Pulse scan to populate the Morning Brief.")
+    if pending_approvals:
+        actions.append(f"Review {len(pending_approvals)} pending approval(s).")
+    if pdf_ready:
+        actions.append(f"Export {len(pdf_ready)} approved report PDF(s) when ready.")
+    if important_changes:
+        actions.append("Review Atlas Memory movers before staging the next report slate.")
+    if not actions:
+        actions.append("No urgent local action items.")
+    return {
+        "scan_complete": bool(scan and scan.rows),
+        "scan_status": "complete" if scan and scan.rows else "not complete",
+        "latest_scan_id": scan.scan_id if scan else "",
+        "universe_size": master.size,
+        "scored_count": len(scan.rows) if scan else 0,
+        "skipped_count": scan.skipped_ticker_count if scan else 0,
+        "provider_failures": scan.provider_failure_count if scan else 0,
+        "high_confidence_count": high_confidence,
+        "priority_counts": priority_counts or {"none": 0},
+        "movers": movers,
+        "important_changes": important_changes,
+        "pending_approvals": len(pending_approvals),
+        "pdf_ready": len(pdf_ready),
+        "pdf_exported": len(pdf_exported),
+        "actions": tuple(actions),
+    }
+
+
 def _approved_reports_missing_pdf(context) -> list:
     ready = []
     for report in context["reports"]:
@@ -2717,6 +2840,61 @@ def _market_pulse_actions(output_dir: Path, scan_id: str) -> str:
     """
 
 
+def _memory_pow_card(output_dir: Path) -> str:
+    movers = memory_movers(output_dir, limit=1)
+    leader_html = _new_archetype_leader_line(output_dir)
+    return f"""
+    <section class="panel warning-panel">
+      <div class="section-head">
+        <h2>Atlas Memory: What Changed</h2>
+        <span class="badge">POW</span>
+      </div>
+      <section class="board-meta">
+        {_pow_metric("Biggest Rank Improver", _first_mover(movers["rank_improvers"], "rank"))}
+        {_pow_metric("Biggest Score Improver", _first_mover(movers["score_improvers"], "score"))}
+        {_pow_metric("Biggest Confidence Improver", _first_mover(movers["confidence_improvers"], "confidence"))}
+        {_pow_metric("Biggest Evidence Improver", _first_mover(movers["evidence_improvers"], "evidence"))}
+        {_pow_metric("Biggest Deterioration", _first_mover(movers["deteriorations"], "deterioration"))}
+        {_pow_metric("New Archetype Leader", leader_html)}
+      </section>
+    </section>
+    """
+
+
+def _pow_metric(label: str, value: str) -> str:
+    return _attention_card("neutral", value or "none", label, "Atlas Memory")
+
+
+def _first_mover(rows, mode: str) -> str:
+    if not rows:
+        return "none"
+    item = rows[0]
+    if mode == "rank":
+        return f"{item.ticker} {item.previous.get('rank', '')}->{item.current.get('rank', '')}"
+    if mode == "score":
+        return f"{item.ticker} {item.previous.get('greenrock_score', '')}->{item.current.get('greenrock_score', '')}"
+    if mode == "confidence":
+        return f"{item.ticker} {item.previous.get('confidence', '')}->{item.current.get('confidence', '')}"
+    if mode == "evidence":
+        return f"{item.ticker} {item.previous.get('evidence_agreement', '')}->{item.current.get('evidence_agreement', '')}"
+    return f"{item.ticker} {movement_symbol(item)}"
+
+
+def _new_archetype_leader_line(output_dir: Path) -> str:
+    rows = load_memory_rows(output_dir)
+    scan_ids = sorted({row["scan_id"] for row in rows}, reverse=True)
+    if len(scan_ids) < 2:
+        return "none"
+    latest, previous = scan_ids[0], scan_ids[1]
+    latest_leaders = _leaders_by_archetype(tuple(row for row in rows if row["scan_id"] == latest))
+    previous_leaders = _leaders_by_archetype(tuple(row for row in rows if row["scan_id"] == previous))
+    for archetype, leader in latest_leaders.items():
+        old = previous_leaders.get(archetype, {}).get("ticker", "")
+        if old != leader.get("ticker", ""):
+            return f"{archetype}: {leader.get('ticker', '')}"
+    return "none"
+
+
 def _market_pulse_memory_panel(output_dir: Path) -> str:
     movers = memory_movers(output_dir)
     blocks = "".join(_memory_mover_block(title, rows) for title, rows in (
@@ -2785,29 +2963,56 @@ def _score_memory_panel(output_dir: Path, ticker: str) -> str:
     if not history:
         return """
         <section class="panel warning-panel">
-          <h2>Atlas Memory</h2>
-          <p>No Atlas Memory history yet. Run a Market Pulse scan to begin tracking this ticker.</p>
+          <h2>Atlas Memory Snapshot</h2>
+          <p>Run a Market Pulse scan to begin tracking this ticker.</p>
         </section>
         """
     latest = history[0]
     comparison = compare_ticker(output_dir, ticker)
     prior = comparison.previous if comparison else {}
     return f"""
-    <section class="panel">
+    <section class="panel warning-panel">
       <div class="section-head">
-        <h2>Atlas Memory</h2>
-        <span class="subtle">Local scan movement</span>
+        <h2>Atlas Memory Snapshot</h2>
+        <span class="badge">Local scan movement</span>
       </div>
       <section class="board-meta">
         {_attention_card("neutral", latest.get("rank", "-"), "Latest Rank", latest.get("scan_id", ""))}
         {_attention_card("neutral", prior.get("rank", "-") if prior else "-", "Prior Rank", prior.get("scan_id", "") if prior else "No prior scan")}
-        {_attention_card("neutral", latest.get("greenrock_score", "-"), "Latest Score", f"prior {prior.get('greenrock_score', '-') if prior else '-'}")}
-        {_attention_card("neutral", latest.get("confidence", "-"), "Latest Confidence", f"prior {prior.get('confidence', '-') if prior else '-'}")}
+        {_attention_card("neutral", _change_value(comparison.rank_change if comparison else None, "rank"), "Rank Movement", "lower rank is stronger")}
+        {_attention_card("neutral", _change_value(comparison.score_change if comparison else None, "score"), "Score Movement", f"prior {prior.get('greenrock_score', '-') if prior else '-'}")}
+        {_attention_card("neutral", _change_value(comparison.confidence_change if comparison else None, "confidence"), "Confidence Movement", f"prior {prior.get('confidence', '-') if prior else '-'}")}
+        {_attention_card("neutral", _change_value(comparison.evidence_change if comparison else None, "evidence"), "Evidence Movement", f"prior {prior.get('evidence_agreement', '-') if prior else '-'}")}
+        {_attention_card("neutral", _priority_change(comparison), "Priority Change", latest.get("research_priority", "-"))}
+        {_attention_card("neutral", latest.get("scan_timestamp", "-"), "Last Seen Scan", latest.get("scan_id", ""))}
       </section>
       <p>{_safe(movement_explanation(comparison))}</p>
-      <p class="subtle">Last seen: {_safe(latest.get("scan_timestamp", ""))}</p>
     </section>
     """
+
+
+def _change_value(value, mode: str) -> str:
+    if value is None:
+        return "-"
+    if mode == "rank":
+        if value < 0:
+            return f"improved {abs(value)}"
+        if value > 0:
+            return f"deteriorated {value}"
+        return "unchanged"
+    if value > 0:
+        return f"+{value:.2f}"
+    if value < 0:
+        return f"{value:.2f}"
+    return "unchanged"
+
+
+def _priority_change(comparison) -> str:
+    if comparison is None:
+        return "-"
+    previous = comparison.previous.get("research_priority", "")
+    current = comparison.current.get("research_priority", "")
+    return f"{previous}->{current}" if previous != current else "unchanged"
 
 
 def _review_path_from_status(status: str) -> str | None:

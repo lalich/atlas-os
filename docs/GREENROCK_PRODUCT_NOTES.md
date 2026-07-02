@@ -42,6 +42,9 @@
 - Atlas Analyst summaries should include rank context, archetype, GreenRock Score, Confidence, Evidence Agreement, Research Priority, why Atlas surfaced it, prior-scan comparison when available, primary bullish evidence, primary caution, and what to watch next.
 - Add Atlas Memory as the local scan-history layer. It should store one ticker observation per scan, avoid duplicate scan/ticker rows, and preserve scan provenance.
 - Use Atlas Memory to explain what changed: rank movement, score movement, confidence movement, Evidence Agreement movement, Research Priority changes, Guardrail changes, and archetype changes.
+- Make Atlas Memory prominent in the product: Market Pulse should open with **Atlas Memory: What Changed**, and the Score Calculator should show **Atlas Memory Snapshot** when ticker history exists.
+- Treat Morning Brief as the Command Center attention layer. It should summarize latest scan health, high-confidence names, research-priority counts, new archetype leaders, top movers, pending approvals, PDF readiness, and Atlas Inbox-style operator actions.
+- Keep `atlas morning-brief` and `/atlas/morning-brief` read-only. They may point the operator to local next steps, but must not create reports, approvals, PDFs, emails, publications, trading actions, client files, or external LLM/API calls.
 - Keep Memory local research context only. It must not trigger reports, approvals, publishing, email, trading actions, client files, credential access, or external LLM/API calls.
 - Scanner populations should not automatically feed reports. Universe -> Scanner -> Ranking Engine -> Staging -> Report is the required sourcing path, with staging as the preferred curated bridge into approval-gated draft generation.
 - Scanner rows should remain ranked candidates, not arbitrary result rows. Required fields include GreenRock Score, Confidence, Evidence Agreement, Guardrail, Research Priority, Rank, Percentile, and Universe Membership.
