@@ -135,6 +135,9 @@ atlas greenrock memory summary
 atlas greenrock memory ticker SOFI
 atlas greenrock memory movers
 atlas morning-brief
+atlas morning-brief --snapshot
+atlas morning-brief history
+atlas morning-brief show <snapshot_id>
 atlas greenrock archetypes audit
 atlas greenrock universe health
 atlas greenrock universe cleanup-failures --dry-run
@@ -191,9 +194,9 @@ Atlas Analyst is the deterministic intelligence layer for staging-sourced report
 
 Atlas Memory stores local Market Pulse scan history under `.atlas/output/greenrock/memory/`. After each successful population scan, Atlas records per-ticker rank, percentile, GreenRock Score, Confidence, Evidence Agreement, Research Priority, Guardrail, archetype, signals, provider membership, population, and data source. Memory powers ticker movement, biggest movers, the Market Pulse “Atlas Memory: What Changed” card, Score Calculator “Atlas Memory Snapshot,” Market Pulse “What Changed Since Last Scan,” and Atlas Analyst prior-scan summaries. It is local research context only.
 
-The Atlas Morning Brief is the Command Center attention layer. Open `/atlas/morning-brief` or run `atlas morning-brief` to see latest scan status, universe size, scored and skipped counts, high-confidence and research-priority counts, new archetype leaders, top movers, pending approvals, PDF readiness, and Atlas Inbox-style action items. The page includes action buttons for latest Market Pulse, pending approvals, latest report review, Analyst Slate staging, staging draft generation when ready, and final PDF archive. It does not email, publish, trade, create client files, export PDFs, or call external LLM/API services.
+The Atlas Morning Brief is the Command Center attention layer. Open `/atlas/morning-brief` or run `atlas morning-brief` to see latest scan status, universe size, scored and skipped counts, high-confidence and research-priority counts, new archetype leaders, top movers, pending approvals, PDF readiness, and Atlas Inbox-style action items. The page includes action buttons for latest Market Pulse, pending approvals, latest report review, Analyst Slate staging, staging draft generation when ready, and final PDF archive. Save local operating-log snapshots with `atlas morning-brief --snapshot` or the browser **Save Morning Brief Snapshot** button; review them with `atlas morning-brief history`, `atlas morning-brief show <snapshot_id>`, or `/atlas/morning-brief/history`. Snapshots are stored under `.atlas/output/atlas/morning_briefs/`. Morning Brief does not email, publish, trade, create client files, export PDFs, or call external LLM/API services.
 
-GreenRock branding uses the local asset path `atlas_os/static/greenrock_logo.png`. Atlas OS branding can use `atlas_os/static/atlas_logo.png`; if it is missing, browser title pages show a fallback Atlas mark and report/PDF generation continues without failing.
+GreenRock branding uses the local asset path `atlas_os/static/greenrock_logo.png`. Atlas OS branding uses `atlas_os/static/atlas_logo.png` when present; if it is missing, browser title pages show a quiet fallback Atlas mark and report/PDF generation continues without failing.
 
 ## GreenRock Score Calculator
 

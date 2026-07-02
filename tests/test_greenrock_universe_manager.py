@@ -411,6 +411,15 @@ class UniverseManagerTests(unittest.TestCase):
                 dashboard = dispatch_request("GET", "/")
                 review = dispatch_request("GET", f"/greenrock/reports/{run_id}/review")
                 cli = _run_cli(["morning-brief"])
+                cli_snapshot = _run_cli(["morning-brief", "--snapshot"])
+                snapshot_id = _line_value(cli_snapshot, "snapshot_saved")
+                snapshot_path = Path(_line_value(cli_snapshot, "snapshot_path"))
+                snapshot_exists = snapshot_path.exists()
+                cli_history = _run_cli(["morning-brief", "history"])
+                cli_show = _run_cli(["morning-brief", "show", snapshot_id])
+                browser_save = dispatch_request("POST", "/atlas/morning-brief/snapshot")
+                history = dispatch_request("GET", "/atlas/morning-brief/history")
+                snapshot_page = dispatch_request("GET", f"/atlas/morning-brief/history/{snapshot_id}")
 
         self.assertEqual(page.status, 200)
         self.assertIn("Atlas Morning Brief", page.body)
@@ -425,7 +434,12 @@ class UniverseManagerTests(unittest.TestCase):
         self.assertIn("Stage Analyst Slate from latest Market Pulse", page.body)
         self.assertIn("/greenrock/market-pulse/stage/confirm?slate=analyst", page.body)
         self.assertIn("Open PDF archive / final reports", page.body)
-        self.assertIn("atlas_logo.png", page.body)
+        self.assertIn("Save Morning Brief Snapshot", page.body)
+        self.assertIn("Morning Brief History", page.body)
+        self.assertIn("/static/atlas_logo.png", page.body)
+        self.assertIn("Local Only", page.body)
+        self.assertIn("No publish/email/trading enabled", page.body)
+        self.assertNotIn("Missing Atlas logo", page.body)
         self.assertIn("Reports Awaiting Approval", page.body)
         self.assertIn("Atlas Inbox Action Items", page.body)
         self.assertIn("Pending approval", page.body)
@@ -443,7 +457,33 @@ class UniverseManagerTests(unittest.TestCase):
         self.assertIn("Atlas Morning Brief", cli)
         self.assertIn("pending_approvals: 1", cli)
         self.assertIn("No email, publishing, trading, client-file, or external action was created.", cli)
+        self.assertIn("snapshot_saved: morning-brief-", cli_snapshot)
+        self.assertTrue(snapshot_exists)
+        self.assertEqual(snapshot_path.parent, output_dir / "atlas" / "morning_briefs")
+        self.assertIn("Atlas Morning Brief History", cli_history)
+        self.assertIn(snapshot_id, cli_history)
+        self.assertIn("Atlas Morning Brief Snapshot", cli_show)
+        self.assertIn("scored_count: 2", cli_show)
+        self.assertEqual(browser_save.status, 303)
+        self.assertEqual(history.status, 200)
+        self.assertIn("Saved Snapshots", history.body)
+        self.assertIn(snapshot_id, history.body)
+        self.assertEqual(snapshot_page.status, 200)
+        self.assertIn("Morning Brief Snapshot", snapshot_page.body)
+        self.assertIn("Snapshot Boundary", snapshot_page.body)
         self.assertFalse(list(output_dir.rglob("*.pdf")))
+
+    def test_morning_brief_logo_missing_fallback_is_quiet(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output_dir = Path(directory) / "output"
+            env = {"ATLAS_OUTPUT_DIR": str(output_dir), "ATLAS_DB_PATH": str(Path(directory) / "atlas.db")}
+            with patch.dict("os.environ", env, clear=False), patch("atlas_os.web_app.ATLAS_LOGO_PATH", Path(directory) / "missing_atlas_logo.png"):
+                page = dispatch_request("GET", "/atlas/morning-brief")
+
+        self.assertEqual(page.status, 200)
+        self.assertIn("atlas-mark", page.body)
+        self.assertNotIn("Missing Atlas logo", page.body)
+        self.assertNotIn("Place atlas_logo.png", page.body)
 
     def test_report_analyst_summary_includes_memory_movement(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

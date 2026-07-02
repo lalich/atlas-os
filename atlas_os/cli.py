@@ -78,6 +78,12 @@ from atlas_os.greenrock.universe import (
 from atlas_os.greenrock.universe_manager import default_universe_manager, provider_label
 from atlas_os.greenrock.workflow import run_greenrock_screening_workflow
 from atlas_os.logging_config import configure_logging
+from atlas_os.morning_brief import (
+    latest_morning_brief_snapshot,
+    list_morning_brief_snapshots,
+    load_morning_brief_snapshot,
+    save_morning_brief_snapshot,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -91,7 +97,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("status", help="Show local Atlas OS status.")
     subparsers.add_parser("dashboard", help="Show analyst-friendly Atlas OS overview.")
-    subparsers.add_parser("morning-brief", help="Show the local Atlas Morning Brief.")
+    morning_brief = subparsers.add_parser("morning-brief", help="Show the local Atlas Morning Brief.")
+    morning_brief.add_argument("--snapshot", action="store_true", help="Save a local Morning Brief snapshot after printing.")
+    morning_subparsers = morning_brief.add_subparsers(dest="morning_brief_command")
+    morning_subparsers.add_parser("history", help="List saved Morning Brief snapshots.")
+    morning_show = morning_subparsers.add_parser("show", help="Show one saved Morning Brief snapshot.")
+    morning_show.add_argument("snapshot_id")
     serve = subparsers.add_parser("serve", help="Start the local Atlas Command Center web app.")
     serve.add_argument("--host", default="127.0.0.1", help="Host for the local web app.")
     serve.add_argument("--port", default=8000, type=int, help="Port for the local web app.")
@@ -437,7 +448,7 @@ def run_status() -> int:
     return 0
 
 
-def run_morning_brief() -> int:
+def run_morning_brief(snapshot: bool = False) -> int:
     settings = get_settings()
     db_path = initialize_database(settings.db_path)
     scan = latest_scan(settings.output_dir)
@@ -486,8 +497,80 @@ def run_morning_brief() -> int:
     print("suggested_actions:")
     for action in _morning_actions(scan, len(pending), len(pdf_ready), movers):
         print(f"  {action}")
+    latest_snapshot = latest_morning_brief_snapshot(settings.output_dir)
+    print(f"latest_snapshot: {latest_snapshot['timestamp'] if latest_snapshot else 'none'}")
+    if snapshot:
+        saved = save_morning_brief_snapshot(settings.output_dir, db_path)
+        print(f"snapshot_saved: {saved['snapshot_id']}")
+        print(f"snapshot_path: {saved['path']}")
     print("No email, publishing, trading, client-file, or external action was created.")
     return 0
+
+
+def run_morning_brief_history() -> int:
+    settings = get_settings()
+    snapshots = list_morning_brief_snapshots(settings.output_dir)
+    print("Atlas Morning Brief History")
+    if not snapshots:
+        print("No Morning Brief snapshots found.")
+        return 0
+    print("snapshot_id timestamp scan_id scored pending top_mover")
+    for snapshot in snapshots:
+        print(
+            f"{snapshot.get('snapshot_id', '')} "
+            f"{snapshot.get('timestamp', '')} "
+            f"{snapshot.get('latest_scan_id', 'none')} "
+            f"{snapshot.get('scored_count', 0)} "
+            f"{snapshot.get('pending_approvals', 0)} "
+            f"{_snapshot_top_mover(snapshot)}"
+        )
+    return 0
+
+
+def run_morning_brief_show(snapshot_id: str) -> int:
+    settings = get_settings()
+    try:
+        snapshot = load_morning_brief_snapshot(settings.output_dir, snapshot_id)
+    except KeyError:
+        print("Morning Brief snapshot not found")
+        print(f"snapshot_id: {snapshot_id}")
+        return 1
+    print("Atlas Morning Brief Snapshot")
+    print(f"snapshot_id: {snapshot.get('snapshot_id', '')}")
+    print(f"timestamp: {snapshot.get('timestamp', '')}")
+    print(f"latest_scan_id: {snapshot.get('latest_scan_id', 'none')}")
+    print(f"configured_count: {snapshot.get('configured_count', 0)}")
+    print(f"scored_count: {snapshot.get('scored_count', 0)}")
+    print(f"skipped_count: {snapshot.get('skipped_count', 0)}")
+    print(f"provider_failures: {snapshot.get('provider_failures', 0)}")
+    print(f"pending_approvals: {snapshot.get('pending_approvals', 0)}")
+    print(f"reports_awaiting_review: {snapshot.get('reports_awaiting_review', 0)}")
+    print(f"pdf_ready: {snapshot.get('pdf_ready', 0)}")
+    print(f"pdf_exported: {snapshot.get('pdf_exported', 0)}")
+    print("top_movers:")
+    for label, rows in snapshot.get("top_movers", {}).items():
+        print(f"  {label}:")
+        if not rows:
+            print("    none")
+        for row in rows:
+            print(f"    {row.get('summary', '')}")
+    print("new_archetype_leaders:")
+    for leader in snapshot.get("new_archetype_leaders", ()) or ("none",):
+        print(f"  {leader}")
+    print("suggested_actions:")
+    for action in snapshot.get("suggested_actions", ()) or ("No urgent local action items.",):
+        print(f"  {action}")
+    print("No email, publishing, trading, client-file, or external action was created.")
+    return 0
+
+
+def _snapshot_top_mover(snapshot: dict) -> str:
+    movers = snapshot.get("top_movers", {})
+    for key in ("rank_improvers", "score_improvers", "confidence_improvers", "evidence_improvers", "deteriorations"):
+        rows = movers.get(key, ())
+        if rows:
+            return rows[0].get("summary", "none").replace(" ", "_")
+    return "none"
 
 
 def _print_mover_group(label: str, rows) -> None:
@@ -2078,7 +2161,11 @@ def main(argv: list[str] | None = None) -> int:
         return run_dashboard()
 
     if args.command == "morning-brief":
-        return run_morning_brief()
+        if args.morning_brief_command == "history":
+            return run_morning_brief_history()
+        if args.morning_brief_command == "show":
+            return run_morning_brief_show(args.snapshot_id)
+        return run_morning_brief(args.snapshot)
 
     if args.command == "serve":
         return run_serve(args.host, args.port)

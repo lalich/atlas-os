@@ -79,6 +79,12 @@ from atlas_os.greenrock.universe import (
 )
 from atlas_os.greenrock.universe_manager import default_universe_manager, provider_label
 from atlas_os.greenrock.workflow import run_greenrock_screening_workflow
+from atlas_os.morning_brief import (
+    latest_morning_brief_snapshot,
+    list_morning_brief_snapshots,
+    load_morning_brief_snapshot,
+    save_morning_brief_snapshot,
+)
 from atlas_os.greenrock.scoring import signal_label
 
 
@@ -159,6 +165,19 @@ def create_app():
     @app.get("/atlas/morning-brief", response_class=HTMLResponse)
     def morning_brief() -> str:
         return render_morning_brief()
+
+    @app.post("/atlas/morning-brief/snapshot")
+    def morning_brief_snapshot():
+        message = save_morning_brief_snapshot_from_browser()
+        return RedirectResponse(_with_status("/atlas/morning-brief", message), status_code=303)
+
+    @app.get("/atlas/morning-brief/history", response_class=HTMLResponse)
+    def morning_brief_history() -> str:
+        return render_morning_brief_history()
+
+    @app.get("/atlas/morning-brief/history/{snapshot_id}", response_class=HTMLResponse)
+    def morning_brief_snapshot_detail(snapshot_id: str) -> str:
+        return render_morning_brief_snapshot(snapshot_id)
 
     @app.get("/greenrock", response_class=HTMLResponse)
     def greenrock() -> str:
@@ -407,6 +426,14 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
         return WebResponse(200, render_projects(_first(query, "status")))
     if method == "GET" and route == "/atlas/morning-brief":
         return WebResponse(200, render_morning_brief(_first(query, "status")))
+    if method == "GET" and route == "/atlas/morning-brief/history":
+        return WebResponse(200, render_morning_brief_history(_first(query, "status")))
+    if method == "GET" and route.startswith("/atlas/morning-brief/history/"):
+        snapshot_id = unquote(route.removeprefix("/atlas/morning-brief/history/"))
+        try:
+            return WebResponse(200, render_morning_brief_snapshot(snapshot_id, _first(query, "status")))
+        except KeyError:
+            return _error_response(404, "Snapshot Not Found", f"No Morning Brief snapshot exists for {snapshot_id}.")
     if method == "GET" and route == "/greenrock":
         return WebResponse(200, render_greenrock(_first(query, "status")))
     if method == "GET" and route == "/greenrock/picks":
@@ -489,6 +516,8 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
     if method == "POST" and route == "/greenrock/run-report":
         ok, message = run_greenrock_report_from_browser(form.get("data_mode", "mock"))
         return WebResponse(303, "", location=_with_status("/greenrock", message))
+    if method == "POST" and route == "/atlas/morning-brief/snapshot":
+        return WebResponse(303, "", location=_with_status("/atlas/morning-brief", save_morning_brief_snapshot_from_browser()))
     if method == "POST" and route == "/greenrock/scanner/run":
         message = run_greenrock_scan_from_browser(form.get("population", "qqq"))
         return WebResponse(303, "", location=_with_status("/greenrock/scanner", message))
@@ -684,10 +713,24 @@ def render_morning_brief(status_message: str | None = None) -> str:
     brief = _morning_brief_data(context)
     movers = brief["movers"]
     actions = "".join(_inbox_card(item) for item in brief["action_items"])
+    latest_snapshot = latest_morning_brief_snapshot(get_settings().output_dir)
     content = f"""
     {_status_banner(status_message)}
     {_branded_title_hero("Morning Brief", "Atlas OS Command Center", "Local operator attention view. No email, publishing, trading, client files, or external calls.", context)}
     {_morning_brief_action_buttons(context, brief)}
+    <section class="panel command-actions">
+      <div class="section-head">
+        <h2>Morning Brief Snapshots</h2>
+        <span class="subtle">Local operating log</span>
+      </div>
+      <p class="subtle">Latest snapshot: {_safe(latest_snapshot["timestamp"] if latest_snapshot else "none saved yet")}</p>
+      <div class="action-row">
+        <form method="post" action="/atlas/morning-brief/snapshot" onsubmit="return confirm('Save a local Morning Brief snapshot?');">
+          <button type="submit">Save Morning Brief Snapshot</button>
+        </form>
+        <a class="button secondary" href="/atlas/morning-brief/history">Morning Brief History</a>
+      </div>
+    </section>
     <section class="board-meta">
       {_attention_card("green" if brief["scan_complete"] else "yellow", brief["scan_status"], "Latest Scan", brief["latest_scan_id"] or "Run Market Pulse")}
       {_attention_card("neutral", str(brief["universe_size"]), "Universe Size", "Master Universe")}
@@ -724,6 +767,70 @@ def render_morning_brief(status_message: str | None = None) -> str:
     </section>
     """
     return _page("Atlas Morning Brief", content, active="/")
+
+
+def render_morning_brief_history(status_message: str | None = None) -> str:
+    context = _load_context()
+    snapshots = list_morning_brief_snapshots(get_settings().output_dir)
+    rows = "".join(_morning_brief_snapshot_row(snapshot) for snapshot in snapshots)
+    if not rows:
+        rows = "<tr><td colspan='6' class='empty'>No Morning Brief snapshots saved yet.</td></tr>"
+    content = f"""
+    {_status_banner(status_message)}
+    {_branded_title_hero("Morning Brief History", "Atlas OS Command Center", "Local operating log of saved Morning Brief snapshots.", context)}
+    <section class="panel">
+      <div class="section-head">
+        <h2>Saved Snapshots</h2>
+        <span class="subtle">{len(snapshots)} local snapshot(s)</span>
+      </div>
+      <table>
+        <thead><tr><th>Timestamp</th><th>Scan ID</th><th>Scored</th><th>Top Mover</th><th>Pending</th><th>Open</th></tr></thead>
+        <tbody>{rows}</tbody>
+      </table>
+    </section>
+    """
+    return _page("Morning Brief History", content, active="/")
+
+
+def render_morning_brief_snapshot(snapshot_id: str, status_message: str | None = None) -> str:
+    context = _load_context()
+    snapshot = load_morning_brief_snapshot(get_settings().output_dir, snapshot_id)
+    mover_blocks = "".join(
+        _snapshot_mover_block(label, snapshot.get("top_movers", {}).get(key, ()))
+        for key, label in (
+            ("rank_improvers", "Rank Improvers"),
+            ("score_improvers", "Score Improvers"),
+            ("confidence_improvers", "Confidence Improvers"),
+            ("evidence_improvers", "Evidence Improvers"),
+            ("deteriorations", "Deteriorations"),
+        )
+    )
+    leaders = "".join(f"<li>{_safe(item)}</li>" for item in snapshot.get("new_archetype_leaders", ())) or "<li>No new archetype leaders captured.</li>"
+    actions = "".join(f"<li>{_safe(item)}</li>" for item in snapshot.get("suggested_actions", ())) or "<li>No suggested actions captured.</li>"
+    content = f"""
+    {_status_banner(status_message)}
+    {_branded_title_hero("Morning Brief Snapshot", "Atlas OS Command Center", "Saved local operating-log entry.", context)}
+    <section class="board-meta">
+      {_attention_card("neutral", snapshot.get("timestamp", ""), "Timestamp", snapshot.get("snapshot_id", ""))}
+      {_attention_card("neutral", snapshot.get("latest_scan_id", "none"), "Latest Scan ID", "Saved state")}
+      {_attention_card("green", str(snapshot.get("scored_count", 0)), "Scored Count", f"configured {snapshot.get('configured_count', 0)}")}
+      {_attention_card("red" if snapshot.get("pending_approvals", 0) else "neutral", str(snapshot.get("pending_approvals", 0)), "Pending Approvals", "Saved approval count")}
+    </section>
+    <section class="board-meta">
+      {_attention_card("yellow", str(snapshot.get("skipped_count", 0)), "Skipped", "Latest scan")}
+      {_attention_card("yellow", str(snapshot.get("provider_failures", 0)), "Provider Failures", "Latest scan")}
+      {_attention_card("yellow" if snapshot.get("pdf_ready", 0) else "neutral", str(snapshot.get("pdf_ready", 0)), "PDFs Ready", "Approved, not exported")}
+      {_attention_card("green" if snapshot.get("pdf_exported", 0) else "neutral", str(snapshot.get("pdf_exported", 0)), "PDFs Exported", "Final local PDFs")}
+    </section>
+    <section class="panel">
+      <div class="section-head"><h2>Top Movers</h2><span class="subtle">Captured from Atlas Memory</span></div>
+      <div class="watchlist-grid">{mover_blocks}</div>
+    </section>
+    <section class="panel"><h2>New Archetype Leaders</h2><ul class="compact-list">{leaders}</ul></section>
+    <section class="panel"><h2>Suggested Operator Actions</h2><ul class="compact-list">{actions}</ul></section>
+    <section class="panel disclosure-panel"><h2>Snapshot Boundary</h2><p>This saved snapshot is local research context only. It created no email, publication, trading action, client file, or PDF export.</p></section>
+    """
+    return _page("Morning Brief Snapshot", content, active="/")
 
 
 def render_projects(status_message: str | None = None) -> str:
@@ -2547,6 +2654,11 @@ def _morning_brief_action_buttons(context, brief: dict) -> str:
         <h2>Morning Brief Actions</h2>
         <span class="subtle">Navigation only. Approval gates remain intact.</span>
       </div>
+      <div class="primary-action">
+        <span class="badge attention">Primary action</span>
+        <strong>{_safe(brief["action_items"][0]["title"] if brief.get("action_items") else "No urgent local action items")}</strong>
+        <p>{_safe(brief["action_items"][0]["detail"] if brief.get("action_items") else "No urgent local action items.")}</p>
+      </div>
       <div class="action-row">
         <a class="button" href="/greenrock/market-pulse">Open latest Market Pulse</a>
         <a class="button secondary" href="/greenrock">Review pending approvals</a>
@@ -2558,6 +2670,46 @@ def _morning_brief_action_buttons(context, brief: dict) -> str:
       <p class="subtle">Scan status: {_safe(brief["scan_status"])}. Pending approvals: {_safe(brief["pending_approvals"])}.</p>
     </section>
     """
+
+
+def save_morning_brief_snapshot_from_browser() -> str:
+    settings = get_settings()
+    saved = save_morning_brief_snapshot(settings.output_dir, settings.db_path)
+    return (
+        f"Morning Brief snapshot saved: {saved['snapshot_id']}. "
+        "No email, publishing, trading, client-file, or external action was created."
+    )
+
+
+def _morning_brief_snapshot_row(snapshot: dict) -> str:
+    snapshot_id = snapshot.get("snapshot_id", "")
+    return f"""
+    <tr>
+      <td>{_safe(snapshot.get("timestamp", ""))}</td>
+      <td>{_safe(snapshot.get("latest_scan_id", "none"))}</td>
+      <td>{_safe(snapshot.get("scored_count", 0))}</td>
+      <td>{_safe(_snapshot_top_mover(snapshot))}</td>
+      <td>{_safe(snapshot.get("pending_approvals", 0))}</td>
+      <td><a class="button secondary" href="/atlas/morning-brief/history/{quote(snapshot_id)}">View Snapshot</a></td>
+    </tr>
+    """
+
+
+def _snapshot_top_mover(snapshot: dict) -> str:
+    movers = snapshot.get("top_movers", {})
+    for key in ("rank_improvers", "score_improvers", "confidence_improvers", "evidence_improvers", "deteriorations"):
+        rows = movers.get(key, ())
+        if rows:
+            return rows[0].get("summary", "none")
+    return "none"
+
+
+def _snapshot_mover_block(title: str, rows) -> str:
+    if not rows:
+        body = "<p class='subtle'>No movement captured.</p>"
+    else:
+        body = "<ul class='compact-list'>" + "".join(f"<li>{_safe(row.get('summary', ''))}</li>" for row in rows) + "</ul>"
+    return f"<article class='watchlist-card'><h3>{_safe(title)}</h3>{body}</article>"
 
 
 def _approved_reports_missing_pdf(context) -> list:
@@ -4311,7 +4463,7 @@ def _atlas_logo(class_name: str = "atlas-logo") -> str:
             f"<img class='{_safe(class_name)}' src='{ATLAS_LOGO_URL}' "
             "alt='Atlas OS logo' loading='lazy' onerror=\"this.outerHTML='<span class=&quot;atlas-mark&quot;>A</span>'\">"
         )
-    return "<span class='atlas-mark' title='Place atlas_logo.png in atlas_os/static/ to use a custom Atlas OS logo.'>A</span>"
+    return "<span class='atlas-mark' title='Atlas OS'>A</span>"
 
 
 def _greenrock_brand_block() -> str:
@@ -4345,11 +4497,11 @@ def _branded_title_hero(title: str, eyebrow: str, subtitle: str, context, metada
         <span class="badge data-mode">{_safe(data_mode)} DATA</span>
         <dl>
           <div><dt>Date / Last Refresh</dt><dd>{_safe(latest_refresh)}</dd></div>
-          <div><dt>Provider Status</dt><dd>{_safe(provider["configured_label"])}</dd></div>
-          <div><dt>Current Provider</dt><dd>{_safe(provider["current_provider"])}</dd></div>
+          <div><dt>Mode</dt><dd>Local Only</dd></div>
+          <div><dt>Real Data Provider</dt><dd>{_safe(provider["current_provider"] if provider["configured"] == "true" else provider["configured_label"])}</dd></div>
           <div><dt>Candidate Source</dt><dd>{_safe(candidate_source)}</dd></div>
         </dl>
-        <p class="subtle">Missing Atlas logo? Place <code>atlas_os/static/atlas_logo.png</code> to replace the fallback mark.</p>
+        <p class="subtle">No publish/email/trading enabled.</p>
       </div>
     </section>
     """

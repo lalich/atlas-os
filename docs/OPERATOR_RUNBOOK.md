@@ -124,6 +124,9 @@ atlas greenrock memory summary
 atlas greenrock memory ticker SOFI
 atlas greenrock memory movers
 atlas morning-brief
+atlas morning-brief --snapshot
+atlas morning-brief history
+atlas morning-brief show <snapshot_id>
 atlas greenrock archetypes audit
 atlas greenrock universe health
 atlas greenrock universe cleanup-failures --dry-run
@@ -186,9 +189,9 @@ Atlas Analyst is the report intelligence layer. GreenRock Score remains the bran
 
 Atlas Memory is local scan history. It is written after successful scans and stored at `.atlas/output/greenrock/memory/`. Use it to understand rank, score, confidence, evidence, priority, guardrail, and archetype movement between scans. It is research context only; it does not create reports, approvals, PDFs, emails, publications, trading actions, or client files.
 
-The Command Center now surfaces Atlas Memory through two prominent cards: **Atlas Memory: What Changed** near the top of Market Pulse, and **Atlas Memory Snapshot** near the top of the Score Calculator when a ticker has history. The Morning Brief at `/atlas/morning-brief` and `atlas morning-brief` summarizes the latest scan, top movers, new leaders, pending approvals, PDF readiness, and Atlas Inbox-style action items. The page includes buttons to open Market Pulse, review pending approvals, open the latest report review, stage the Analyst Slate, generate a staging draft only when staging is ready, and open the final PDF archive. It is local-only and does not trigger email, publishing, trading, client-file creation, PDF export, or external LLM/API calls.
+The Command Center now surfaces Atlas Memory through two prominent cards: **Atlas Memory: What Changed** near the top of Market Pulse, and **Atlas Memory Snapshot** near the top of the Score Calculator when a ticker has history. The Morning Brief at `/atlas/morning-brief` and `atlas morning-brief` summarizes the latest scan, top movers, new leaders, pending approvals, PDF readiness, and Atlas Inbox-style action items. The page includes buttons to open Market Pulse, review pending approvals, open the latest report review, stage the Analyst Slate, generate a staging draft only when staging is ready, and open the final PDF archive. Save operating-log snapshots with `atlas morning-brief --snapshot` or **Save Morning Brief Snapshot**; history lives at `/atlas/morning-brief/history` and `.atlas/output/atlas/morning_briefs/`. It is local-only and does not trigger email, publishing, trading, client-file creation, PDF export, or external LLM/API calls.
 
-GreenRock branding expects the local logo at `atlas_os/static/greenrock_logo.png`. Place an optional Atlas OS logo at `atlas_os/static/atlas_logo.png`; if it is missing, the browser uses a fallback Atlas mark. Missing logos do not break browser pages or report/PDF generation.
+GreenRock branding expects the local logo at `atlas_os/static/greenrock_logo.png`. Atlas OS uses `atlas_os/static/atlas_logo.png` when present; if it is missing, the browser uses a quiet fallback Atlas mark. Missing logos do not break browser pages or report/PDF generation.
 
 Report Candidate Staging stores local rows at `.atlas/output/greenrock/staging/report_candidates.csv`. Buckets are Mega Rock Candidate, Large Cap Candidate, Small/Mid Candidate, Research Only, and Excluded. The readiness indicators compare staged counts against the current report targets: Mega Rock 1, Large Cap 11, Small/Mid 11. Staging alone does not create report runs, approvals, PDFs, emails, or publication artifacts.
 
