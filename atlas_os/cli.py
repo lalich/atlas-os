@@ -265,6 +265,17 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Selection mode. Defaults to strict for mock and ranked for real.",
     )
+    score_audit = greenrock_subparsers.add_parser(
+        "score-audit",
+        help="Audit GreenRock Score calculation and local path consistency for one or more tickers.",
+    )
+    score_audit.add_argument("tickers", nargs="+")
+    score_audit.add_argument(
+        "--data",
+        choices=("mock", "real"),
+        default="real",
+        help=argparse.SUPPRESS,
+    )
     greenrock_subparsers.add_parser(
         "review",
         help="Show latest GreenRock report review summary.",
@@ -1073,6 +1084,134 @@ def run_greenrock_score(ticker: str, data_mode: str = "real", selection_mode: st
     else:
         print("  none")
     return 0
+
+
+def run_greenrock_score_audit(tickers: list[str], data_mode: str = "real") -> int:
+    settings = get_settings()
+    exit_code = 0
+    for ticker in tickers:
+        try:
+            preview = calculate_score_preview(ticker, data_mode=data_mode, output_dir=settings.output_dir)
+        except (MarketDataConfigurationError, ValueError) as error:
+            print("GreenRock Score Audit")
+            print(f"ticker: {ticker.upper()}")
+            print("status: blocked")
+            print(f"reason: {error}")
+            print("No report, approval, artifact, email, publication, trading action, client file, or external action was created.")
+            exit_code = 1
+            continue
+        _print_score_audit(preview)
+    return exit_code
+
+
+def _print_score_audit(preview) -> None:
+    candidate = preview.candidate
+    indicators = candidate.indicators
+    path_rows = _score_path_rows(candidate.symbol)
+    mismatches = [
+        f"{label}={score:.2f}"
+        for label, score in path_rows
+        if score is not None and abs(score - candidate.score) > 0.01
+    ]
+
+    print("GreenRock Score Audit")
+    print(f"ticker: {candidate.symbol}")
+    print(f"company: {candidate.company_name}")
+    print(f"provider_data_source: {preview.data_source}")
+    print(f"provider_data_mode: {preview.data_mode.upper()}")
+    print(f"final_greenrock_score: {candidate.score:.2f}")
+    print(f"base_technical_score: {preview.base_technical_score:.2f}")
+    print(f"fundamental_guardrail_adjustment: {preview.fundamental_guardrail_adjustment:+.2f}")
+    print(f"evidence_score_adjustment: {preview.evidence_score_adjustment:+.2f}")
+    print(f"confidence_score: {preview.confidence_score:.2f}")
+    print(f"confidence_band: {preview.confidence_band}")
+    print(f"evidence_agreement: {preview.evidence_agreement_score:.2f}")
+    print("score_adjustment_summary:")
+    print(
+        "  "
+        f"{preview.base_technical_score:.2f} "
+        f"{preview.fundamental_guardrail_adjustment:+.2f} guardrail "
+        f"{preview.evidence_score_adjustment:+.2f} evidence "
+        f"= {candidate.score:.2f}"
+    )
+    print("component_scores:")
+    for component in preview.component_explanations:
+        print(f"  {component.name}:")
+        print(f"    raw_metric: {component.raw_metric}")
+        print(f"    component_score: {component.component_score:.2f}")
+        print(f"    weight: {component.weight}")
+        print(f"    explanation: {component.explanation}")
+    print("raw_technical_inputs:")
+    print(f"  latest_close: {indicators.latest_close:.2f}")
+    print(f"  rsi_14: {indicators.rsi_14:.2f}")
+    print(f"  low_proximity: {indicators.low_proximity:.2%}")
+    print(f"  bollinger_position: {_score_bollinger_position(candidate)}")
+    print(f"  volume_acceleration: {_score_volume_acceleration(candidate)}")
+    print(f"  moving_average_structure: {_score_moving_average_structure(candidate)}")
+    print("evidence_contributions:")
+    for item in preview.evidence_items:
+        print(
+            f"  {item.name}: {item.direction} {item.strength} "
+            f"{item.numeric_contribution:+.2f} - {item.explanation}"
+        )
+    print("fundamental_guardrail:")
+    print(f"  label: {preview.fundamental_guardrails.label}")
+    print(f"  score_adjustment: {preview.fundamental_guardrail_adjustment:+.2f}")
+    print(f"  confidence_impact: {preview.fundamental_guardrails.confidence_impact:+.2f}")
+    print("strict_criteria_failures:")
+    for rule in candidate.failed_rules or ("none",):
+        print(f"  {rule}")
+    print("data_quality_warnings:")
+    for warning in preview.data_quality_warnings or ("none",):
+        print(f"  {warning}")
+    print("score_path_consistency:")
+    print(f"  calculator: {candidate.score:.2f}")
+    for label, score in path_rows:
+        value = "unavailable" if score is None else f"{score:.2f}"
+        print(f"  {label}: {value}")
+    if mismatches:
+        print("Score path mismatch detected.")
+        print("mismatches:")
+        for mismatch in mismatches:
+            print(f"  {mismatch}")
+    else:
+        print("score_paths_agree: yes")
+    print("No report, approval, artifact, email, publication, trading action, client file, or external action was created.")
+
+
+def _score_path_rows(symbol: str) -> tuple[tuple[str, float | None], ...]:
+    settings = get_settings()
+    scan = latest_scan(settings.output_dir)
+    scan_row = next((row for row in (scan.rows if scan else ()) if row.get("symbol") == symbol), None)
+    staged_row = next((row for row in load_staged_candidates(settings.output_dir) if row.get("ticker") == symbol), None)
+    report_row = None
+    db_path = initialize_database(settings.db_path)
+    with connect(db_path) as connection:
+        latest_run = _latest_greenrock_run(connection)
+    if latest_run:
+        report_row = next(
+            (
+                row
+                for row in _read_candidate_rows(latest_run.output_paths.get("all"), limit=None)
+                if row.get("symbol") == symbol
+            ),
+            None,
+        )
+    return (
+        ("market_pulse_scan", _path_row_score(scan_row)),
+        ("staging_enrichment", _path_row_score(staged_row)),
+        ("report_candidate", _path_row_score(report_row)),
+    )
+
+
+def _path_row_score(row: dict[str, str] | None) -> float | None:
+    if not row:
+        return None
+    value = row.get("greenrock_score") or row.get("score") or ""
+    try:
+        return float(value)
+    except ValueError:
+        return None
 
 
 def run_greenrock_population(command: str | None, population: str | None = None, tickers: list[str] | None = None) -> int:
@@ -2499,6 +2638,8 @@ def main(argv: list[str] | None = None) -> int:
             return run_greenrock_memory(args.memory_command, getattr(args, "ticker", None))
         if args.greenrock_command == "score":
             return run_greenrock_score(args.ticker, args.data, args.selection)
+        if args.greenrock_command == "score-audit":
+            return run_greenrock_score_audit(args.tickers, args.data)
         if args.greenrock_command == "population":
             return run_greenrock_population(
                 args.population_command,

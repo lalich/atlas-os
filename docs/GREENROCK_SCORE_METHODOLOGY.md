@@ -98,6 +98,18 @@ Fundamental Guardrails can add a small capped `fundamental_guardrail_adjustment`
 
 This adjustment is intentionally small. GreenRock Score remains technical-first; strong fundamentals do not by themselves create a high dislocation score.
 
+Final score formula:
+
+```text
+final GreenRock Score = base technical component score
+  + capped fundamental guardrail adjustment
+  + capped evidence interaction adjustment
+```
+
+The final result is capped to the 0-100 range. Fundamental guardrails are applied once. Data-quality warnings, strict criteria failures, and Evidence Agreement primarily affect GreenRock Confidence and operator explanation; they should not become large hidden Score penalties unless a future methodology update explicitly documents that change.
+
+`atlas greenrock score-audit <ticker...>` prints the base score, final score, component weights, raw technical inputs, evidence contributions, guardrail adjustment, data-quality warnings, Confidence, Evidence Agreement, provider/source, and local score-path consistency. The Score Calculator, population scanner/Market Pulse, staging enrichment, and report candidate rows are expected to use the same canonical score preview. If local rows disagree for the same ticker/provider data, the audit prints `Score path mismatch detected.`
+
 ## Signal Labels
 
 | Score Range | Label |

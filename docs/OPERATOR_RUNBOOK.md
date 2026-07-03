@@ -78,10 +78,13 @@ The browser watchlist page supports confirmed ticker removal. Bucket-specific sa
 atlas greenrock latest-candidates
 atlas greenrock picks-board
 atlas greenrock score AAPL
+atlas greenrock score-audit AAPL SOFI PLTR NVDA
 atlas greenrock review
 ```
 
 Use `latest-candidates` for a quick large-cap and small/mid-cap summary. Use `picks-board` for the latest 23-slot Picks Board summary and browser URL. Use `review` for latest run status, report path, approval status, and top candidate names.
+
+Use `score-audit` when a score looks lower or higher than expected. It prints the final GreenRock Score, base technical score, component weights, raw technical inputs, evidence contributions, capped fundamental guardrail adjustment, data-quality warnings, Confidence, Evidence Agreement, provider/source, and whether calculator, Market Pulse scan, staging, and report candidate rows agree locally. If they do not, Atlas prints `Score path mismatch detected.`
 
 ## Run Local Agent Cycle
 
@@ -282,6 +285,7 @@ CLI:
 export ATLAS_MARKET_DATA_PROVIDER=yfinance
 python3 -m pip install -e ".[market-data]"
 atlas greenrock score AAPL
+atlas greenrock score-audit AAPL
 ```
 
 Browser:

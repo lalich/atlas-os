@@ -73,6 +73,8 @@ class EvidenceItem:
 @dataclass(frozen=True)
 class ScorePreview:
     candidate: StockCandidate
+    base_technical_score: float
+    evidence_score_adjustment: float
     data_mode: str
     data_source: str
     selection_mode: str
@@ -115,13 +117,29 @@ def calculate_score_preview(
         raise ValueError("Ticker is required.")
 
     market_data_provider = provider or _provider_for_score(symbol, data_mode, output_dir)
-    resolved_selection_mode = selection_mode if selection_mode in {"strict", "ranked"} else _default_selection_mode(market_data_provider.data_mode)
     stocks = market_data_provider.fetch_stocks()
     stock = next((item for item in stocks if item.symbol.upper() == symbol), None)
     if stock is None:
         raise ValueError(f"Ticker {symbol} was not found in {market_data_provider.source_name}.")
+    return calculate_score_preview_from_stock(
+        stock,
+        data_mode=market_data_provider.data_mode,
+        data_source=market_data_provider.source_name,
+        selection_mode=selection_mode,
+    )
+
+
+def calculate_score_preview_from_stock(
+    stock,
+    data_mode: str,
+    data_source: str,
+    selection_mode: str | None = None,
+) -> ScorePreview:
+    """Calculate the canonical GreenRock score preview from one market-data stock."""
+    resolved_selection_mode = selection_mode if selection_mode in {"strict", "ranked"} else _default_selection_mode(data_mode)
 
     candidate = evaluate_stock(stock)
+    base_technical_score = candidate.score
     fundamental_guardrails = _fundamental_guardrails(candidate)
     all_time_high, price_targets, price_target_warnings, price_target_lookback = _price_targets(stock.prices, candidate.has_price_history)
     base_evidence_items = build_evidence_items(
@@ -213,8 +231,10 @@ def calculate_score_preview(
     )
     return ScorePreview(
         candidate=candidate,
-        data_mode=market_data_provider.data_mode,
-        data_source=market_data_provider.source_name,
+        base_technical_score=base_technical_score,
+        evidence_score_adjustment=evidence_score_adjustment,
+        data_mode=data_mode,
+        data_source=data_source,
         selection_mode=resolved_selection_mode,
         confidence_score=confidence.score,
         confidence_band=confidence.band,

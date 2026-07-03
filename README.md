@@ -52,6 +52,7 @@ atlas greenrock latest-run
 atlas greenrock latest-candidates
 atlas greenrock picks-board
 atlas greenrock score AAPL
+atlas greenrock score-audit AAPL SOFI PLTR NVDA
 atlas greenrock review
 atlas greenrock open-latest
 atlas greenrock export-pdf <approval_id>
@@ -221,7 +222,10 @@ The GreenRock Score Calculator is available in the browser at `/greenrock/score`
 export ATLAS_MARKET_DATA_PROVIDER=yfinance
 python3 -m pip install -e ".[market-data]"
 atlas greenrock score AAPL
+atlas greenrock score-audit AAPL
 ```
+
+Use `score-audit` when a score looks surprising. It prints the final Score, base technical score, component weights, raw technical inputs, evidence contributions, capped fundamental guardrail adjustment, data-quality warnings, Confidence, Evidence Agreement, provider/source, and local scan/staging/report path consistency. If a local scan, staging row, or report candidate uses a different score for the same ticker, Atlas prints `Score path mismatch detected.`
 
 If real data is not configured yet, `/greenrock/score` shows a neutral setup card with provider status and this one-copy command block:
 
@@ -310,6 +314,7 @@ Preview a single ticker score without creating a workflow run, report, approval,
 
 ```bash
 atlas greenrock score AAPL
+atlas greenrock score-audit AAPL
 ```
 
 In the Command Center, open:
@@ -318,7 +323,7 @@ In the Command Center, open:
 http://127.0.0.1:8000/greenrock/score
 ```
 
-The calculator shows GreenRock Score, GreenRock Confidence, Evidence Agreement, Fundamental Guardrails, signal label, research priority, analyst summary, Bullish Evidence, Bearish Evidence, neutral/watch items, What to Watch Next, Finviz link, data-quality warnings, and one-year statistical price targets. The methodology is documented in [GreenRock Score Methodology](docs/GREENROCK_SCORE_METHODOLOGY.md). Real mode requires the configured market data provider and fails safely if unavailable.
+The calculator shows GreenRock Score, GreenRock Confidence, Evidence Agreement, Fundamental Guardrails, signal label, research priority, analyst summary, Why This Score, Bullish Evidence, Bearish Evidence, neutral/watch items, What to Watch Next, Finviz link, data-quality warnings, and one-year statistical price targets. The methodology is documented in [GreenRock Score Methodology](docs/GREENROCK_SCORE_METHODOLOGY.md). Real mode requires the configured market data provider and fails safely if unavailable.
 
 The GreenRock Evidence Engine structures each existing signal with a category, direction, strength, numeric contribution, and plain-English explanation. Evidence Agreement measures whether the available technical, fundamental, and data-quality signals align or conflict. What to Watch Next lists validation items such as moving-average reclaim, RSI improvement, volume continuation, recent-low support, and statistical target context. These are local research aids only and are not investment advice or a price forecast.
 

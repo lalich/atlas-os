@@ -121,6 +121,7 @@ Browser:
 - `/agents` shows cards, status, task, latest message, health, output summary, and run history.
 - `/` shows the Agent Cycle card and a confirmed `Run Agent Cycle` action.
 - `/atlas/morning-brief` shows latest agent run summary, health cards, inbox items, and Last Agent Cycle timestamp.
+- `/atlas/inbox` and inbox detail pages show provenance, status, created reason, related run/cycle context where available, target URL, and local dismiss/complete actions.
 
 ## Atlas Inbox
 
@@ -185,9 +186,9 @@ Agent output can recommend a next step or link to a local page, but it cannot cr
 
 Future phases can add more autonomy only by preserving the same gate model:
 
-- Phase 8B: richer agent health diagnostics and cycle comparison snapshots.
-- Phase 8C: operator-configurable agent schedules that still run local-only.
-- Phase 8D: richer Inbox routing, item completion, and run-to-item provenance.
+- Phase 8B: richer agent health diagnostics and cycle comparison snapshots. Complete.
+- Phase 8C: stabilized cycle intelligence, inbox show/complete commands, provenance polish, and score-audit support. Complete.
+- Phase 8D: operator-configurable agent schedules that still run local-only.
 - Phase 9: optional external integrations only after credentials, permissions, audit logging, compliance, and per-action human approval are designed.
 
 Until those controls exist, Atlas agents remain local workflow operators only.

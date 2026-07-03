@@ -22,8 +22,9 @@ from atlas_os.greenrock.models import FundamentalSnapshot, PriceBar
 from atlas_os.greenrock.pdf_export import render_markdown_report_to_pdf
 from atlas_os.greenrock.report import build_sample_report
 from atlas_os.greenrock.sample_data import load_mock_stocks
+from atlas_os.greenrock.scanner import run_population_scan
 from atlas_os.greenrock.score import calculate_score_preview, confidence_band
-from atlas_os.greenrock.staging import add_staged_candidate
+from atlas_os.greenrock.staging import add_staged_candidate, enrich_staged_candidates, load_staged_candidates
 from atlas_os.web_app import dispatch_request
 
 
@@ -179,6 +180,10 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("Analyst Summary", result.body)
         summary_section = result.body.split("Analyst Summary", maxsplit=1)[1].split("Why Confidence Is This Level", maxsplit=1)[0]
         self.assertIn("https://finviz.com/quote.ashx?t=LC01", summary_section)
+        self.assertIn("Why This Score?", result.body)
+        self.assertIn("Top Positive Score Drivers", result.body)
+        self.assertIn("Top Score Drags", result.body)
+        self.assertIn("Score adjustment summary", result.body)
         self.assertIn("Why Confidence Is This Level", result.body)
         self.assertIn("Positive Confidence Drivers", result.body)
         self.assertIn("Confidence Drags", result.body)
@@ -307,6 +312,61 @@ class CommandCenterTests(unittest.TestCase):
         self.assertLess(dilution.confidence_score, strong.confidence_score)
         self.assertLessEqual(abs(low_quick.fundamental_guardrail_adjustment), 5.0)
 
+    def test_guardrail_score_caps_are_single_application(self) -> None:
+        cap_by_label = {
+            "Strong Balance Sheet": 2.0,
+            "Acceptable": 1.0,
+            "Caution": -2.0,
+            "Red Flag": -5.0,
+            "Insufficient Data": 0.0,
+        }
+        providers = (
+            StrongFundamentalsProvider(),
+            WeakFundamentalsProvider(),
+            MissingFundamentalsProvider(),
+            LowQuickRatioProvider(),
+            DilutionProvider(),
+        )
+
+        for provider in providers:
+            preview = calculate_score_preview("LC01", provider=provider)
+            expected_score = round(
+                max(
+                    0.0,
+                    min(
+                        100.0,
+                        preview.base_technical_score
+                        + preview.fundamental_guardrail_adjustment
+                        + preview.evidence_score_adjustment,
+                    ),
+                ),
+                2,
+            )
+
+            self.assertEqual(
+                preview.fundamental_guardrail_adjustment,
+                cap_by_label[preview.fundamental_guardrails.label],
+            )
+            self.assertEqual(preview.candidate.score, expected_score)
+            self.assertLessEqual(abs(preview.fundamental_guardrail_adjustment), 5.0)
+
+    def test_market_scan_and_staging_use_canonical_score_preview(self) -> None:
+        with _isolated_env() as root:
+            provider = FullHistoryProvider()
+            scan = run_population_scan(root / "output", "all", provider=provider)
+            preview = calculate_score_preview("LC01", provider=provider)
+            row = next(item for item in scan.rows if item["symbol"] == "LC01")
+
+            self.assertEqual(float(row["greenrock_score"]), preview.candidate.score)
+            self.assertEqual(float(row["greenrock_confidence"]), preview.confidence_score)
+
+            add_staged_candidate(root / "output", "LC01", "small_mid")
+            enrich_staged_candidates(root / "output", provider=provider)
+            staged = load_staged_candidates(root / "output")[0]
+
+            self.assertEqual(float(staged["greenrock_score"]), preview.candidate.score)
+            self.assertEqual(float(staged["confidence"]), preview.confidence_score)
+
     def test_confidence_calibration_drags(self) -> None:
         complete = calculate_score_preview("LC01", provider=FullHistoryProvider())
         missing_market_cap = calculate_score_preview("LC01", provider=MissingMarketCapProvider())
@@ -369,6 +429,7 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("Provider Status: setup available", result.body)
         self.assertIn("export ATLAS_MARKET_DATA_PROVIDER=yfinance", result.body)
         self.assertIn('python3 -m pip install -e &quot;.[market-data]&quot;', result.body)
+        self.assertNotIn("mock framework review", result.body)
         self.assertNotIn("Score Preview Blocked", result.body)
 
     def test_score_page_shows_ready_badge_when_provider_configured(self) -> None:

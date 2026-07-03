@@ -3968,6 +3968,7 @@ def _score_preview_panel(preview) -> str:
         <p>{_safe(preview.analyst_summary)}</p>
         <p class="summary-action">{_finviz_button(candidate.symbol)}</p>
       </section>
+      {_score_why_this_score(preview)}
       <section class="panel inner-panel confidence-explain-card">
         <div class="section-head">
           <h2>Why Confidence Is This Level</h2>
@@ -4088,7 +4089,7 @@ def _score_provider_setup_card(provider, detail: str | None = None) -> str:
         <h2>Real Data Setup</h2>
         <span class="badge ready">Provider Status: {_safe(provider.status_label)}</span>
       </div>
-      <p>The Score Calculator is ready for mock framework review. Real ticker scoring needs the local market-data provider enabled on this machine.</p>
+      <p>The Score Calculator is real-data-only for operators. Real ticker scoring needs the local market-data provider enabled on this machine.</p>
       {detail_html}
       <div class="setup-box">
         <p>One-copy local setup:</p>
@@ -4096,6 +4097,57 @@ def _score_provider_setup_card(provider, detail: str | None = None) -> str:
       </div>
       <p class="subtle">This configures the provider name and optional package locally. Do not commit credentials. No report, approval, artifact, email, publication, trading action, client file, or external LLM/API action is created.</p>
     </section>
+    """
+
+
+def _score_why_this_score(preview) -> str:
+    positive_components = sorted(
+        (component for component in preview.component_explanations if component.component_score > 0),
+        key=lambda component: component.component_score,
+        reverse=True,
+    )[:3]
+    positive_items = "".join(
+        f"<li>{_safe(component.name)}: {component.component_score:.2f} pts. {_safe(component.explanation)}</li>"
+        for component in positive_components
+    ) or "<li>No positive score drivers are currently active.</li>"
+
+    drags: list[str] = []
+    for component in preview.component_explanations:
+        if component.component_score <= 0:
+            drags.append(f"{component.name}: no current score contribution. {component.explanation}")
+    if preview.evidence_score_adjustment < 0:
+        drags.append(f"Evidence adjustment: {preview.evidence_score_adjustment:+.2f} pts from mixed or weak agreement.")
+    if preview.fundamental_guardrail_adjustment < 0:
+        drags.append(
+            f"Fundamental guardrail: {preview.fundamental_guardrail_adjustment:+.2f} pts from {preview.fundamental_guardrails.label}."
+        )
+    for warning in preview.data_quality_warnings[:2]:
+        drags.append(f"Data quality warning: {warning}")
+    drag_items = "".join(f"<li>{_safe(item)}</li>" for item in drags[:4]) or "<li>No major score drags beyond the current component mix.</li>"
+    adjustment = (
+        f"Base technical {preview.base_technical_score:.2f} "
+        f"{preview.fundamental_guardrail_adjustment:+.2f} guardrail "
+        f"{preview.evidence_score_adjustment:+.2f} evidence "
+        f"= final {preview.candidate.score:.2f}."
+    )
+    return f"""
+      <section class="panel inner-panel score-why-card">
+        <div class="section-head">
+          <h2>Why This Score?</h2>
+          <span class="badge signal">{preview.candidate.score:.2f}</span>
+        </div>
+        <div class="confidence-explain-grid">
+          <div>
+            <h3>Top Positive Score Drivers</h3>
+            <ul class="compact-list">{positive_items}</ul>
+          </div>
+          <div>
+            <h3>Top Score Drags</h3>
+            <ul class="compact-list">{drag_items}</ul>
+          </div>
+        </div>
+        <p class="subtle">Score adjustment summary: {_safe(adjustment)} Confidence is explained separately below.</p>
+      </section>
     """
 
 

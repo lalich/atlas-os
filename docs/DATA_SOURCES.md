@@ -187,9 +187,14 @@ Configure locally:
 export ATLAS_MARKET_DATA_PROVIDER=yfinance
 python3 -m pip install -e ".[market-data]"
 atlas greenrock score AAPL
+atlas greenrock score-audit AAPL
 ```
 
 The calculator does not create workflow runs, reports, approvals, artifacts, emails, publications, or distribution actions.
+
+Use `atlas greenrock score-audit <ticker...>` to verify a score against the local data path. The audit prints provider/source, raw technical inputs, component weights, evidence contributions, capped guardrail adjustment, data-quality warnings, Confidence, Evidence Agreement, and whether the Score Calculator, latest Market Pulse scan row, staging enrichment row, and latest report candidate row agree. A mismatch is reported as `Score path mismatch detected.`
+
+The canonical score path is shared by the Score Calculator, population scanner/Market Pulse, staging enrichment, and report candidate data. Population scans now store the same adjusted GreenRock Score and Confidence that the calculator previews for the same provider data.
 
 If the operator explicitly saves a scored ticker to a GreenRock list, Atlas writes only to local CSV storage. Subscriber-style lists are stored under `.atlas/output/greenrock/watchlists/`, and bucket lists reuse `.atlas/output/greenrock/universes/`.
 

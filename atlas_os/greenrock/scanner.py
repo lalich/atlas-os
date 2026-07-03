@@ -7,18 +7,11 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from atlas_os.greenrock.criteria import evaluate_stock
 from atlas_os.greenrock.market_engine import classify_market_archetype
 from atlas_os.greenrock.market_data import MarketDataConfigurationError, MarketDataProvider, YFinanceMarketDataProvider
 from atlas_os.greenrock.population import ALL_POPULATION, GREENROCK_POPULATION_LABELS, population_tickers
 from atlas_os.greenrock.ranking import rank_candidate_rows
-from atlas_os.greenrock.score import (
-    build_evidence_items,
-    candidate_evidence_agreement,
-    confidence_band,
-    score_signal,
-    top_evidence_signal,
-)
+from atlas_os.greenrock.score import calculate_score_preview_from_stock, score_signal
 from atlas_os.greenrock.universe_manager import default_universe_manager
 from atlas_os.greenrock.universe import (
     LARGE_CAP_UNIVERSE,
@@ -112,7 +105,7 @@ def run_population_scan(
         raise MarketDataConfigurationError(f"Population {population} has no tickers.")
     market_data_provider = provider or _provider_for_scan(tickers, normalized_population)
     stocks = market_data_provider.fetch_stocks()
-    rows = [_candidate_row(evaluate_stock(stock)) for stock in stocks]
+    rows = [_candidate_row(stock, market_data_provider.source_name, market_data_provider.data_mode) for stock in stocks]
     rows.sort(key=lambda row: _row_sort_key(row), reverse=True)
     ranked_rows = rank_candidate_rows(tuple(rows), membership_by_ticker)
     fetched_count = len(stocks)
@@ -309,9 +302,9 @@ def _append_promotion_metadata(output_dir: Path, scan: ScanResult, row: dict[str
         writer.writerow(metadata_row)
 
 
-def _candidate_row(candidate) -> dict[str, str]:
-    evidence_items = build_evidence_items(candidate)
-    evidence_agreement = candidate_evidence_agreement(candidate)
+def _candidate_row(stock, data_source: str = "unknown", data_mode: str = "real") -> dict[str, str]:
+    preview = calculate_score_preview_from_stock(stock, data_mode=data_mode, data_source=data_source)
+    candidate = preview.candidate
     data_warnings = []
     if not candidate.has_price_history:
         data_warnings.append("missing price history")
@@ -321,7 +314,6 @@ def _candidate_row(candidate) -> dict[str, str]:
         data_warnings.append("missing volume data")
     if candidate.skipped_reason:
         data_warnings.append(candidate.skipped_reason.replace("_", " "))
-    confidence = _scan_confidence(candidate, evidence_agreement, data_warnings, evidence_items)
     return {
         "rank": "",
         "symbol": candidate.symbol,
@@ -331,63 +323,16 @@ def _candidate_row(candidate) -> dict[str, str]:
         "market_cap": f"{candidate.market_cap:.2f}",
         "price": f"{candidate.indicators.latest_close:.2f}",
         "greenrock_score": f"{candidate.score:.2f}",
-        "greenrock_confidence": f"{confidence:.2f}",
-        "confidence_band": confidence_band(confidence),
-        "evidence_agreement": f"{evidence_agreement:.2f}",
-        "fundamental_guardrail": _guardrail_label(candidate),
-        "research_priority": _research_priority(candidate.score, confidence),
-        "top_bullish_signal": top_evidence_signal(candidate, "bullish"),
-        "top_caution_signal": top_evidence_signal(candidate, "bearish"),
-        "data_quality_warnings": "; ".join(data_warnings) if data_warnings else "none",
+        "greenrock_confidence": f"{preview.confidence_score:.2f}",
+        "confidence_band": preview.confidence_band,
+        "evidence_agreement": f"{preview.evidence_agreement_score:.2f}",
+        "fundamental_guardrail": preview.fundamental_guardrails.label,
+        "research_priority": preview.research_priority,
+        "top_bullish_signal": preview.bullish_evidence[0] if preview.bullish_evidence else "none",
+        "top_caution_signal": preview.bearish_evidence[0] if preview.bearish_evidence else "none",
+        "data_quality_warnings": "; ".join(preview.data_quality_warnings or tuple(data_warnings)) if (preview.data_quality_warnings or data_warnings) else "none",
         "finviz": f"https://finviz.com/quote.ashx?t={candidate.symbol}",
     }
-
-
-def _scan_confidence(candidate, evidence_agreement: float, data_warnings: list[str], evidence_items) -> float:
-    score = 45 + evidence_agreement * 0.35
-    if candidate.has_price_history:
-        score += 8
-    if candidate.has_volume_data:
-        score += 5
-    if candidate.has_market_cap:
-        score += 5
-    if any(item.category == "fundamental" and item.direction == "bullish" for item in evidence_items):
-        score += 5
-    if any(item.category == "fundamental" and item.direction == "bearish" for item in evidence_items):
-        score -= 8
-    score -= min(12, len(data_warnings) * 4)
-    return round(max(0.0, min(100.0, score)), 2)
-
-
-def _research_priority(score: float, confidence: float) -> str:
-    if confidence < 35:
-        return "Ignore"
-    if score >= 85 and confidence >= 75:
-        return "Immediate Review"
-    if score >= 70 and confidence >= 65:
-        return "This Week"
-    if score >= 55 and confidence >= 50:
-        return "Interesting"
-    if score >= 45 and confidence >= 45:
-        return "Monitor"
-    return "Ignore"
-
-
-def _guardrail_label(candidate) -> str:
-    fundamentals = candidate.fundamentals
-    if fundamentals is None or fundamentals.quick_ratio is None or fundamentals.net_cash is None or fundamentals.shares_outstanding_change_percent is None:
-        return "Insufficient Data"
-    if fundamentals.quick_ratio < 0.75 or fundamentals.shares_outstanding_change_percent >= 0.20:
-        return "Red Flag"
-    if (
-        fundamentals.quick_ratio < 1.0
-        or fundamentals.shares_outstanding_change_percent >= 0.10
-        or (candidate.market_cap > 0 and fundamentals.net_cash < -candidate.market_cap * 0.25)
-    ):
-        return "Caution"
-    if fundamentals.net_cash > 0 and fundamentals.quick_ratio >= 1.5 and fundamentals.shares_outstanding_change_percent <= 0.02:
-        return "Strong Balance Sheet"
-    return "Acceptable"
 
 
 def _row_sort_key(row: dict[str, str]) -> tuple[float, float, float]:

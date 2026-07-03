@@ -133,6 +133,27 @@ class UserExperienceCliTests(unittest.TestCase):
                 self.assertIn("output_dir_writable:", doctor)
                 self.assertIn("database_initialized:", doctor)
 
+    def test_greenrock_score_audit_cli(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {
+                "ATLAS_DB_PATH": str(root / "atlas.db"),
+                "ATLAS_OUTPUT_DIR": str(root / "output"),
+            }
+
+            with patch.dict("os.environ", env, clear=False):
+                single = _run_cli(["greenrock", "score-audit", "LC01", "--data", "mock"])
+                self.assertIn("GreenRock Score Audit", single)
+                self.assertIn("final_greenrock_score:", single)
+                self.assertIn("component_scores:", single)
+                self.assertIn("raw_technical_inputs:", single)
+                self.assertIn("evidence_contributions:", single)
+                self.assertIn("score_path_consistency:", single)
+                self.assertIn("score_paths_agree: yes", single)
+
+                multi = _run_cli(["greenrock", "score-audit", "LC01", "SC01", "--data", "mock"])
+                self.assertEqual(multi.count("GreenRock Score Audit"), 2)
+
 
 def _run_cli(args: list[str]) -> str:
     buffer = io.StringIO()
