@@ -14,6 +14,7 @@ Atlas OS is a multi-division AI operating system supporting GreenRock Asset Mana
 | [SYSTEM_ARCHITECTURE.md](./SYSTEM_ARCHITECTURE.md) | System architecture — layers, workflow model, approval gate, deployment, security |
 | [REPOSITORY_STRUCTURE.md](./REPOSITORY_STRUCTURE.md) | Repository layout — directory tree, module ownership, import rules, naming conventions |
 | [AGENT_ARCHITECTURE.md](./AGENT_ARCHITECTURE.md) | Agent design — lifecycle, GreenRock MVP roster, prompt standards, coordination patterns |
+| [ATLAS_AGENTS.md](./ATLAS_AGENTS.md) | Phase 8A local agent orchestration — responsibilities, safe mode, Atlas Inbox, run records |
 | [IMPLEMENTATION_ROADMAP.md](./IMPLEMENTATION_ROADMAP.md) | Phased build plan — Phase 0 through Phase 4 with milestones and decision gates |
 | [FUTURE_EXPANSION_ROADMAP.md](./FUTURE_EXPANSION_ROADMAP.md) | Long-term vision — division expansion, platform features, 24-month targets |
 

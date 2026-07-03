@@ -15,7 +15,9 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 
 from atlas_os import __version__
+from atlas_os.agents.orchestrator import agent_cycle_summary, get_agent_run, list_agent_runs, list_agent_states, run_agent_cycle
 from atlas_os.config import get_settings
+from atlas_os.diagnostics import provider_diagnostics
 from atlas_os.core.approvals import (
     ApprovalStatus,
     approve_approval,
@@ -79,6 +81,7 @@ from atlas_os.greenrock.universe import (
 )
 from atlas_os.greenrock.universe_manager import default_universe_manager, provider_label
 from atlas_os.greenrock.workflow import run_greenrock_screening_workflow
+from atlas_os.inbox import complete_inbox_item, dismiss_inbox_item, get_inbox_item, list_inbox_items
 from atlas_os.morning_brief import (
     latest_morning_brief_snapshot,
     list_morning_brief_snapshots,
@@ -178,6 +181,24 @@ def create_app():
     @app.get("/atlas/morning-brief/history/{snapshot_id}", response_class=HTMLResponse)
     def morning_brief_snapshot_detail(snapshot_id: str) -> str:
         return render_morning_brief_snapshot(snapshot_id)
+
+    @app.get("/atlas/inbox", response_class=HTMLResponse)
+    def atlas_inbox() -> str:
+        return render_atlas_inbox()
+
+    @app.get("/atlas/inbox/{item_id}", response_class=HTMLResponse)
+    def atlas_inbox_detail(item_id: str) -> str:
+        return render_atlas_inbox_detail(item_id)
+
+    @app.post("/atlas/inbox/{item_id}/dismiss")
+    def atlas_inbox_dismiss(item_id: str):
+        dismiss_atlas_inbox_item(item_id)
+        return RedirectResponse(_with_status("/atlas/inbox", "Inbox item dismissed."), status_code=303)
+
+    @app.post("/atlas/inbox/{item_id}/complete")
+    def atlas_inbox_complete(item_id: str):
+        complete_atlas_inbox_item(item_id)
+        return RedirectResponse(_with_status("/atlas/inbox", "Inbox item completed."), status_code=303)
 
     @app.get("/greenrock", response_class=HTMLResponse)
     def greenrock() -> str:
@@ -358,6 +379,11 @@ def create_app():
     def agents() -> str:
         return render_agents()
 
+    @app.post("/agents/run")
+    def agents_run():
+        message = run_agent_cycle_from_browser()
+        return RedirectResponse(_with_status("/agents", message), status_code=303)
+
     @app.get("/runs/{run_id}", response_class=HTMLResponse)
     def run_detail(run_id: str) -> str:
         return render_run_detail(run_id)
@@ -386,13 +412,18 @@ def create_app():
 
 
 def serve(host: str = "127.0.0.1", port: int = 8000) -> None:
-    provider = _real_data_provider_status()
+    provider = provider_diagnostics()
     print(f"Atlas Command Center running at http://{host}:{port}")
     print(
         "Development mode: local only. "
-        f"Real data provider: {provider['configured_label']}. "
-        f"Current provider: {provider['current_provider']}."
+        f"Real data provider: {provider.status_label}. "
+        f"Current provider: {provider.active_provider_name}."
     )
+    if provider.score_calculator_ready:
+        print("Score Calculator provider: ready.")
+    else:
+        print("Score Calculator setup hint:")
+        print(provider.recommended_fix_command)
     print("No publish, email, trading, or client-file actions are enabled.")
     app = create_app()
     if app is not None:
@@ -434,6 +465,14 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
             return WebResponse(200, render_morning_brief_snapshot(snapshot_id, _first(query, "status")))
         except KeyError:
             return _error_response(404, "Snapshot Not Found", f"No Morning Brief snapshot exists for {snapshot_id}.")
+    if method == "GET" and route == "/atlas/inbox":
+        return WebResponse(200, render_atlas_inbox(_first(query, "status")))
+    if method == "GET" and route.startswith("/atlas/inbox/"):
+        item_id = unquote(route.removeprefix("/atlas/inbox/").strip("/"))
+        try:
+            return WebResponse(200, render_atlas_inbox_detail(item_id, _first(query, "status")))
+        except KeyError:
+            return _error_response(404, "Inbox Item Not Found", f"No inbox item exists for {item_id}.")
     if method == "GET" and route == "/greenrock":
         return WebResponse(200, render_greenrock(_first(query, "status")))
     if method == "GET" and route == "/greenrock/picks":
@@ -470,6 +509,12 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
         return WebResponse(200, render_tasks(_first(query, "status")))
     if method == "GET" and route == "/agents":
         return WebResponse(200, render_agents(_first(query, "status")))
+    if method == "GET" and route.startswith("/agents/runs/"):
+        run_id = unquote(route.removeprefix("/agents/runs/"))
+        try:
+            return WebResponse(200, render_agent_run_detail(run_id, _first(query, "status")))
+        except KeyError:
+            return _error_response(404, "Agent Run Not Found", f"No agent run exists for {run_id}.")
     if method == "GET" and route == "/reports":
         return WebResponse(200, render_reports(_first(query, "status")))
     if method == "GET" and route == "/open-local":
@@ -518,6 +563,22 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
         return WebResponse(303, "", location=_with_status("/greenrock", message))
     if method == "POST" and route == "/atlas/morning-brief/snapshot":
         return WebResponse(303, "", location=_with_status("/atlas/morning-brief", save_morning_brief_snapshot_from_browser()))
+    if method == "POST" and route == "/agents/run":
+        return WebResponse(303, "", location=_with_status("/agents", run_agent_cycle_from_browser()))
+    if method == "POST" and route.startswith("/atlas/inbox/") and route.endswith("/dismiss"):
+        item_id = unquote(route.removeprefix("/atlas/inbox/").removesuffix("/dismiss").strip("/"))
+        try:
+            dismiss_atlas_inbox_item(item_id)
+        except KeyError:
+            return _error_response(404, "Inbox Item Not Found", f"No inbox item exists for {item_id}.")
+        return WebResponse(303, "", location=_with_status("/atlas/inbox", "Inbox item dismissed."))
+    if method == "POST" and route.startswith("/atlas/inbox/") and route.endswith("/complete"):
+        item_id = unquote(route.removeprefix("/atlas/inbox/").removesuffix("/complete").strip("/"))
+        try:
+            complete_atlas_inbox_item(item_id)
+        except KeyError:
+            return _error_response(404, "Inbox Item Not Found", f"No inbox item exists for {item_id}.")
+        return WebResponse(303, "", location=_with_status("/atlas/inbox", "Inbox item completed."))
     if method == "POST" and route == "/greenrock/scanner/run":
         message = run_greenrock_scan_from_browser(form.get("population", "qqq"))
         return WebResponse(303, "", location=_with_status("/greenrock/scanner", message))
@@ -652,6 +713,8 @@ def render_dashboard(status_message: str | None = None) -> str:
     inbox_items = _build_inbox_items(context, pending_approvals, reports_ready, failed_runs)
     latest_source = _latest_report_data_source(context["latest_report"])
     brief = _morning_brief_data(context)
+    cycle = agent_cycle_summary(get_settings().output_dir)
+    agent_inbox_items = list_inbox_items(get_settings().output_dir)
 
     content = f"""
     {_status_banner(status_message)}
@@ -675,12 +738,32 @@ def render_dashboard(status_message: str | None = None) -> str:
       {_attention_card("green", str(len(completed_runs)), "Completed Workflows", "Finished or approval-gated runs")}
       {_attention_card("neutral", _safe(latest_source or "none"), "Latest Data Source", "Shown on the newest GreenRock draft")}
     </section>
+    <section class="panel command-actions">
+      <div class="section-head">
+        <h2>Agent Cycle</h2>
+        <span class="subtle">Safe local orchestration</span>
+      </div>
+      <section class="board-meta">
+        {_attention_card("neutral", _safe(cycle["last_run"]), "Last Run", "Last Agent Cycle timestamp")}
+        {_attention_card("green", str(cycle["completed"]), "Completed Agents", "Finished in latest cycle")}
+        {_attention_card("red" if cycle["failed"] else "neutral", str(cycle["failed"]), "Failed Agents", "Needs inspection")}
+        {_attention_card("yellow" if cycle["blocked"] else "neutral", str(cycle["blocked"]), "Blocked Agents", "Human gate or missing inputs")}
+        {_attention_card("neutral", str(cycle["inbox_items_generated"]), "Inbox Items Generated", "Latest cycle")}
+      </section>
+      <div class="action-row">
+        <form method="post" action="/agents/run" onsubmit="return confirm('Run the safe local Agent Cycle? This creates local records and inbox items only.');">
+          <button type="submit">Run Agent Cycle</button>
+        </form>
+        <a class="button secondary" href="/agents">Open Agent Monitor</a>
+        <a class="button secondary" href="/atlas/inbox">Open Atlas Inbox</a>
+      </div>
+    </section>
     <section class="panel">
       <div class="section-head">
         <h2>Atlas Inbox</h2>
         <span class="subtle">Checklist-style operator queue</span>
       </div>
-      <div class="inbox-list">{''.join(_inbox_card(item) for item in inbox_items)}</div>
+      <div class="inbox-list">{''.join(_inbox_card(_inbox_item_to_card(item)) for item in agent_inbox_items[:8]) or ''.join(_inbox_card(item) for item in inbox_items)}</div>
     </section>
     <section class="nav-grid">
       {_nav_card("Project Directory", "/projects", "GreenRock, Bat Signal, Insurance, Atlas Core")}
@@ -736,6 +819,16 @@ def render_morning_brief(status_message: str | None = None) -> str:
       {_attention_card("neutral", str(brief["universe_size"]), "Universe Size", "Master Universe")}
       {_attention_card("green", str(brief["scored_count"]), "Scored Count", f"skipped/failures {brief['skipped_count']}/{brief['provider_failures']}")}
       {_attention_card("neutral", str(brief["high_confidence_count"]), "High Confidence", "Confidence >= 75")}
+      {_attention_card("neutral", _safe(brief["last_agent_cycle"]), "Last Agent Cycle", "Safe local agents")}
+    </section>
+    <section class="panel">
+      <div class="section-head"><h2>Agent Health</h2><span class="subtle">Latest local cycle</span></div>
+      <div class="agent-grid">{''.join(_agent_health_card(agent) for agent in brief["agent_health_cards"])}</div>
+    </section>
+    {_agent_cycle_diff_block(brief["agent_run_summary"].get("diff", {}))}
+    <section class="panel">
+      <div class="section-head"><h2>Agent Inbox Items</h2><span class="subtle">Open local items</span></div>
+      <div class="inbox-list">{''.join(_inbox_card(_inbox_item_to_card(item)) for item in brief["agent_inbox_items"][:8]) or "<p class='empty'>No agent inbox items yet.</p>"}</div>
     </section>
     <section class="panel">
       <div class="section-head"><h2>Research Priority Count</h2><span class="subtle">Latest scan</span></div>
@@ -1737,6 +1830,7 @@ def render_greenrock_score(
     save_status: str | None = None,
 ) -> str:
     settings = get_settings()
+    provider = provider_diagnostics()
     result_html = ""
     preview = None
     cleaned_ticker = ticker.strip().upper()
@@ -1749,14 +1843,7 @@ def render_greenrock_score(
             )
             result_html = _score_preview_panel(preview) + _score_memory_panel(settings.output_dir, cleaned_ticker)
         except (MarketDataConfigurationError, ValueError) as error:
-            result_html = f"""
-            <section class="panel warning-panel">
-              <h2>Score Preview Blocked</h2>
-              <p>{_safe(error)}</p>
-              {_score_setup_instructions()}
-              <p class="subtle">No report, approval, artifact, email, publication, or external action was created.</p>
-            </section>
-            """
+            result_html = _score_provider_setup_card(provider, str(error))
             result_html += _score_memory_panel(settings.output_dir, cleaned_ticker)
 
     content = f"""
@@ -1767,6 +1854,7 @@ def render_greenrock_score(
         <p class="eyebrow">GreenRock Analysts</p>
         <h1>GreenRock Score Calculator</h1>
         <p>Score any ticker against the GreenRock technical dislocation framework.</p>
+        <span class="badge {'approved' if provider.score_calculator_ready else 'ready'}">Provider Status: {_safe(provider.status_label)}</span>
       </div>
       <form method="post" action="/greenrock/score" class="score-form">
         <input name="ticker" value="{_safe(cleaned_ticker)}" placeholder="Ticker" required>
@@ -1775,6 +1863,7 @@ def render_greenrock_score(
         </button>
       </form>
     </section>
+    {_score_provider_setup_card(provider) if not provider.score_calculator_ready and not cleaned_ticker else ""}
     {result_html}
     <section class="panel">
       <div class="section-head">
@@ -1863,28 +1952,135 @@ def render_tasks(status_message: str | None = None) -> str:
 
 
 def render_agents(status_message: str | None = None) -> str:
-    cards = "".join(
-        f"""
-        <article class="agent-card {status}">
-          <div class="agent-ring"></div>
-          <h2>{_safe(name)}</h2>
-          <p>{_safe(division)}</p>
-          <span class="badge {status}">{_safe(status)}</span>
-          <div class="loadbar"><span></span></div>
-        </article>
-        """
-        for name, division, status in PLANNED_AGENTS
-    )
+    settings = get_settings()
+    agents = list_agent_states(settings.output_dir)
+    runs = list_agent_runs(settings.output_dir)[:12]
+    cycle = agent_cycle_summary(settings.output_dir)
+    cards = "".join(_agent_health_card(agent) for agent in agents)
+    history = "".join(_agent_run_row(run) for run in runs) or "<tr><td colspan='5' class='empty'>No agent runs yet.</td></tr>"
+    diff = _agent_cycle_diff_block(cycle.get("diff", {}))
     content = f"""
     {_status_banner(status_message)}
     <section class="hero compact agent-hero">
       <p class="eyebrow">Agent Monitor</p>
-      <h1>Planned Agent HUD</h1>
-      <p>Inactive and planned agents only. Autonomous execution is not enabled.</p>
+      <h1>Atlas Agent Monitor</h1>
+      <p>Local workflow operators only. No email, publishing, trading, client files, credentials, or external LLM/API calls.</p>
+    </section>
+    <section class="panel command-actions">
+      <div class="section-head">
+        <h2>Run Agent Cycle</h2>
+        <span class="subtle">Market -> Evidence -> Memory -> Report -> QA -> Inbox</span>
+      </div>
+      <section class="board-meta">
+        {_attention_card("neutral", _safe(cycle["last_run"]), "Last Run", "Last Agent Cycle")}
+        {_attention_card("green", str(cycle["completed"]), "Completed", "Latest cycle")}
+        {_attention_card("red" if cycle["failed"] else "neutral", str(cycle["failed"]), "Failed", "Latest cycle")}
+        {_attention_card("yellow" if cycle["blocked"] else "neutral", str(cycle["blocked"]), "Blocked", "Latest cycle")}
+        {_attention_card("neutral", str(cycle.get("inbox_items_generated", 0)), "Inbox Items", "Created or refreshed")}
+      </section>
+      <form method="post" action="/agents/run" onsubmit="return confirm('Run the safe local Agent Cycle? This creates local records and inbox items only.');">
+        <button type="submit">Run Agent Cycle</button>
+      </form>
     </section>
     <section class="agent-grid">{cards}</section>
+    {diff}
+    <section class="panel">
+      <div class="section-head"><h2>Latest Run History</h2><span class="subtle">Local JSON records</span></div>
+      <table>
+        <thead><tr><th>Run</th><th>Agent</th><th>Status</th><th>Completed</th><th>Summary</th></tr></thead>
+        <tbody>{history}</tbody>
+      </table>
+    </section>
     """
     return _page("Atlas Agent Monitor", content, active="/agents")
+
+
+def render_agent_run_detail(run_id: str, status_message: str | None = None) -> str:
+    run = get_agent_run(get_settings().output_dir, run_id)
+    content = f"""
+    {_status_banner(status_message)}
+    <section class="hero compact">
+      <p class="eyebrow">Agent Run</p>
+      <h1>{_safe(run.agent_id)}</h1>
+      <p>{_safe(run.run_id)}</p>
+    </section>
+    <section class="panel">
+      <h2>Run Summary</h2>
+      <section class="board-meta">
+        {_attention_card("neutral", _safe(run.status), "Status", "Local run record")}
+        {_attention_card("neutral", _safe(run.started_at), "Started", "UTC")}
+        {_attention_card("neutral", _safe(run.completed_at or "running"), "Completed", "UTC")}
+      </section>
+      <h2>Outputs</h2>
+      <pre>{_safe(json.dumps(run.outputs, indent=2, sort_keys=True))}</pre>
+      <h2>Warnings</h2>
+      <pre>{_safe(json.dumps(run.warnings, indent=2))}</pre>
+      <h2>Errors</h2>
+      <pre>{_safe(json.dumps(run.errors, indent=2))}</pre>
+    </section>
+    """
+    return _page("Agent Run", content, active="/agents")
+
+
+def render_atlas_inbox(status_message: str | None = None) -> str:
+    items = list_inbox_items(get_settings().output_dir)
+    rows = "".join(_atlas_inbox_row(item) for item in items) or "<tr><td colspan='7' class='empty'>No open inbox items.</td></tr>"
+    cycle = agent_cycle_summary(get_settings().output_dir)
+    content = f"""
+    {_status_banner(status_message)}
+    <section class="hero compact">
+      <p class="eyebrow">Atlas Inbox</p>
+      <h1>Local Operator Queue</h1>
+      <p>Agent-created items only. Dismissal is local and reversible from the JSON record.</p>
+    </section>
+    <section class="panel">
+      <div class="section-head"><h2>Latest Cycle Summary</h2><span class="subtle">{_safe(cycle.get("cycle_id", "none"))}</span></div>
+      <section class="board-meta">
+        {_attention_card("green", str(cycle.get("completed", 0)), "Completed Agents", "Latest cycle")}
+        {_attention_card("red" if cycle.get("failed", 0) else "neutral", str(cycle.get("failed", 0)), "Failed Agents", "Latest cycle")}
+        {_attention_card("yellow" if cycle.get("blocked", 0) else "neutral", str(cycle.get("blocked", 0)), "Blocked Agents", "Latest cycle")}
+        {_attention_card("neutral", str(cycle.get("inbox_items_generated", 0)), "New Inbox Items", "Latest cycle diff")}
+      </section>
+    </section>
+    <section class="panel">
+      <table>
+        <thead><tr><th>Severity</th><th>Title</th><th>Detail</th><th>Why</th><th>Source</th><th>Target</th><th>Action</th></tr></thead>
+        <tbody>{rows}</tbody>
+      </table>
+    </section>
+    """
+    return _page("Atlas Inbox", content, active="/atlas/inbox")
+
+
+def render_atlas_inbox_detail(item_id: str, status_message: str | None = None) -> str:
+    item = get_inbox_item(get_settings().output_dir, item_id)
+    target_url = item.target_url or "/atlas/inbox"
+    content = f"""
+    {_status_banner(status_message)}
+    <section class="hero compact">
+      <p class="eyebrow">Atlas Inbox Item</p>
+      <h1>{_safe(item.title)}</h1>
+      <p>{_safe(item.detail)}</p>
+    </section>
+    <section class="panel">
+      <div class="section-head"><h2>Why This Item Exists</h2><span class="badge">{_safe(item.severity)}</span></div>
+      <p>{_safe(item.created_reason or "Created by the local Inbox Agent from the latest cycle findings.")}</p>
+      <dl class="detail-list">
+        <div><dt>Status</dt><dd>{_safe(item.status)}</dd></div>
+        <div><dt>Source Agent</dt><dd>{_safe(item.source_agent)}</dd></div>
+        <div><dt>Agent Run</dt><dd>{_agent_run_link(item.related_agent_run_id)}</dd></div>
+        <div><dt>Scan</dt><dd>{_safe(item.related_scan_id or "none")}</dd></div>
+        <div><dt>Report Run</dt><dd>{_report_run_link(item.related_report_run_id)}</dd></div>
+        <div><dt>Approval</dt><dd>{_approval_link(item.related_approval_id)}</dd></div>
+        <div><dt>Target</dt><dd><a href="{_safe(target_url)}">{_safe(target_url)}</a></dd></div>
+      </dl>
+      <div class="action-row">
+        <form method="post" action="/atlas/inbox/{quote(item.item_id)}/dismiss" onsubmit="return confirm('Dismiss this local inbox item?');"><button type="submit">Dismiss</button></form>
+        <form method="post" action="/atlas/inbox/{quote(item.item_id)}/complete" onsubmit="return confirm('Mark this local inbox item complete?');"><button type="submit">Complete</button></form>
+      </div>
+    </section>
+    """
+    return _page("Atlas Inbox Item", content, active="/atlas/inbox")
 
 
 def render_reports(status_message: str | None = None) -> str:
@@ -2481,6 +2677,9 @@ def _morning_brief_data(context) -> dict:
     pending_approvals = [approval for approval in context["approvals"] if approval.status == ApprovalStatus.PENDING]
     pdf_ready = _approved_reports_missing_pdf(context)
     pdf_exported = [artifact for artifact in context["artifacts"] if artifact.artifact_type == "report_final_pdf"]
+    cycle = agent_cycle_summary(settings.output_dir)
+    agents = list_agent_states(settings.output_dir)
+    agent_inbox_items = list_inbox_items(settings.output_dir)
     priority_counts: dict[str, int] = {}
     high_confidence = 0
     if scan:
@@ -2522,6 +2721,10 @@ def _morning_brief_data(context) -> dict:
         "pdf_exported": len(pdf_exported),
         "actions": tuple(actions),
         "action_items": action_items,
+        "last_agent_cycle": cycle["last_run"],
+        "agent_run_summary": cycle,
+        "agent_health_cards": agents,
+        "agent_inbox_items": agent_inbox_items,
     }
 
 
@@ -2679,6 +2882,25 @@ def save_morning_brief_snapshot_from_browser() -> str:
         f"Morning Brief snapshot saved: {saved['snapshot_id']}. "
         "No email, publishing, trading, client-file, or external action was created."
     )
+
+
+def run_agent_cycle_from_browser() -> str:
+    settings = get_settings()
+    runs = run_agent_cycle(settings.output_dir, settings.db_path)
+    failed = sum(1 for run in runs if run.status == "failed")
+    blocked = sum(1 for run in runs if run.status == "blocked")
+    return (
+        f"Agent Cycle complete: {len(runs)} local agent run(s), {failed} failed, {blocked} blocked. "
+        "No email, publishing, trading, broker/API order, client-file, credential, or external LLM/API action was created."
+    )
+
+
+def dismiss_atlas_inbox_item(item_id: str) -> None:
+    dismiss_inbox_item(get_settings().output_dir, item_id)
+
+
+def complete_atlas_inbox_item(item_id: str) -> None:
+    complete_inbox_item(get_settings().output_dir, item_id)
 
 
 def _morning_brief_snapshot_row(snapshot: dict) -> str:
@@ -3858,13 +4080,22 @@ def _score_preview_panel(preview) -> str:
     """
 
 
-def _score_setup_instructions() -> str:
-    return """
-    <div class="setup-box">
-      <p>Configure the real score calculator locally:</p>
-      <pre>export ATLAS_MARKET_DATA_PROVIDER=yfinance
-python3 -m pip install -e ".[market-data]"</pre>
-    </div>
+def _score_provider_setup_card(provider, detail: str | None = None) -> str:
+    detail_html = f"<p class='subtle'>{_safe(detail)}</p>" if detail else ""
+    return f"""
+    <section class="panel setup-card">
+      <div class="section-head">
+        <h2>Real Data Setup</h2>
+        <span class="badge ready">Provider Status: {_safe(provider.status_label)}</span>
+      </div>
+      <p>The Score Calculator is ready for mock framework review. Real ticker scoring needs the local market-data provider enabled on this machine.</p>
+      {detail_html}
+      <div class="setup-box">
+        <p>One-copy local setup:</p>
+        <pre>{_safe(provider.recommended_fix_command)}</pre>
+      </div>
+      <p class="subtle">This configures the provider name and optional package locally. Do not commit credentials. No report, approval, artifact, email, publication, trading action, client file, or external LLM/API action is created.</p>
+    </section>
     """
 
 
@@ -4327,6 +4558,100 @@ def _inbox_card(item: dict[str, str]) -> str:
     """
 
 
+def _inbox_item_to_card(item) -> dict[str, str]:
+    status = "attention" if item.severity in {"warning", "critical", "action"} else "neutral"
+    return {
+        "title": item.title,
+        "detail": f"{item.detail} Why: {item.created_reason}" if item.created_reason else item.detail,
+        "href": item.target_url or "/atlas/inbox",
+        "status": status,
+        "label": item.severity,
+    }
+
+
+def _agent_health_card(agent) -> str:
+    status = agent.status or "idle"
+    return f"""
+    <article class="agent-card {status}">
+      <div class="agent-ring"></div>
+      <h2>{_safe(agent.name)}</h2>
+      <p>{_safe(agent.division)}</p>
+      <p>{_safe(agent.responsibility)}</p>
+      <span class="badge {status}">{_safe(status)} / {_safe(agent.health)}</span>
+      <p><strong>Current task:</strong> {_safe(agent.current_task or "none")}</p>
+      <p>{_safe(agent.last_message)}</p>
+      <div class="loadbar"><span></span></div>
+    </article>
+    """
+
+
+def _agent_run_row(run) -> str:
+    return f"""
+    <tr>
+      <td><a href="/agents/runs/{quote(run.run_id)}">{_safe(run.run_id)}</a></td>
+      <td>{_safe(run.agent_id)}</td>
+      <td>{_safe(run.status)}</td>
+      <td>{_safe(run.completed_at or "")}</td>
+      <td>{_safe(run.outputs.get("summary", ""))}</td>
+    </tr>
+    """
+
+
+def _atlas_inbox_row(item) -> str:
+    return f"""
+    <tr>
+      <td>{_safe(item.severity)}</td>
+      <td><a href="/atlas/inbox/{quote(item.item_id)}">{_safe(item.title)}</a></td>
+      <td>{_safe(item.detail)}</td>
+      <td>{_safe(item.created_reason or "Created by the local Inbox Agent.")}</td>
+      <td>{_safe(item.source_agent)}</td>
+      <td><a href="{_safe(item.target_url)}">Open</a></td>
+      <td>
+        <form method="post" action="/atlas/inbox/{quote(item.item_id)}/dismiss" onsubmit="return confirm('Dismiss this local inbox item?');">
+          <button type="submit">Dismiss</button>
+        </form>
+        <form method="post" action="/atlas/inbox/{quote(item.item_id)}/complete" onsubmit="return confirm('Mark this local inbox item complete?');">
+          <button type="submit">Complete</button>
+        </form>
+      </td>
+    </tr>
+    """
+
+
+def _agent_cycle_diff_block(diff: dict) -> str:
+    if not diff:
+        return "<section class='panel'><h2>Cycle Diff</h2><p class='empty'>No cycle diff available yet.</p></section>"
+    new_items = diff.get("new_inbox_items", []) or []
+    resolved = diff.get("resolved_or_dismissed_items", []) or []
+    return f"""
+    <section class="panel">
+      <div class="section-head"><h2>Cycle Diff</h2><span class="subtle">What changed since the prior cycle</span></div>
+      <section class="board-meta">
+        {_attention_card("neutral", str(len(new_items)), "New Inbox Items", "Created this cycle")}
+        {_attention_card("green", str(len(resolved)), "Resolved/Dismissed", "Closed since cycle start")}
+        {_attention_card("red" if diff.get("new_provider_failures", 0) else "neutral", str(diff.get("new_provider_failures", 0)), "New Provider Failures", "Compared with prior cycle")}
+        {_attention_card("yellow" if diff.get("changed_approval_counts", 0) else "neutral", str(diff.get("changed_approval_counts", 0)), "Approval Count Change", "Pending approvals")}
+      </section>
+      <h3>Scan / Memory Changes</h3>
+      <ul class="compact-list">{''.join(f"<li>{_safe(item)}</li>" for item in diff.get("new_scan_memory_changes", []) or ["No scan or memory change detected."])}</ul>
+      <h3>Report Readiness Changes</h3>
+      <ul class="compact-list">{''.join(f"<li>{_safe(item)}</li>" for item in diff.get("new_report_readiness_changes", []) or ["No report readiness change detected."])}</ul>
+    </section>
+    """
+
+
+def _agent_run_link(run_id: str | None) -> str:
+    return f'<a href="/agents/runs/{quote(run_id)}">{_safe(run_id)}</a>' if run_id else "none"
+
+
+def _report_run_link(run_id: str | None) -> str:
+    return f'<a href="/greenrock/reports/{quote(run_id)}/review">{_safe(run_id)}</a>' if run_id else "none"
+
+
+def _approval_link(approval_id) -> str:
+    return f'<a href="/approvals/{approval_id}">{_safe(approval_id)}</a>' if approval_id else "none"
+
+
 def _nav_card(title: str, href: str, detail: str) -> str:
     return f"<a class='nav-card' href='{href}'><h2>{_safe(title)}</h2><p>{_safe(detail)}</p></a>"
 
@@ -4544,6 +4869,7 @@ def _page(title: str, content: str, active: str = "/") -> str:
     provider = _real_data_provider_status()
     nav = (
         ("Inbox", "/"),
+        ("Atlas Inbox", "/atlas/inbox"),
         ("Projects", "/projects"),
         ("GreenRock", "/greenrock"),
         ("Discovery", "/greenrock/discovery"),
@@ -4889,24 +5215,11 @@ def _page(title: str, content: str, active: str = "/") -> str:
 
 
 def _real_data_provider_status() -> dict[str, str]:
-    provider_name = os.getenv("ATLAS_MARKET_DATA_PROVIDER", "").strip().lower()
-    if provider_name == "yfinance":
-        available = importlib.util.find_spec("yfinance") is not None
-        return {
-            "configured": "true" if available else "false",
-            "configured_label": "configured" if available else "configured but package missing",
-            "current_provider": "yfinance",
-        }
-    if provider_name:
-        return {
-            "configured": "false",
-            "configured_label": f"unsupported ({provider_name})",
-            "current_provider": provider_name,
-        }
+    diagnostics = provider_diagnostics()
     return {
-        "configured": "false",
-        "configured_label": "not configured",
-        "current_provider": "none",
+        "configured": "true" if diagnostics.score_calculator_ready else "false",
+        "configured_label": diagnostics.status_label,
+        "current_provider": diagnostics.active_provider_name,
     }
 
 

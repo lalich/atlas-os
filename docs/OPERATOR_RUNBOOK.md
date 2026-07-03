@@ -83,6 +83,62 @@ atlas greenrock review
 
 Use `latest-candidates` for a quick large-cap and small/mid-cap summary. Use `picks-board` for the latest 23-slot Picks Board summary and browser URL. Use `review` for latest run status, report path, approval status, and top candidate names.
 
+## Run Local Agent Cycle
+
+Atlas agents are local workflow operators. They inspect local scan, memory, staging, approval, PDF, and inbox state, then write local run records and Atlas Inbox items.
+
+```bash
+atlas agents list
+atlas agents run
+atlas agents status
+atlas agents cycles
+atlas agents cycle <cycle_id>
+atlas inbox list
+atlas inbox show <item_id>
+atlas inbox dismiss <item_id>
+atlas inbox complete <item_id>
+```
+
+The cycle order is Market, Evidence, Memory, Report, QA, and Inbox. Report Agent may recommend `Report draft can be generated`, but it does not generate the report. Use the normal staging/report commands when you decide to create a draft.
+
+Local records:
+
+- `.atlas/output/agents/runs/`
+- `.atlas/output/agents/cycles/`
+- `.atlas/output/agents/agent_state.json`
+- `.atlas/output/atlas/inbox/items.json`
+
+Each cycle summary includes cycle ID, start/completion timestamps, completed/failed/blocked counts, inbox items created, warnings, top operator actions, and a diff versus the prior cycle. The diff calls out new inbox items, resolved or dismissed items, new provider failures, changed pending approval counts, scan/memory changes, and report readiness changes.
+
+Inbox items now explain why they exist. Use `atlas inbox show <item_id>` or open the item from `/atlas/inbox` to see source agent, related agent run, related scan, related report run, related approval, created reason, and target URL.
+
+Browser:
+
+```text
+http://127.0.0.1:8000/agents
+http://127.0.0.1:8000/atlas/inbox
+http://127.0.0.1:8000/atlas/morning-brief
+```
+
+The browser **Run Agent Cycle** action requires confirmation and creates local records only. Agents do not email, publish, trade, place broker/API orders, touch client files, use credentials, call external LLM/API services, approve reports, or export PDFs.
+
+## Check Local Setup
+
+Use Doctor when Score Calculator or scanner setup is unclear:
+
+```bash
+atlas doctor
+```
+
+Doctor checks virtualenv, `atlas` command path, `ATLAS_MARKET_DATA_PROVIDER`, yfinance availability, static logos, output directory writability, database initialization, latest scan availability, and Atlas Memory. If the real provider is missing, use:
+
+```bash
+export ATLAS_MARKET_DATA_PROVIDER=yfinance
+python3 -m pip install -e ".[market-data]"
+```
+
+You may also set `ATLAS_MARKET_DATA_PROVIDER=yfinance` in local `.env`. Provider name is not a secret; credentials must not be committed.
+
 ## Open GreenRock Picks Board
 
 ```bash
@@ -147,6 +203,8 @@ Browser:
 ```text
 http://127.0.0.1:8000/greenrock/discovery
 http://127.0.0.1:8000/atlas/morning-brief
+http://127.0.0.1:8000/atlas/inbox
+http://127.0.0.1:8000/agents
 http://127.0.0.1:8000/greenrock/universe
 http://127.0.0.1:8000/greenrock/market-pulse
 http://127.0.0.1:8000/greenrock/scanner

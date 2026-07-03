@@ -17,6 +17,7 @@ from atlas_os.greenrock.market_data import (
 )
 from atlas_os.greenrock.models import FundamentalSnapshot, StockCandidate
 from atlas_os.greenrock.scoring import greenrock_score_breakdown, signal_label
+from atlas_os.config import load_env_file
 
 
 @dataclass(frozen=True)
@@ -252,6 +253,7 @@ def _provider_for_score(symbol: str, data_mode: str, output_dir: Path | None) ->
         return MockMarketDataProvider()
     if normalized_mode != "real":
         raise MarketDataConfigurationError("Data mode must be 'mock' or 'real'.")
+    load_env_file()
     provider_name = os.getenv("ATLAS_MARKET_DATA_PROVIDER", "").strip().lower()
     if provider_name != "yfinance":
         raise MarketDataConfigurationError(

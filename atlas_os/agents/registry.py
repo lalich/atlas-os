@@ -1,4 +1,4 @@
-"""Local agent registry scaffold."""
+"""Local Atlas OS agent registry."""
 
 from __future__ import annotations
 
@@ -7,16 +7,40 @@ from atlas_os.agents.base import Agent
 
 DEFAULT_AGENTS: tuple[Agent, ...] = (
     Agent(
-        key="greenrock_screener",
-        name="GreenRock Screener",
+        agent_id="market",
+        name="Market Agent",
         division="greenrock",
-        description="Placeholder agent for future screening workflow.",
+        responsibility="Check provider status, reference the latest Market Pulse scan, and summarize universe coverage.",
     ),
     Agent(
-        key="greenrock_reporter",
-        name="GreenRock Reporter",
+        agent_id="evidence",
+        name="Evidence Agent",
         division="greenrock",
-        description="Placeholder agent for future monthly report drafting.",
+        responsibility="Summarize latest Market Pulse movement, including score, confidence, and evidence improvers.",
+    ),
+    Agent(
+        agent_id="memory",
+        name="Memory Agent",
+        division="greenrock",
+        responsibility="Verify Atlas Memory state and identify changes since the prior scan.",
+    ),
+    Agent(
+        agent_id="report",
+        name="Report Agent",
+        division="greenrock",
+        responsibility="Check Analyst Slate and staging readiness, then recommend whether a draft can be generated.",
+    ),
+    Agent(
+        agent_id="qa",
+        name="QA Agent",
+        division="atlas-core",
+        responsibility="Flag provider failures, analytics gaps, staging bucket issues, pending approvals, and missing PDFs.",
+    ),
+    Agent(
+        agent_id="inbox",
+        name="Inbox Agent",
+        division="atlas-core",
+        responsibility="Create local Atlas Inbox items from safe agent findings.",
     ),
 )
 
@@ -27,7 +51,6 @@ def list_agents() -> tuple[Agent, ...]:
 
 def get_agent(key: str) -> Agent:
     for agent in DEFAULT_AGENTS:
-        if agent.key == key:
+        if agent.agent_id == key:
             return agent
     raise KeyError(f"Unknown agent: {key}")
-

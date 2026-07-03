@@ -5,6 +5,7 @@ from __future__ import annotations
 import tempfile
 import types
 import unittest
+import os
 from dataclasses import replace
 from datetime import date, timedelta
 from pathlib import Path
@@ -49,12 +50,12 @@ class CommandCenterTests(unittest.TestCase):
         with _isolated_env():
             with (
                 patch.dict("os.environ", {"ATLAS_MARKET_DATA_PROVIDER": "yfinance"}, clear=False),
-                patch("atlas_os.web_app.importlib.util.find_spec", return_value=object()),
+                patch("atlas_os.diagnostics.importlib.util.find_spec", return_value=object()),
             ):
                 response = dispatch_request("GET", "/")
 
         self.assertEqual(response.status, 200)
-        self.assertIn("Real Data Provider: configured", response.body)
+        self.assertIn("Real Data Provider: ready", response.body)
         self.assertIn("Current Provider: yfinance", response.body)
         self.assertNotIn("Mock Data Unless Otherwise Noted", response.body)
 
@@ -364,9 +365,23 @@ class CommandCenterTests(unittest.TestCase):
                 result = dispatch_request("POST", "/greenrock/score", "ticker=AAPL")
 
         self.assertEqual(result.status, 200)
-        self.assertIn("Score Preview Blocked", result.body)
+        self.assertIn("Real Data Setup", result.body)
+        self.assertIn("Provider Status: setup available", result.body)
         self.assertIn("export ATLAS_MARKET_DATA_PROVIDER=yfinance", result.body)
-        self.assertIn('python3 -m pip install -e ".[market-data]"', result.body)
+        self.assertIn('python3 -m pip install -e &quot;.[market-data]&quot;', result.body)
+        self.assertNotIn("Score Preview Blocked", result.body)
+
+    def test_score_page_shows_ready_badge_when_provider_configured(self) -> None:
+        with _isolated_env():
+            with (
+                patch.dict("os.environ", {"ATLAS_MARKET_DATA_PROVIDER": "yfinance"}, clear=False),
+                patch("atlas_os.diagnostics.importlib.util.find_spec", return_value=object()),
+            ):
+                page = dispatch_request("GET", "/greenrock/score")
+
+        self.assertEqual(page.status, 200)
+        self.assertIn("Provider Status: ready", page.body)
+        self.assertNotIn("Real Data Setup", page.body)
 
     def test_score_page_invalid_ticker_shows_clean_warning(self) -> None:
         with _isolated_env():
@@ -374,7 +389,8 @@ class CommandCenterTests(unittest.TestCase):
                 result = dispatch_request("POST", "/greenrock/score", "ticker=NOTREAL")
 
         self.assertEqual(result.status, 200)
-        self.assertIn("Score Preview Blocked", result.body)
+        self.assertIn("Real Data Setup", result.body)
+        self.assertIn("NOTREAL", result.body)
         self.assertIn("No report, approval, artifact", result.body)
 
     def test_score_calculation_creates_no_reports_approvals_or_artifacts(self) -> None:
@@ -510,11 +526,75 @@ class CommandCenterTests(unittest.TestCase):
             response = dispatch_request("GET", "/agents")
 
         self.assertEqual(response.status, 200)
-        self.assertIn("Planned Agent HUD", response.body)
-        self.assertIn("Atlas Core", response.body)
-        self.assertIn("GreenRock Analyst Agent", response.body)
-        self.assertIn("inactive", response.body)
-        self.assertIn("planned", response.body)
+        self.assertIn("Atlas Agent Monitor", response.body)
+        self.assertIn("Market Agent", response.body)
+        self.assertIn("Evidence Agent", response.body)
+        self.assertIn("Run Agent Cycle", response.body)
+        self.assertIn("return confirm('Run the safe local Agent Cycle?", response.body)
+
+    def test_agent_cycle_browser_and_inbox_are_local(self) -> None:
+        with _isolated_env() as root:
+            run_response = dispatch_request("POST", "/agents/run")
+            agents_page = dispatch_request("GET", "/agents")
+            inbox_page = dispatch_request("GET", "/atlas/inbox")
+            morning = dispatch_request("GET", "/atlas/morning-brief")
+            dashboard = dispatch_request("GET", "/")
+            cycle_files = tuple((root / "output" / "agents" / "cycles").glob("*.json"))
+            inbox_items = list((root / "output" / "atlas" / "inbox" / "items.json").read_text(encoding="utf-8").splitlines())
+            agent_state_exists = (root / "output" / "agents" / "agent_state.json").exists()
+            inbox_exists = (root / "output" / "atlas" / "inbox" / "items.json").exists()
+
+        self.assertEqual(run_response.status, 303)
+        self.assertIn("Agent+Cycle+complete", run_response.location)
+        self.assertIn("No+email", run_response.location)
+        self.assertIn("Market Agent", agents_page.body)
+        self.assertIn("Latest Run History", agents_page.body)
+        self.assertIn("Cycle Diff", agents_page.body)
+        self.assertIn("Atlas Inbox", inbox_page.body)
+        self.assertIn("Staging underfilled", inbox_page.body)
+        self.assertIn("Why", inbox_page.body)
+        self.assertIn("Complete", inbox_page.body)
+        self.assertIn("Last Agent Cycle", morning.body)
+        self.assertIn("Agent Health", morning.body)
+        self.assertIn("Cycle Diff", morning.body)
+        self.assertIn("Agent Cycle", dashboard.body)
+        self.assertIn("Run Agent Cycle", dashboard.body)
+        self.assertIn("return confirm('Run the safe local Agent Cycle?", dashboard.body)
+        self.assertTrue(agent_state_exists)
+        self.assertTrue(inbox_exists)
+        self.assertTrue(cycle_files)
+        self.assertTrue(any("related_agent_run_id" in line for line in inbox_items))
+
+    def test_atlas_inbox_detail_renders_provenance(self) -> None:
+        with _isolated_env() as root:
+            dispatch_request("POST", "/agents/run")
+            import json
+
+            item_id = json.loads((root / "output" / "atlas" / "inbox" / "items.json").read_text(encoding="utf-8"))[0]["item_id"]
+            detail = dispatch_request("GET", f"/atlas/inbox/{item_id}")
+            complete = dispatch_request("POST", f"/atlas/inbox/{item_id}/complete")
+
+        self.assertEqual(detail.status, 200)
+        self.assertIn("Why This Item Exists", detail.body)
+        self.assertIn("Agent Run", detail.body)
+        self.assertIn("Report Run", detail.body)
+        self.assertEqual(complete.status, 303)
+
+    def test_env_provider_loading_works(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".env").write_text("ATLAS_MARKET_DATA_PROVIDER=yfinance\n", encoding="utf-8")
+            previous = Path.cwd()
+            try:
+                os.chdir(root)
+                with patch.dict("os.environ", {}, clear=True):
+                    from atlas_os.diagnostics import provider_diagnostics
+
+                    diagnostics = provider_diagnostics()
+            finally:
+                os.chdir(previous)
+
+        self.assertEqual(diagnostics.active_provider_name, "yfinance")
 
     def test_approval_confirmation_route_works(self) -> None:
         with _isolated_env():

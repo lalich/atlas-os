@@ -22,8 +22,12 @@ cd ~/Desktop/atlas-os
 export PATH="$PWD/bin:$PATH"
 atlas --help
 atlas status
+atlas doctor
 atlas morning-brief
 atlas greenrock sample-report
+atlas agents list
+atlas agents run
+atlas inbox list
 ```
 
 ## CLI
@@ -31,6 +35,7 @@ atlas greenrock sample-report
 ```bash
 atlas --help
 atlas status
+atlas doctor
 atlas greenrock sample-report
 atlas greenrock run-screen
 atlas greenrock run-screen --data mock
@@ -70,6 +75,16 @@ atlas approvals latest
 atlas approvals show 1
 atlas approvals approve 1
 atlas approvals reject 1
+atlas agents list
+atlas agents status
+atlas agents run
+atlas agents cycles
+atlas agents cycle <cycle_id>
+atlas agents show <run_id>
+atlas inbox list
+atlas inbox show <item_id>
+atlas inbox dismiss <item_id>
+atlas inbox complete <item_id>
 atlas dashboard
 atlas serve
 atlas runs list
@@ -207,6 +222,15 @@ export ATLAS_MARKET_DATA_PROVIDER=yfinance
 python3 -m pip install -e ".[market-data]"
 atlas greenrock score AAPL
 ```
+
+If real data is not configured yet, `/greenrock/score` shows a neutral setup card with provider status and this one-copy command block:
+
+```bash
+export ATLAS_MARKET_DATA_PROVIDER=yfinance
+python3 -m pip install -e ".[market-data]"
+```
+
+Run `atlas doctor` to check virtualenv, command path, provider status, yfinance availability, logos, writable output directory, database initialization, latest scan, and Atlas Memory.
 
 It is preview-only. It does not create reports, approval records, artifacts, emails, publications, or external distribution actions.
 
@@ -444,18 +468,38 @@ Command Center pages:
 - `/greenrock/picks` GreenRock Picks Board with the featured Mega Rock pick, 11 large-cap picks, 11 small/mid-cap picks, Evidence Agreement, top signals, Fundamental Guardrail fields, Finviz links, and explicit data-mode labeling.
 - `/greenrock/scanner` GreenRock Market Scanner for population scans, latest scan metadata, quick filters, ranked results, Finviz links, deliberate promote-to-list review, and direct scan-to-staging.
 - `/greenrock/market-pulse` latest successful scan overview by archetype, with one-click staging of top Market Pulse candidates, Atlas Analyst report slate generation, and approval-gated draft generation from staging.
-- `/atlas/morning-brief` branded operator summary of latest scan health, Atlas Memory movers, pending approvals, PDF readiness, action buttons, and linked Atlas Inbox items.
+- `/atlas/morning-brief` branded operator summary of latest scan health, Atlas Memory movers, latest agent cycle, agent health cards, pending approvals, PDF readiness, action buttons, and linked Atlas Inbox items.
+- `/atlas/inbox` local agent-created operator queue with dismiss actions.
 - `/greenrock/watchlists` local GreenRock watchlist overview with ticker counts, tickers, Finviz links, promotion source, and latest promoted timestamp when available.
 - `/greenrock/staging` Report Candidate Staging page for final local curation into Mega Rock, Large Cap, Small/Mid, Research Only, and Excluded buckets before approval-gated report drafts.
 - `/greenrock/score` GreenRock Score Calculator with confidence, Evidence Agreement, Fundamental Guardrails, research priority, evidence cards, watch-next notes, methodology explanation, and preview-only score breakdown.
 - `/greenrock/final-reports` final PDF archive for approved exported GreenRock PDFs.
 - `/tasks` local kanban-style manual task board with backlog, in progress, awaiting review, and completed columns.
-- `/agents` planned agent HUD with inactive/planned status labels.
+- `/agents` local Agent Monitor with agent cards, status, current task, health, latest output summary, run history, and a confirmed Run Agent Cycle action.
 - `/reports` local report and artifact index with links into the GreenRock Report Review Center.
 
 Browser approval/rejection actions require a confirmation page before updating local SQLite records. PDF export remains blocked until the linked report approval is approved.
 
 The web app is local development mode only. It uses mock data, keeps the human approval gate mandatory, and does not include publish, send, email, external API, or credential controls.
+
+## Atlas Agent Orchestration
+
+Phase 8A adds the first safe local orchestration layer:
+
+```bash
+atlas agents list
+atlas agents run
+atlas agents status
+atlas inbox list
+```
+
+The cycle runs Market, Evidence, Memory, Report, QA, and Inbox agents in order. Agents are local workflow operators, not autonomous external actors. They may read local Atlas state and write local run records, local artifacts, local snapshots, and Atlas Inbox items only.
+
+Agents may not send email, publish, trade, place broker/API orders, touch client files, commit credentials, call external LLM/API services, or bypass report approval/PDF gates. Report Agent only recommends that a draft can be generated; it does not generate reports unless the operator explicitly invokes the existing report workflow.
+
+Run records live at `.atlas/output/agents/runs/`, cycle summaries and diffs live at `.atlas/output/agents/cycles/`, current state lives at `.atlas/output/agents/agent_state.json`, and Atlas Inbox items live at `.atlas/output/atlas/inbox/items.json`.
+
+`atlas agents run` prints a cycle ID, timestamps, completed/failed/blocked counts, inbox items created, warnings, and top operator actions. `atlas agents cycle <cycle_id>` shows the cycle-to-cycle diff. Inbox items include provenance fields for related agent run, scan, report run, approval, target URL, and created reason.
 
 ## Using Atlas Command Center
 

@@ -39,6 +39,23 @@ ATLAS_MARKET_DATA_PROVIDER=yfinance
 ATLAS_GREENROCK_REAL_TICKERS=
 ```
 
+Atlas loads simple local `.env` values when present and does not override shell environment variables. The provider name is not a secret; credentials must never be committed.
+
+One-copy setup:
+
+```bash
+export ATLAS_MARKET_DATA_PROVIDER=yfinance
+python3 -m pip install -e ".[market-data]"
+```
+
+Check setup:
+
+```bash
+atlas doctor
+```
+
+Doctor reports virtualenv status, command path, provider setting, yfinance availability, logo presence, output directory writability, database initialization, latest scan availability, and Atlas Memory availability.
+
 When `ATLAS_GREENROCK_REAL_TICKERS` is blank, Atlas uses the local GreenRock watchlist CSVs.
 
 ## GreenRock Watchlists
@@ -161,6 +178,8 @@ Promotion metadata records ticker, destination list, scan ID, score, confidence,
 ## Score Calculator Data Source
 
 The GreenRock Score Calculator at `/greenrock/score` and `atlas greenrock score <ticker>` is real-data-only for operators. It fetches only the requested ticker through the configured provider and fails closed if the provider is unavailable.
+
+When the provider is not configured, the browser Score Calculator shows a neutral setup card with provider status and the setup command. This is normal setup state, not a workflow failure.
 
 Configure locally:
 

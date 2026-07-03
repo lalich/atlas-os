@@ -9,7 +9,17 @@ import sys
 from pathlib import Path
 
 from atlas_os import __version__
+from atlas_os.agents.orchestrator import (
+    agent_cycle_summary,
+    get_agent_cycle_summary,
+    get_agent_run,
+    list_agent_cycle_summaries,
+    list_agent_runs,
+    list_agent_states,
+    run_agent_cycle,
+)
 from atlas_os.config import get_settings
+from atlas_os.diagnostics import run_doctor
 from atlas_os.core.approvals import (
     ApprovalRequest,
     ApprovalStatus,
@@ -77,6 +87,7 @@ from atlas_os.greenrock.universe import (
 )
 from atlas_os.greenrock.universe_manager import default_universe_manager, provider_label
 from atlas_os.greenrock.workflow import run_greenrock_screening_workflow
+from atlas_os.inbox import complete_inbox_item, dismiss_inbox_item, get_inbox_item, list_inbox_items
 from atlas_os.logging_config import configure_logging
 from atlas_os.morning_brief import (
     latest_morning_brief_snapshot,
@@ -96,6 +107,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command")
 
     subparsers.add_parser("status", help="Show local Atlas OS status.")
+    subparsers.add_parser("doctor", help="Check local Atlas OS setup readiness.")
     subparsers.add_parser("dashboard", help="Show analyst-friendly Atlas OS overview.")
     morning_brief = subparsers.add_parser("morning-brief", help="Show the local Atlas Morning Brief.")
     morning_brief.add_argument("--snapshot", action="store_true", help="Save a local Morning Brief snapshot after printing.")
@@ -106,6 +118,27 @@ def build_parser() -> argparse.ArgumentParser:
     serve = subparsers.add_parser("serve", help="Start the local Atlas Command Center web app.")
     serve.add_argument("--host", default="127.0.0.1", help="Host for the local web app.")
     serve.add_argument("--port", default=8000, type=int, help="Port for the local web app.")
+
+    agents = subparsers.add_parser("agents", help="Local Atlas agent orchestration commands.")
+    agents_subparsers = agents.add_subparsers(dest="agents_command")
+    agents_subparsers.add_parser("list", help="List configured local agents.")
+    agents_subparsers.add_parser("status", help="Show latest local agent state.")
+    agents_subparsers.add_parser("run", help="Run the safe local agent cycle.")
+    agents_subparsers.add_parser("cycles", help="List local agent cycle summaries.")
+    agents_cycle = agents_subparsers.add_parser("cycle", help="Show one local agent cycle summary.")
+    agents_cycle.add_argument("cycle_id")
+    agents_show = agents_subparsers.add_parser("show", help="Show one agent run record.")
+    agents_show.add_argument("run_id")
+
+    inbox = subparsers.add_parser("inbox", help="Local Atlas Inbox commands.")
+    inbox_subparsers = inbox.add_subparsers(dest="inbox_command")
+    inbox_subparsers.add_parser("list", help="List open local inbox items.")
+    inbox_show = inbox_subparsers.add_parser("show", help="Show one local inbox item.")
+    inbox_show.add_argument("item_id")
+    inbox_dismiss = inbox_subparsers.add_parser("dismiss", help="Dismiss one local inbox item.")
+    inbox_dismiss.add_argument("item_id")
+    inbox_complete = inbox_subparsers.add_parser("complete", help="Mark one local inbox item completed.")
+    inbox_complete.add_argument("item_id")
 
     runs = subparsers.add_parser("runs", help="Workflow run inspection commands.")
     runs_subparsers = runs.add_subparsers(dest="runs_command")
@@ -448,6 +481,31 @@ def run_status() -> int:
     return 0
 
 
+def run_doctor_cli() -> int:
+    report = run_doctor()
+    provider = report.provider
+    print("Atlas Doctor")
+    print(f"virtualenv_active: {_yes_no(report.virtualenv_active)}")
+    print(f"atlas_command_path: {report.atlas_command_path}")
+    print(f"ATLAS_MARKET_DATA_PROVIDER: {provider.active_provider_name}")
+    print(f"provider_env_var_present: {_yes_no(provider.env_var_present)}")
+    print(f"yfinance_available: {_yes_no(provider.yfinance_installed)}")
+    print(f"score_calculator_ready: {_yes_no(provider.score_calculator_ready)}")
+    print(f"scanner_ready: {_yes_no(provider.scanner_ready)}")
+    print(f"greenrock_logo_present: {_yes_no(report.greenrock_logo_present)}")
+    print(f"atlas_logo_present: {_yes_no(report.atlas_logo_present)}")
+    print(f"output_dir_writable: {_yes_no(report.output_dir_writable)}")
+    print(f"database_initialized: {_yes_no(report.database_initialized)}")
+    print(f"latest_scan_available: {_yes_no(report.latest_scan_available)}")
+    print(f"memory_available: {_yes_no(report.memory_available)}")
+    if not provider.score_calculator_ready:
+        print("recommended_provider_fix:")
+        for line in provider.recommended_fix_command.splitlines():
+            print(f"  {line}")
+    print("No email, publishing, trading, client-file, credential, or external LLM/API action was created.")
+    return 0
+
+
 def run_morning_brief(snapshot: bool = False) -> int:
     settings = get_settings()
     db_path = initialize_database(settings.db_path)
@@ -494,6 +552,18 @@ def run_morning_brief(snapshot: bool = False) -> int:
     print(f"pending_approvals: {len(pending)}")
     print(f"pdfs_ready: {len(pdf_ready)}")
     print(f"pdfs_exported: {len(pdf_exported)}")
+    agent_summary = agent_cycle_summary(settings.output_dir)
+    print(f"last_agent_cycle: {agent_summary['last_run']}")
+    print("agent_health:")
+    for agent in list_agent_states(settings.output_dir):
+        print(f"  {agent.agent_id}: {agent.status}/{agent.health} - {agent.last_message}")
+    inbox_items = list_inbox_items(settings.output_dir)
+    print("agent_inbox_items:")
+    if inbox_items:
+        for item in inbox_items[:5]:
+            print(f"  {item.severity} {item.title}: {item.detail}")
+    else:
+        print("  none")
     print("suggested_actions:")
     for action in _morning_actions(scan, len(pending), len(pdf_ready), movers):
         print(f"  {action}")
@@ -547,6 +617,10 @@ def run_morning_brief_show(snapshot_id: str) -> int:
     print(f"reports_awaiting_review: {snapshot.get('reports_awaiting_review', 0)}")
     print(f"pdf_ready: {snapshot.get('pdf_ready', 0)}")
     print(f"pdf_exported: {snapshot.get('pdf_exported', 0)}")
+    print(f"last_agent_cycle: {snapshot.get('last_agent_cycle', 'none')}")
+    print("agent_run_summary:")
+    for key, value in snapshot.get("agent_run_summary", {}).items():
+        print(f"  {key}: {value}")
     print("top_movers:")
     for label, rows in snapshot.get("top_movers", {}).items():
         print(f"  {label}:")
@@ -1954,6 +2028,185 @@ def run_dashboard() -> int:
         print(f"final_pdf_path: {latest_pdf_artifact.path if latest_pdf_artifact else 'not exported'}")
     else:
         print("No GreenRock reports found.")
+    cycle = agent_cycle_summary(settings.output_dir)
+    print("")
+    print("Agent Cycle")
+    print(f"last_run: {cycle['last_run']}")
+    print(f"completed_agents: {cycle['completed']}")
+    print(f"failed_agents: {cycle['failed']}")
+    print(f"blocked_agents: {cycle['blocked']}")
+    print(f"inbox_items_generated: {cycle['inbox_items_generated']}")
+    print(f"open_inbox_items: {cycle['open_inbox_items']}")
+    return 0
+
+
+def run_agents_list() -> int:
+    print("Atlas Agents")
+    print("agent_id name division responsibility")
+    for agent in list_agent_states(get_settings().output_dir):
+        print(f"{agent.agent_id} {agent.name} {agent.division} {agent.responsibility}")
+    return 0
+
+
+def run_agents_status() -> int:
+    settings = get_settings()
+    cycle = agent_cycle_summary(settings.output_dir)
+    print("Atlas Agent Status")
+    print(f"last_agent_cycle: {cycle['last_run']}")
+    print("agent_id status health last_run_at last_message")
+    for agent in list_agent_states(settings.output_dir):
+        print(f"{agent.agent_id} {agent.status} {agent.health} {agent.last_run_at or 'none'} {agent.last_message or '-'}")
+    return 0
+
+
+def run_agents_run() -> int:
+    settings = get_settings()
+    runs = run_agent_cycle(settings.output_dir, settings.db_path)
+    cycle = agent_cycle_summary(settings.output_dir)
+    print("Atlas Agent Cycle")
+    print(f"cycle_id: {cycle.get('cycle_id', 'none')}")
+    print(f"started_at: {cycle.get('started_at', 'none')}")
+    print(f"completed_at: {cycle.get('completed_at', 'none')}")
+    print("safe_local_mode: true")
+    for run in runs:
+        print(f"{run.agent_id}: {run.status} - {run.outputs.get('summary', '')}")
+    print(f"agents_completed: {cycle.get('completed', 0)}")
+    print(f"agents_failed: {cycle.get('failed', 0)}")
+    print(f"agents_blocked: {cycle.get('blocked', 0)}")
+    print(f"inbox_items_created: {cycle.get('inbox_items_generated', 0)}")
+    print("top_operator_actions:")
+    for action in cycle.get("top_operator_actions", ()) or ("none",):
+        print(f"  {action}")
+    if cycle.get("warnings"):
+        print("warnings:")
+        for warning in cycle["warnings"]:
+            print(f"  {warning}")
+    print("No email, publishing, trading, broker/API order, client-file, credential, or external LLM/API action was created.")
+    return 0
+
+
+def run_agents_show(run_id: str) -> int:
+    settings = get_settings()
+    try:
+        run = get_agent_run(settings.output_dir, run_id)
+    except KeyError:
+        print("Agent run not found")
+        print(f"run_id: {run_id}")
+        return 1
+    print(f"Agent Run {run.run_id}")
+    print(f"agent_id: {run.agent_id}")
+    print(f"status: {run.status}")
+    print(f"started_at: {run.started_at}")
+    print(f"completed_at: {run.completed_at}")
+    print(f"related_scan_id: {run.related_scan_id or 'none'}")
+    print(f"related_report_run_id: {run.related_report_run_id or 'none'}")
+    print(f"related_approval_id: {run.related_approval_id or 'none'}")
+    print("outputs:")
+    for key, value in run.outputs.items():
+        print(f"  {key}: {value}")
+    if run.warnings:
+        print("warnings:")
+        for warning in run.warnings:
+            print(f"  {warning}")
+    if run.errors:
+        print("errors:")
+        for error in run.errors:
+            print(f"  {error}")
+    return 0
+
+
+def run_agents_cycles() -> int:
+    summaries = list_agent_cycle_summaries(get_settings().output_dir)
+    print("Atlas Agent Cycles")
+    if not summaries:
+        print("No agent cycles found.")
+        return 0
+    print("cycle_id completed completed_agents failed_agents blocked_agents inbox_items")
+    for cycle in summaries:
+        print(
+            f"{cycle.get('cycle_id', '')} {cycle.get('completed_at', '')} "
+            f"{cycle.get('completed', 0)} {cycle.get('failed', 0)} "
+            f"{cycle.get('blocked', 0)} {cycle.get('inbox_items_generated', 0)}"
+        )
+    return 0
+
+
+def run_agents_cycle(cycle_id: str) -> int:
+    try:
+        cycle = get_agent_cycle_summary(get_settings().output_dir, cycle_id)
+    except KeyError:
+        print("Agent cycle not found")
+        print(f"cycle_id: {cycle_id}")
+        return 1
+    print(f"Agent Cycle {cycle.get('cycle_id', '')}")
+    print(f"started_at: {cycle.get('started_at', '')}")
+    print(f"completed_at: {cycle.get('completed_at', '')}")
+    print(f"completed_agents: {cycle.get('completed', 0)}")
+    print(f"failed_agents: {cycle.get('failed', 0)}")
+    print(f"blocked_agents: {cycle.get('blocked', 0)}")
+    print(f"inbox_items_created: {cycle.get('inbox_items_generated', 0)}")
+    print("cycle_diff:")
+    for key, value in cycle.get("diff", {}).items():
+        print(f"  {key}: {value}")
+    print("top_operator_actions:")
+    for action in cycle.get("top_operator_actions", ()) or ("none",):
+        print(f"  {action}")
+    return 0
+
+
+def run_inbox_list() -> int:
+    items = list_inbox_items(get_settings().output_dir)
+    print("Atlas Inbox")
+    if not items:
+        print("No open inbox items.")
+        return 0
+    print("item_id severity source_agent status title target_url")
+    for item in items:
+        print(f"{item.item_id} {item.severity} {item.source_agent} {item.status} {item.title} {item.target_url}")
+    return 0
+
+
+def run_inbox_show(item_id: str) -> int:
+    try:
+        item = get_inbox_item(get_settings().output_dir, item_id)
+    except KeyError:
+        print("Inbox item not found")
+        print(f"item_id: {item_id}")
+        return 1
+    print(f"Atlas Inbox Item {item.item_id}")
+    print(f"status: {item.status}")
+    print(f"severity: {item.severity}")
+    print(f"source_agent: {item.source_agent}")
+    print(f"title: {item.title}")
+    print(f"detail: {item.detail}")
+    print(f"target_url: {item.target_url}")
+    print(f"related_agent_run_id: {item.related_agent_run_id or 'none'}")
+    print(f"related_scan_id: {item.related_scan_id or 'none'}")
+    print(f"related_report_run_id: {item.related_report_run_id or 'none'}")
+    print(f"related_approval_id: {item.related_approval_id or 'none'}")
+    print(f"created_reason: {item.created_reason or 'none'}")
+    return 0
+
+
+def run_inbox_dismiss(item_id: str) -> int:
+    try:
+        item = dismiss_inbox_item(get_settings().output_dir, item_id)
+    except KeyError:
+        print("Inbox item not found")
+        print(f"item_id: {item_id}")
+        return 1
+    print(f"inbox_item_dismissed: {item.item_id}")
+    return 0
+
+
+def run_inbox_complete(item_id: str) -> int:
+    try:
+        item = complete_inbox_item(get_settings().output_dir, item_id)
+    except KeyError:
+        print("Inbox item not found")
+        print(f"item_id: {item_id}")
+        return 1
+    print(f"inbox_item_completed: {item.item_id}")
     return 0
 
 
@@ -2127,6 +2380,10 @@ def _cli_float_or_none(value: str) -> float | None:
         return None
 
 
+def _yes_no(value: bool) -> str:
+    return "yes" if value else "no"
+
+
 def _candidate_summary(row: dict[str, str]) -> str:
     return f"{row.get('symbol', '')} score={row.get('score', '')} {row.get('company_name', '')}"
 
@@ -2157,6 +2414,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "status":
         return run_status()
 
+    if args.command == "doctor":
+        return run_doctor_cli()
+
     if args.command == "dashboard":
         return run_dashboard()
 
@@ -2166,6 +2426,32 @@ def main(argv: list[str] | None = None) -> int:
         if args.morning_brief_command == "show":
             return run_morning_brief_show(args.snapshot_id)
         return run_morning_brief(args.snapshot)
+
+    if args.command == "agents":
+        if args.agents_command == "list":
+            return run_agents_list()
+        if args.agents_command == "status":
+            return run_agents_status()
+        if args.agents_command == "run":
+            return run_agents_run()
+        if args.agents_command == "cycles":
+            return run_agents_cycles()
+        if args.agents_command == "cycle":
+            return run_agents_cycle(args.cycle_id)
+        if args.agents_command == "show":
+            return run_agents_show(args.run_id)
+        parser.error("agents requires a subcommand")
+
+    if args.command == "inbox":
+        if args.inbox_command == "list":
+            return run_inbox_list()
+        if args.inbox_command == "show":
+            return run_inbox_show(args.item_id)
+        if args.inbox_command == "dismiss":
+            return run_inbox_dismiss(args.item_id)
+        if args.inbox_command == "complete":
+            return run_inbox_complete(args.item_id)
+        parser.error("inbox requires a subcommand")
 
     if args.command == "serve":
         return run_serve(args.host, args.port)

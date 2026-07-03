@@ -6,6 +6,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from atlas_os.agents.orchestrator import agent_cycle_summary, list_agent_states
 from atlas_os.core.approvals import ApprovalStatus, list_approvals
 from atlas_os.core.artifacts import list_artifacts
 from atlas_os.core.reports import list_reports
@@ -13,6 +14,7 @@ from atlas_os.db.database import connect, initialize_database
 from atlas_os.greenrock.memory import load_memory_rows, memory_movers
 from atlas_os.greenrock.scanner import latest_scan
 from atlas_os.greenrock.universe_manager import default_universe_manager
+from atlas_os.inbox import list_inbox_items
 
 
 SNAPSHOT_ROOT = Path("atlas") / "morning_briefs"
@@ -40,6 +42,9 @@ def build_morning_brief_snapshot(output_dir: Path, db_path: Path) -> dict:
     timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
     snapshot_id = "morning-brief-" + timestamp.replace("+00:00", "Z").replace(":", "").replace("-", "")
     suggested_actions = _suggested_actions(scan, len(pending), len(pdf_ready), movers)
+    agent_summary = agent_cycle_summary(output_dir)
+    agents = list_agent_states(output_dir)
+    inbox_items = list_inbox_items(output_dir)
     return {
         "snapshot_id": snapshot_id,
         "timestamp": timestamp,
@@ -56,6 +61,33 @@ def build_morning_brief_snapshot(output_dir: Path, db_path: Path) -> dict:
         "pdf_ready": len(pdf_ready),
         "pdf_exported": len(pdf_exported),
         "suggested_actions": suggested_actions,
+        "last_agent_cycle": agent_summary["last_run"],
+        "agent_run_summary": {
+            "completed": agent_summary["completed"],
+            "failed": agent_summary["failed"],
+            "blocked": agent_summary["blocked"],
+            "inbox_items_generated": agent_summary["inbox_items_generated"],
+        },
+        "agent_health_cards": [
+            {
+                "agent_id": agent.agent_id,
+                "name": agent.name,
+                "status": agent.status,
+                "health": agent.health,
+                "last_message": agent.last_message,
+            }
+            for agent in agents
+        ],
+        "agent_inbox_items": [
+            {
+                "item_id": item.item_id,
+                "severity": item.severity,
+                "title": item.title,
+                "detail": item.detail,
+                "target_url": item.target_url,
+            }
+            for item in inbox_items[:10]
+        ],
         "safety": {
             "local_only": True,
             "email": "disabled",
