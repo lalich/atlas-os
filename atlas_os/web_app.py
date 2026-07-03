@@ -380,8 +380,11 @@ def create_app():
         return render_agents()
 
     @app.post("/agents/run")
-    def agents_run():
-        message = run_agent_cycle_from_browser()
+    def agents_run(
+        market_scan_policy: str = Form("use_latest_scan"),
+        stale_hours: float = Form(24.0),
+    ):
+        message = run_agent_cycle_from_browser(market_scan_policy, stale_hours)
         return RedirectResponse(_with_status("/agents", message), status_code=303)
 
     @app.get("/runs/{run_id}", response_class=HTMLResponse)
@@ -564,7 +567,14 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
     if method == "POST" and route == "/atlas/morning-brief/snapshot":
         return WebResponse(303, "", location=_with_status("/atlas/morning-brief", save_morning_brief_snapshot_from_browser()))
     if method == "POST" and route == "/agents/run":
-        return WebResponse(303, "", location=_with_status("/agents", run_agent_cycle_from_browser()))
+        return WebResponse(
+            303,
+            "",
+            location=_with_status(
+                "/agents",
+                run_agent_cycle_from_browser(form.get("market_scan_policy", "use_latest_scan"), _float_form_value(form.get("stale_hours"), 24.0)),
+            ),
+        )
     if method == "POST" and route.startswith("/atlas/inbox/") and route.endswith("/dismiss"):
         item_id = unquote(route.removeprefix("/atlas/inbox/").removesuffix("/dismiss").strip("/"))
         try:
@@ -751,7 +761,9 @@ def render_dashboard(status_message: str | None = None) -> str:
         {_attention_card("neutral", str(cycle["inbox_items_generated"]), "Inbox Items Generated", "Latest cycle")}
       </section>
       <div class="action-row">
-        <form method="post" action="/agents/run" onsubmit="return confirm('Run the safe local Agent Cycle? This creates local records and inbox items only.');">
+        <form method="post" action="/agents/run" onsubmit="return confirm('Run the safe local Agent Cycle using latest scan only? This creates local records and inbox items only.');">
+          <input type="hidden" name="market_scan_policy" value="use_latest_scan">
+          <input type="hidden" name="stale_hours" value="24">
           <button type="submit">Run Agent Cycle</button>
         </form>
         <a class="button secondary" href="/agents">Open Agent Monitor</a>
@@ -1956,6 +1968,7 @@ def render_agents(status_message: str | None = None) -> str:
     agents = list_agent_states(settings.output_dir)
     runs = list_agent_runs(settings.output_dir)[:12]
     cycle = agent_cycle_summary(settings.output_dir)
+    market_scan = cycle.get("market_scan", {})
     cards = "".join(_agent_health_card(agent) for agent in agents)
     history = "".join(_agent_run_row(run) for run in runs) or "<tr><td colspan='5' class='empty'>No agent runs yet.</td></tr>"
     diff = _agent_cycle_diff_block(cycle.get("diff", {}))
@@ -1978,9 +1991,25 @@ def render_agents(status_message: str | None = None) -> str:
         {_attention_card("yellow" if cycle["blocked"] else "neutral", str(cycle["blocked"]), "Blocked", "Latest cycle")}
         {_attention_card("neutral", str(cycle.get("inbox_items_generated", 0)), "Inbox Items", "Created or refreshed")}
       </section>
-      <form method="post" action="/agents/run" onsubmit="return confirm('Run the safe local Agent Cycle? This creates local records and inbox items only.');">
-        <button type="submit">Run Agent Cycle</button>
-      </form>
+      <section class="panel inner-panel">
+        <h2>Market Agent Scan Policy</h2>
+        <section class="board-meta">
+          {_attention_card("neutral", _safe(market_scan.get("policy", "use_latest_scan")), "Policy Used", "Latest cycle")}
+          {_attention_card("neutral", _safe(market_scan.get("latest_scan_id", "none")), "Referenced Scan", "Latest cycle")}
+          {_attention_card("green" if market_scan.get("fresh_data_pulled") else "neutral", "yes" if market_scan.get("fresh_data_pulled") else "no", "Fresh Data Pulled", "Latest cycle")}
+          {_attention_card("neutral", _safe(str(market_scan.get("scan_age_hours", "unknown"))), "Scan Age Hours", f"Threshold {market_scan.get('stale_threshold_hours', 24)}h")}
+        </section>
+        <p class="subtle">{_safe(market_scan.get("reason", "Default safe mode uses the latest successful scan."))}</p>
+        <form method="post" action="/agents/run" class="inline-form" onsubmit="const policy=this.market_scan_policy.value; return confirm(policy === 'use_latest_scan' ? 'Run Agent Cycle using latest scan only? No fresh market data will be pulled.' : 'Run Agent Cycle with policy ' + policy + '? This may pull fresh local market data; no email, publishing, trading, client files, or approval bypass will occur.');">
+          <select name="market_scan_policy">
+            <option value="use_latest_scan">Use Latest Scan</option>
+            <option value="run_fresh_scan">Run Fresh Scan</option>
+            <option value="run_if_stale">Run If Stale</option>
+          </select>
+          <input name="stale_hours" type="number" min="0" step="1" value="24" aria-label="Stale threshold hours">
+          <button type="submit">Run Agent Cycle</button>
+        </form>
+      </section>
     </section>
     <section class="agent-grid">{cards}</section>
     {diff}
@@ -2024,7 +2053,7 @@ def render_agent_run_detail(run_id: str, status_message: str | None = None) -> s
 
 def render_atlas_inbox(status_message: str | None = None) -> str:
     items = list_inbox_items(get_settings().output_dir)
-    rows = "".join(_atlas_inbox_row(item) for item in items) or "<tr><td colspan='7' class='empty'>No open inbox items.</td></tr>"
+    rows = "".join(_atlas_inbox_row(item) for item in items) or "<tr><td colspan='10' class='empty'>No open inbox items.</td></tr>"
     cycle = agent_cycle_summary(get_settings().output_dir)
     content = f"""
     {_status_banner(status_message)}
@@ -2044,7 +2073,7 @@ def render_atlas_inbox(status_message: str | None = None) -> str:
     </section>
     <section class="panel">
       <table>
-        <thead><tr><th>Severity</th><th>Title</th><th>Detail</th><th>Why</th><th>Source</th><th>Target</th><th>Action</th></tr></thead>
+        <thead><tr><th>Created</th><th>Updated</th><th>Severity</th><th>Status</th><th>Title</th><th>Detail</th><th>Why</th><th>Source</th><th>Cycle</th><th>Action</th></tr></thead>
         <tbody>{rows}</tbody>
       </table>
     </section>
@@ -2067,8 +2096,13 @@ def render_atlas_inbox_detail(item_id: str, status_message: str | None = None) -
       <p>{_safe(item.created_reason or "Created by the local Inbox Agent from the latest cycle findings.")}</p>
       <dl class="detail-list">
         <div><dt>Status</dt><dd>{_safe(item.status)}</dd></div>
+        <div><dt>Severity</dt><dd>{_safe(item.severity)}</dd></div>
+        <div><dt>Created Date</dt><dd>{_safe(_date_part(item.created_at))}</dd></div>
+        <div><dt>Created Time</dt><dd>{_safe(_time_part(item.created_at))}</dd></div>
+        <div><dt>Updated</dt><dd>{_safe(item.updated_at)}</dd></div>
         <div><dt>Source Agent</dt><dd>{_safe(item.source_agent)}</dd></div>
         <div><dt>Agent Run</dt><dd>{_agent_run_link(item.related_agent_run_id)}</dd></div>
+        <div><dt>Cycle</dt><dd>{_safe(item.related_cycle_id or "none")}</dd></div>
         <div><dt>Scan</dt><dd>{_safe(item.related_scan_id or "none")}</dd></div>
         <div><dt>Report Run</dt><dd>{_report_run_link(item.related_report_run_id)}</dd></div>
         <div><dt>Approval</dt><dd>{_approval_link(item.related_approval_id)}</dd></div>
@@ -2884,13 +2918,17 @@ def save_morning_brief_snapshot_from_browser() -> str:
     )
 
 
-def run_agent_cycle_from_browser() -> str:
+def run_agent_cycle_from_browser(market_scan_policy: str = "use_latest_scan", stale_hours: float = 24.0) -> str:
     settings = get_settings()
-    runs = run_agent_cycle(settings.output_dir, settings.db_path)
+    runs = run_agent_cycle(settings.output_dir, settings.db_path, market_scan_policy=market_scan_policy, stale_hours=stale_hours)
+    cycle = agent_cycle_summary(settings.output_dir)
+    market_scan = cycle.get("market_scan", {})
     failed = sum(1 for run in runs if run.status == "failed")
     blocked = sum(1 for run in runs if run.status == "blocked")
     return (
         f"Agent Cycle complete: {len(runs)} local agent run(s), {failed} failed, {blocked} blocked. "
+        f"Market scan policy: {market_scan.get('policy', market_scan_policy)}; "
+        f"fresh data pulled: {'yes' if market_scan.get('fresh_data_pulled') else 'no'}. "
         "No email, publishing, trading, broker/API order, client-file, credential, or external LLM/API action was created."
     )
 
@@ -4593,6 +4631,13 @@ def _detail_panel(title: str, value: str) -> str:
     return f"<div class='panel detail-panel'><h2>{_safe(title)}</h2><p>{_safe(value)}</p></div>"
 
 
+def _float_form_value(value: str | None, default: float) -> float:
+    try:
+        return float(value) if value is not None else default
+    except ValueError:
+        return default
+
+
 def _attention_card(color: str, value: str, label: str, note: str) -> str:
     return f"<article class='attention-card {color}'><strong>{value}</strong><h2>{_safe(label)}</h2><p>{_safe(note)}</p></article>"
 
@@ -4614,10 +4659,10 @@ def _inbox_item_to_card(item) -> dict[str, str]:
     status = "attention" if item.severity in {"warning", "critical", "action"} else "neutral"
     return {
         "title": item.title,
-        "detail": f"{item.detail} Why: {item.created_reason}" if item.created_reason else item.detail,
+        "detail": f"{item.detail} Created {item.created_at}. Source: {item.source_agent}. Cycle: {item.related_cycle_id or 'none'}. Why: {item.created_reason}" if item.created_reason else f"{item.detail} Created {item.created_at}. Source: {item.source_agent}. Cycle: {item.related_cycle_id or 'none'}.",
         "href": item.target_url or "/atlas/inbox",
         "status": status,
-        "label": item.severity,
+        "label": f"{item.severity} / {item.status}",
     }
 
 
@@ -4652,12 +4697,15 @@ def _agent_run_row(run) -> str:
 def _atlas_inbox_row(item) -> str:
     return f"""
     <tr>
+      <td>{_safe(_date_part(item.created_at))}<br>{_safe(_time_part(item.created_at))}</td>
+      <td>{_safe(item.updated_at)}</td>
       <td>{_safe(item.severity)}</td>
+      <td>{_safe(item.status)}</td>
       <td><a href="/atlas/inbox/{quote(item.item_id)}">{_safe(item.title)}</a></td>
       <td>{_safe(item.detail)}</td>
       <td>{_safe(item.created_reason or "Created by the local Inbox Agent.")}</td>
       <td>{_safe(item.source_agent)}</td>
-      <td><a href="{_safe(item.target_url)}">Open</a></td>
+      <td>{_safe(item.related_cycle_id or "none")}<br><a href="{_safe(item.target_url)}">Open target</a></td>
       <td>
         <form method="post" action="/atlas/inbox/{quote(item.item_id)}/dismiss" onsubmit="return confirm('Dismiss this local inbox item?');">
           <button type="submit">Dismiss</button>
@@ -4668,6 +4716,16 @@ def _atlas_inbox_row(item) -> str:
       </td>
     </tr>
     """
+
+
+def _date_part(timestamp: str) -> str:
+    return timestamp.split("T", 1)[0] if timestamp else "none"
+
+
+def _time_part(timestamp: str) -> str:
+    if not timestamp or "T" not in timestamp:
+        return "none"
+    return timestamp.split("T", 1)[1].replace("+00:00", " UTC")
 
 
 def _agent_cycle_diff_block(diff: dict) -> str:

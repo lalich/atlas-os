@@ -14,7 +14,8 @@ from atlas_os.core.artifacts import list_artifacts
 from atlas_os.core.reports import list_reports
 from atlas_os.db.database import connect, initialize_database
 from atlas_os.greenrock.memory import load_memory_rows, memory_movers
-from atlas_os.greenrock.scanner import latest_scan
+from atlas_os.greenrock.population import ALL_POPULATION
+from atlas_os.greenrock.scanner import latest_scan, run_population_scan
 from atlas_os.greenrock.staging import staging_analytics_status, staging_readiness
 from atlas_os.greenrock.staging_report import staging_report_readiness
 from atlas_os.greenrock.universe_manager import default_universe_manager
@@ -26,15 +27,26 @@ RUNS_ROOT = AGENT_ROOT / "runs"
 CYCLES_ROOT = AGENT_ROOT / "cycles"
 STATE_FILE = "agent_state.json"
 ORDERED_AGENT_IDS = ("market", "evidence", "memory", "report", "qa", "inbox")
+MARKET_SCAN_POLICIES = {"use_latest_scan", "run_fresh_scan", "run_if_stale"}
+DEFAULT_MARKET_SCAN_POLICY = "use_latest_scan"
+DEFAULT_STALE_HOURS = 24.0
 
 
 def agent_output_dir(output_dir: Path) -> Path:
     return Path(output_dir) / AGENT_ROOT
 
 
-def run_agent_cycle(output_dir: Path, db_path: Path) -> tuple[AgentRun, ...]:
+def run_agent_cycle(
+    output_dir: Path,
+    db_path: Path,
+    market_scan_policy: str = DEFAULT_MARKET_SCAN_POLICY,
+    stale_hours: float = DEFAULT_STALE_HOURS,
+) -> tuple[AgentRun, ...]:
     """Run all local agents sequentially, producing local records only."""
     initialize_database(db_path)
+    policy = _normalize_market_scan_policy(market_scan_policy)
+    threshold = _normalize_stale_hours(stale_hours)
+    cycle_context = {"market_scan_policy": policy, "stale_hours": threshold}
     prior_outputs: dict[str, dict] = {}
     prior_run_refs: dict[str, AgentRun] = {}
     runs: list[AgentRun] = []
@@ -43,12 +55,12 @@ def run_agent_cycle(output_dir: Path, db_path: Path) -> tuple[AgentRun, ...]:
     before_items = list_inbox_items(output_dir, include_closed=True)
     prior_cycle = latest_agent_cycle_summary(output_dir)
     for agent_id in ORDERED_AGENT_IDS:
-        run = _run_one_agent(output_dir, db_path, agent_id, prior_outputs, prior_run_refs, cycle_id)
+        run = _run_one_agent(output_dir, db_path, agent_id, prior_outputs, prior_run_refs, cycle_id, cycle_context)
         prior_outputs[agent_id] = run.outputs
         prior_run_refs[agent_id] = run
         runs.append(run)
     _write_agent_state(output_dir, tuple(runs))
-    _write_cycle_summary(output_dir, cycle_id, started_at, _now(), tuple(runs), before_items, prior_cycle)
+    _write_cycle_summary(output_dir, cycle_id, started_at, _now(), tuple(runs), before_items, prior_cycle, cycle_context)
     return tuple(runs)
 
 
@@ -163,12 +175,13 @@ def _run_one_agent(
     prior_outputs: dict[str, dict],
     prior_run_refs: dict[str, AgentRun],
     cycle_id: str,
+    cycle_context: dict,
 ) -> AgentRun:
     started_at = _now()
     run_id = f"agent-cycle-{cycle_id}-{agent_id}"
-    inputs = {"safe_local_mode": True, "prior_agents": tuple(prior_outputs.keys())}
+    inputs = {"safe_local_mode": True, "prior_agents": tuple(prior_outputs.keys()), **cycle_context}
     try:
-        outputs, warnings, related = _agent_outputs(output_dir, db_path, agent_id, prior_outputs, prior_run_refs, run_id)
+        outputs, warnings, related = _agent_outputs(output_dir, db_path, agent_id, prior_outputs, prior_run_refs, run_id, cycle_id, cycle_context)
         status = "completed" if not outputs.get("blocked") else "blocked"
         errors: tuple[str, ...] = ()
     except Exception as error:
@@ -202,9 +215,11 @@ def _agent_outputs(
     prior_outputs: dict[str, dict],
     prior_run_refs: dict[str, AgentRun],
     run_id: str,
+    cycle_id: str,
+    cycle_context: dict,
 ) -> tuple[dict, tuple[str, ...], dict]:
     if agent_id == "market":
-        return _market_agent(output_dir)
+        return _market_agent(output_dir, cycle_context)
     if agent_id == "evidence":
         return _evidence_agent(output_dir)
     if agent_id == "memory":
@@ -214,15 +229,31 @@ def _agent_outputs(
     if agent_id == "qa":
         return _qa_agent(output_dir, db_path)
     if agent_id == "inbox":
-        return _inbox_agent(output_dir, prior_outputs, prior_run_refs, run_id)
+        return _inbox_agent(output_dir, prior_outputs, prior_run_refs, run_id, cycle_id)
     raise KeyError(agent_id)
 
 
-def _market_agent(output_dir: Path) -> tuple[dict, tuple[str, ...], dict]:
+def _market_agent(output_dir: Path, cycle_context: dict) -> tuple[dict, tuple[str, ...], dict]:
+    policy = _normalize_market_scan_policy(str(cycle_context.get("market_scan_policy", DEFAULT_MARKET_SCAN_POLICY)))
+    stale_hours = _normalize_stale_hours(float(cycle_context.get("stale_hours", DEFAULT_STALE_HOURS)))
     scan = latest_scan(output_dir)
+    scan_age_hours = _scan_age_hours(scan)
+    fresh_data_pulled = False
+    reason = _market_policy_reason(policy, scan, scan_age_hours, stale_hours)
+    warnings: tuple[str, ...] = ()
+    if policy == "run_fresh_scan" or (policy == "run_if_stale" and _scan_is_stale(scan, scan_age_hours, stale_hours)):
+        scan = run_population_scan(output_dir, ALL_POPULATION)
+        scan_age_hours = _scan_age_hours(scan)
+        fresh_data_pulled = True
+        reason = "fresh scan completed by policy"
     master = default_universe_manager(output_dir).master_universe()
     provider_status = "ready" if scan and scan.rows else "no latest scan"
     outputs = {
+        "market_scan_policy": policy,
+        "fresh_data_pulled": fresh_data_pulled,
+        "scan_age_hours": None if scan_age_hours is None else round(scan_age_hours, 2),
+        "stale_threshold_hours": stale_hours,
+        "reason": reason,
         "provider_status": provider_status,
         "latest_scan_id": scan.scan_id if scan else "none",
         "universe_size": master.size,
@@ -323,6 +354,7 @@ def _inbox_agent(
     prior_outputs: dict[str, dict],
     prior_run_refs: dict[str, AgentRun],
     run_id: str,
+    cycle_id: str,
 ) -> tuple[dict, tuple[str, ...], dict]:
     created: list[InboxItem] = []
     market = prior_outputs.get("market", {})
@@ -333,20 +365,20 @@ def _inbox_agent(
     related_report_run_id = prior_run_refs.get("report").related_report_run_id if prior_run_refs.get("report") else None
     related_approval_id = prior_run_refs.get("qa").related_approval_id if prior_run_refs.get("qa") else None
     if market.get("latest_scan_id") and market.get("latest_scan_id") != "none":
-        created.append(_agent_inbox_item(output_dir, "info", "Review latest Market Pulse", f"Scan {market['latest_scan_id']} is available.", "/greenrock/market-pulse", run_id, related_scan_id, related_report_run_id, related_approval_id, "Market Agent found a latest scan."))
-        created.append(_agent_inbox_item(output_dir, "info", "Morning Brief snapshot available", "Latest agent cycle can be reviewed in Morning Brief.", "/atlas/morning-brief", run_id, related_scan_id, related_report_run_id, related_approval_id, "Inbox Agent completed a local cycle."))
+        created.append(_agent_inbox_item(output_dir, "info", "Review latest Market Pulse", f"Scan {market['latest_scan_id']} is available.", "/greenrock/market-pulse", run_id, cycle_id, related_scan_id, related_report_run_id, related_approval_id, "Market Agent found a latest scan."))
+        created.append(_agent_inbox_item(output_dir, "info", "Morning Brief snapshot available", "Latest agent cycle can be reviewed in Morning Brief.", "/atlas/morning-brief", run_id, cycle_id, related_scan_id, related_report_run_id, related_approval_id, "Inbox Agent completed a local cycle."))
     if evidence.get("top_movers") or evidence.get("top_score_improvers"):
-        created.append(_agent_inbox_item(output_dir, "action", "Review latest Market Pulse", "Evidence Agent found movement worth operator review.", "/greenrock/market-pulse", run_id, related_scan_id, related_report_run_id, related_approval_id, "Evidence Agent found score or rank movement."))
+        created.append(_agent_inbox_item(output_dir, "action", "Review latest Market Pulse", "Evidence Agent found movement worth operator review.", "/greenrock/market-pulse", run_id, cycle_id, related_scan_id, related_report_run_id, related_approval_id, "Evidence Agent found score or rank movement."))
     if report.get("recommendation") == "Report draft can be generated":
-        created.append(_agent_inbox_item(output_dir, "action", "Stage Analyst Slate", "Report Agent says staging is ready for a human-invoked draft.", "/greenrock/staging/generate/confirm", run_id, related_scan_id, related_report_run_id, related_approval_id, "Report Agent found staging and analytics ready."))
+        created.append(_agent_inbox_item(output_dir, "action", "Stage Analyst Slate", "Report Agent says staging is ready for a human-invoked draft.", "/greenrock/staging/generate/confirm", run_id, cycle_id, related_scan_id, related_report_run_id, related_approval_id, "Report Agent found staging and analytics ready."))
     if qa.get("pending_approvals", 0):
-        created.append(_agent_inbox_item(output_dir, "action", "Review pending approval", f"{qa['pending_approvals']} approval(s) require human review.", "/greenrock", run_id, related_scan_id, related_report_run_id, related_approval_id, "QA Agent found pending approval records."))
+        created.append(_agent_inbox_item(output_dir, "action", "Review pending approval", f"{qa['pending_approvals']} approval(s) require human review.", "/greenrock", run_id, cycle_id, related_scan_id, related_report_run_id, related_approval_id, "QA Agent found pending approval records."))
     if qa.get("missing_pdfs_after_approval", 0):
-        created.append(_agent_inbox_item(output_dir, "action", "Export approved PDF", f"{qa['missing_pdfs_after_approval']} approved report(s) need local PDF export.", "/greenrock/final-reports", run_id, related_scan_id, related_report_run_id, related_approval_id, "QA Agent found approved reports without final PDFs."))
+        created.append(_agent_inbox_item(output_dir, "action", "Export approved PDF", f"{qa['missing_pdfs_after_approval']} approved report(s) need local PDF export.", "/greenrock/final-reports", run_id, cycle_id, related_scan_id, related_report_run_id, related_approval_id, "QA Agent found approved reports without final PDFs."))
     if qa.get("provider_failures", 0):
-        created.append(_agent_inbox_item(output_dir, "warning", "Provider failures require cleanup", f"{qa['provider_failures']} provider failure(s) detected.", "/greenrock/universe", run_id, related_scan_id, related_report_run_id, related_approval_id, "QA Agent found provider failures."))
+        created.append(_agent_inbox_item(output_dir, "warning", "Provider failures require cleanup", f"{qa['provider_failures']} provider failure(s) detected.", "/greenrock/universe", run_id, cycle_id, related_scan_id, related_report_run_id, related_approval_id, "QA Agent found provider failures."))
     if qa.get("underfilled_buckets"):
-        created.append(_agent_inbox_item(output_dir, "warning", "Staging underfilled", ", ".join(qa["underfilled_buckets"]), "/greenrock/staging", run_id, related_scan_id, related_report_run_id, related_approval_id, "QA Agent found staging bucket counts below targets."))
+        created.append(_agent_inbox_item(output_dir, "warning", "Staging underfilled", ", ".join(qa["underfilled_buckets"]), "/greenrock/staging", run_id, cycle_id, related_scan_id, related_report_run_id, related_approval_id, "QA Agent found staging bucket counts below targets."))
     outputs = {"items_created": len(created), "summary": f"{len(created)} local inbox item(s) created or refreshed."}
     return outputs, (), {}
 
@@ -358,6 +390,7 @@ def _agent_inbox_item(
     detail: str,
     target_url: str,
     run_id: str,
+    cycle_id: str,
     related_scan_id: str | None,
     related_report_run_id: str | None,
     related_approval_id: int | None,
@@ -371,6 +404,7 @@ def _agent_inbox_item(
         detail,
         target_url,
         related_agent_run_id=run_id,
+        related_cycle_id=cycle_id,
         related_scan_id=related_scan_id,
         related_report_run_id=related_report_run_id,
         related_approval_id=related_approval_id,
@@ -399,6 +433,46 @@ def _new_archetype_leaders(rows: tuple[dict[str, str], ...]) -> list[str]:
     ]
 
 
+def _normalize_market_scan_policy(policy: str) -> str:
+    return policy if policy in MARKET_SCAN_POLICIES else DEFAULT_MARKET_SCAN_POLICY
+
+
+def _normalize_stale_hours(value: float) -> float:
+    try:
+        hours = float(value)
+    except (TypeError, ValueError):
+        return DEFAULT_STALE_HOURS
+    return max(0.0, hours)
+
+
+def _scan_age_hours(scan) -> float | None:
+    if not scan:
+        return None
+    try:
+        modified = datetime.fromtimestamp(Path(scan.results_path).stat().st_mtime, timezone.utc)
+    except OSError:
+        return None
+    return (datetime.now(timezone.utc) - modified).total_seconds() / 3600
+
+
+def _scan_is_stale(scan, scan_age_hours: float | None, stale_hours: float) -> bool:
+    return scan is None or scan_age_hours is None or scan_age_hours > stale_hours
+
+
+def _market_policy_reason(policy: str, scan, scan_age_hours: float | None, stale_hours: float) -> str:
+    if policy == "use_latest_scan":
+        return "default safe mode reused latest successful scan"
+    if policy == "run_fresh_scan":
+        return "operator requested fresh market scan"
+    if scan is None:
+        return "no latest scan found; stale policy will run fresh scan"
+    if scan_age_hours is None:
+        return "scan age unavailable; stale policy will run fresh scan"
+    if scan_age_hours > stale_hours:
+        return f"latest scan age {scan_age_hours:.2f}h exceeded {stale_hours:.2f}h threshold"
+    return f"latest scan age {scan_age_hours:.2f}h is within {stale_hours:.2f}h threshold"
+
+
 def _leaders_by_archetype(rows: tuple[dict[str, str], ...]) -> dict[str, dict[str, str]]:
     leaders: dict[str, dict[str, str]] = {}
     for row in sorted(rows, key=lambda item: int(float(item.get("rank", "999999") or "999999"))):
@@ -423,6 +497,7 @@ def _write_cycle_summary(
     runs: tuple[AgentRun, ...],
     before_items: tuple[InboxItem, ...],
     prior_cycle: dict | None,
+    cycle_context: dict,
 ) -> None:
     after_items = list_inbox_items(output_dir, include_closed=True)
     before_by_id = {item.item_id: item for item in before_items}
@@ -453,6 +528,15 @@ def _write_cycle_summary(
         "warnings": [warning for run in runs for warning in run.warnings],
         "top_operator_actions": [item.title for item in after_items if item.status == "open"][:5],
         "run_ids": [run.run_id for run in runs],
+        "market_scan_policy": (latest_market.outputs if latest_market else {}).get("market_scan_policy", cycle_context.get("market_scan_policy")),
+        "market_scan": {
+            "policy": (latest_market.outputs if latest_market else {}).get("market_scan_policy", cycle_context.get("market_scan_policy")),
+            "latest_scan_id": (latest_market.outputs if latest_market else {}).get("latest_scan_id", "none"),
+            "fresh_data_pulled": (latest_market.outputs if latest_market else {}).get("fresh_data_pulled", False),
+            "scan_age_hours": (latest_market.outputs if latest_market else {}).get("scan_age_hours"),
+            "stale_threshold_hours": (latest_market.outputs if latest_market else {}).get("stale_threshold_hours", cycle_context.get("stale_hours")),
+            "reason": (latest_market.outputs if latest_market else {}).get("reason", ""),
+        },
         "signals": {
             "provider_failures": current_provider_failures,
             "pending_approvals": current_approval_count,

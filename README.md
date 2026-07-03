@@ -79,6 +79,9 @@ atlas approvals reject 1
 atlas agents list
 atlas agents status
 atlas agents run
+atlas agents run --market-scan-policy use_latest_scan
+atlas agents run --market-scan-policy run_fresh_scan
+atlas agents run --market-scan-policy run_if_stale --stale-hours 24
 atlas agents cycles
 atlas agents cycle <cycle_id>
 atlas agents show <run_id>
@@ -504,7 +507,11 @@ Agents may not send email, publish, trade, place broker/API orders, touch client
 
 Run records live at `.atlas/output/agents/runs/`, cycle summaries and diffs live at `.atlas/output/agents/cycles/`, current state lives at `.atlas/output/agents/agent_state.json`, and Atlas Inbox items live at `.atlas/output/atlas/inbox/items.json`.
 
-`atlas agents run` prints a cycle ID, timestamps, completed/failed/blocked counts, inbox items created, warnings, and top operator actions. `atlas agents cycle <cycle_id>` shows the cycle-to-cycle diff. Inbox items include provenance fields for related agent run, scan, report run, approval, target URL, and created reason.
+`atlas agents run` prints a cycle ID, timestamps, completed/failed/blocked counts, inbox items created, warnings, top operator actions, and the Market Agent scan policy used.
+
+Market Agent scan policy defaults to `use_latest_scan`, which references the latest successful Market Pulse scan and does not pull fresh data. Operators can explicitly choose `run_fresh_scan` to pull a new local scan, or `run_if_stale --stale-hours 24` to refresh only when the latest scan is older than the threshold. Fresh scan policies remain local-only and do not email, publish, trade, create client files, approve reports, or export PDFs.
+
+`atlas agents cycle <cycle_id>` shows the cycle-to-cycle diff plus market scan policy, referenced scan ID, whether fresh data was pulled, scan age, stale threshold, and reason. Inbox items include visible created/updated timestamps and provenance fields for related cycle, related agent run, scan, report run, approval, target URL, status, severity, and created reason.
 
 ## Using Atlas Command Center
 

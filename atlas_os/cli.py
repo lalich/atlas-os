@@ -123,7 +123,19 @@ def build_parser() -> argparse.ArgumentParser:
     agents_subparsers = agents.add_subparsers(dest="agents_command")
     agents_subparsers.add_parser("list", help="List configured local agents.")
     agents_subparsers.add_parser("status", help="Show latest local agent state.")
-    agents_subparsers.add_parser("run", help="Run the safe local agent cycle.")
+    agents_run = agents_subparsers.add_parser("run", help="Run the safe local agent cycle.")
+    agents_run.add_argument(
+        "--market-scan-policy",
+        choices=("use_latest_scan", "run_fresh_scan", "run_if_stale"),
+        default="use_latest_scan",
+        help="Market Agent scan policy. Defaults to reusing the latest successful scan.",
+    )
+    agents_run.add_argument(
+        "--stale-hours",
+        type=float,
+        default=24.0,
+        help="Stale threshold for run_if_stale policy. Defaults to 24.",
+    )
     agents_subparsers.add_parser("cycles", help="List local agent cycle summaries.")
     agents_cycle = agents_subparsers.add_parser("cycle", help="Show one local agent cycle summary.")
     agents_cycle.add_argument("cycle_id")
@@ -2198,15 +2210,22 @@ def run_agents_status() -> int:
     return 0
 
 
-def run_agents_run() -> int:
+def run_agents_run(market_scan_policy: str = "use_latest_scan", stale_hours: float = 24.0) -> int:
     settings = get_settings()
-    runs = run_agent_cycle(settings.output_dir, settings.db_path)
+    runs = run_agent_cycle(settings.output_dir, settings.db_path, market_scan_policy=market_scan_policy, stale_hours=stale_hours)
     cycle = agent_cycle_summary(settings.output_dir)
+    market_scan = cycle.get("market_scan", {})
     print("Atlas Agent Cycle")
     print(f"cycle_id: {cycle.get('cycle_id', 'none')}")
     print(f"started_at: {cycle.get('started_at', 'none')}")
     print(f"completed_at: {cycle.get('completed_at', 'none')}")
     print("safe_local_mode: true")
+    print(f"market_scan_policy: {market_scan.get('policy', market_scan_policy)}")
+    print(f"latest_scan_id: {market_scan.get('latest_scan_id', 'none')}")
+    print(f"fresh_data_pulled: {_yes_no(bool(market_scan.get('fresh_data_pulled', False)))}")
+    print(f"scan_age_hours: {market_scan.get('scan_age_hours', 'unknown')}")
+    print(f"stale_threshold_hours: {market_scan.get('stale_threshold_hours', stale_hours)}")
+    print(f"market_scan_reason: {market_scan.get('reason', '')}")
     for run in runs:
         print(f"{run.agent_id}: {run.status} - {run.outputs.get('summary', '')}")
     print(f"agents_completed: {cycle.get('completed', 0)}")
@@ -2284,6 +2303,14 @@ def run_agents_cycle(cycle_id: str) -> int:
     print(f"failed_agents: {cycle.get('failed', 0)}")
     print(f"blocked_agents: {cycle.get('blocked', 0)}")
     print(f"inbox_items_created: {cycle.get('inbox_items_generated', 0)}")
+    market_scan = cycle.get("market_scan", {})
+    print("market_scan:")
+    print(f"  policy: {market_scan.get('policy', 'use_latest_scan')}")
+    print(f"  latest_scan_id: {market_scan.get('latest_scan_id', 'none')}")
+    print(f"  fresh_data_pulled: {_yes_no(bool(market_scan.get('fresh_data_pulled', False)))}")
+    print(f"  scan_age_hours: {market_scan.get('scan_age_hours', 'unknown')}")
+    print(f"  stale_threshold_hours: {market_scan.get('stale_threshold_hours', 24)}")
+    print(f"  reason: {market_scan.get('reason', '')}")
     print("cycle_diff:")
     for key, value in cycle.get("diff", {}).items():
         print(f"  {key}: {value}")
@@ -2299,9 +2326,12 @@ def run_inbox_list() -> int:
     if not items:
         print("No open inbox items.")
         return 0
-    print("item_id severity source_agent status title target_url")
+    print("item_id created_at updated_at severity source_agent related_cycle_id status title target_url")
     for item in items:
-        print(f"{item.item_id} {item.severity} {item.source_agent} {item.status} {item.title} {item.target_url}")
+        print(
+            f"{item.item_id} {item.created_at} {item.updated_at} {item.severity} {item.source_agent} "
+            f"{item.related_cycle_id or 'none'} {item.status} {item.title} {item.target_url}"
+        )
     return 0
 
 
@@ -2313,6 +2343,8 @@ def run_inbox_show(item_id: str) -> int:
         print(f"item_id: {item_id}")
         return 1
     print(f"Atlas Inbox Item {item.item_id}")
+    print(f"created_at: {item.created_at}")
+    print(f"updated_at: {item.updated_at}")
     print(f"status: {item.status}")
     print(f"severity: {item.severity}")
     print(f"source_agent: {item.source_agent}")
@@ -2320,6 +2352,7 @@ def run_inbox_show(item_id: str) -> int:
     print(f"detail: {item.detail}")
     print(f"target_url: {item.target_url}")
     print(f"related_agent_run_id: {item.related_agent_run_id or 'none'}")
+    print(f"related_cycle_id: {item.related_cycle_id or 'none'}")
     print(f"related_scan_id: {item.related_scan_id or 'none'}")
     print(f"related_report_run_id: {item.related_report_run_id or 'none'}")
     print(f"related_approval_id: {item.related_approval_id or 'none'}")
@@ -2572,7 +2605,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.agents_command == "status":
             return run_agents_status()
         if args.agents_command == "run":
-            return run_agents_run()
+            return run_agents_run(args.market_scan_policy, args.stale_hours)
         if args.agents_command == "cycles":
             return run_agents_cycles()
         if args.agents_command == "cycle":

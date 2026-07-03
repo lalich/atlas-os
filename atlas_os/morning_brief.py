@@ -81,7 +81,12 @@ def build_morning_brief_snapshot(output_dir: Path, db_path: Path) -> dict:
         "agent_inbox_items": [
             {
                 "item_id": item.item_id,
+                "created_at": item.created_at,
+                "updated_at": item.updated_at,
                 "severity": item.severity,
+                "status": item.status,
+                "source_agent": item.source_agent,
+                "related_cycle_id": item.related_cycle_id,
                 "title": item.title,
                 "detail": item.detail,
                 "target_url": item.target_url,

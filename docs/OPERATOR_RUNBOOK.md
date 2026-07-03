@@ -93,6 +93,9 @@ Atlas agents are local workflow operators. They inspect local scan, memory, stag
 ```bash
 atlas agents list
 atlas agents run
+atlas agents run --market-scan-policy use_latest_scan
+atlas agents run --market-scan-policy run_fresh_scan
+atlas agents run --market-scan-policy run_if_stale --stale-hours 24
 atlas agents status
 atlas agents cycles
 atlas agents cycle <cycle_id>
@@ -104,6 +107,14 @@ atlas inbox complete <item_id>
 
 The cycle order is Market, Evidence, Memory, Report, QA, and Inbox. Report Agent may recommend `Report draft can be generated`, but it does not generate the report. Use the normal staging/report commands when you decide to create a draft.
 
+Market Agent scan policy is explicit:
+
+- `use_latest_scan` is the default safe mode. It references the latest successful Market Pulse scan and does not pull fresh data.
+- `run_fresh_scan` runs a new local scan when the operator deliberately wants fresh market data.
+- `run_if_stale --stale-hours 24` runs a new local scan only when the latest scan is older than the threshold.
+
+Use fresh scan policies before important review sessions when you intentionally want current provider data. Do not use them as a substitute for human approval. Fresh scans still create local scan records only; they do not email, publish, trade, create client files, approve reports, or export PDFs.
+
 Local records:
 
 - `.atlas/output/agents/runs/`
@@ -113,7 +124,7 @@ Local records:
 
 Each cycle summary includes cycle ID, start/completion timestamps, completed/failed/blocked counts, inbox items created, warnings, top operator actions, and a diff versus the prior cycle. The diff calls out new inbox items, resolved or dismissed items, new provider failures, changed pending approval counts, scan/memory changes, and report readiness changes.
 
-Inbox items now explain why they exist. Use `atlas inbox show <item_id>` or open the item from `/atlas/inbox` to see source agent, related agent run, related scan, related report run, related approval, created reason, and target URL.
+Inbox items now explain why they exist. Use `atlas inbox show <item_id>` or open the item from `/atlas/inbox` to see created date/time, updated date/time, source agent, related cycle, related agent run, related scan, related report run, related approval, status, severity, created reason, and target URL. Inbox lists sort newest open items first by default.
 
 Browser:
 

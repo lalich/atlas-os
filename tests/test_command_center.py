@@ -6,11 +6,13 @@ import tempfile
 import types
 import unittest
 import os
+import json
 from dataclasses import replace
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
+from atlas_os.agents.orchestrator import get_agent_cycle_summary, run_agent_cycle
 from atlas_os.cli import build_parser, main
 from atlas_os.config import get_settings
 from atlas_os.core.approvals import list_approvals
@@ -22,9 +24,10 @@ from atlas_os.greenrock.models import FundamentalSnapshot, PriceBar
 from atlas_os.greenrock.pdf_export import render_markdown_report_to_pdf
 from atlas_os.greenrock.report import build_sample_report
 from atlas_os.greenrock.sample_data import load_mock_stocks
-from atlas_os.greenrock.scanner import run_population_scan
+from atlas_os.greenrock.scanner import ScanResult, run_population_scan
 from atlas_os.greenrock.score import calculate_score_preview, confidence_band
 from atlas_os.greenrock.staging import add_staged_candidate, enrich_staged_candidates, load_staged_candidates
+from atlas_os.inbox import create_inbox_item, list_inbox_items
 from atlas_os.web_app import dispatch_request
 
 
@@ -591,7 +594,56 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("Market Agent", response.body)
         self.assertIn("Evidence Agent", response.body)
         self.assertIn("Run Agent Cycle", response.body)
-        self.assertIn("return confirm('Run the safe local Agent Cycle?", response.body)
+        self.assertIn("Market Agent Scan Policy", response.body)
+        self.assertIn("Use Latest Scan", response.body)
+        self.assertIn("Run Fresh Scan", response.body)
+        self.assertIn("Run If Stale", response.body)
+
+    def test_default_agent_cycle_uses_latest_scan_without_fresh_pull(self) -> None:
+        with _isolated_env() as root:
+            with patch("atlas_os.agents.orchestrator.run_population_scan") as scan_runner:
+                runs = run_agent_cycle(root / "output", root / "atlas.db")
+            market = next(run for run in runs if run.agent_id == "market")
+            cycle = get_agent_cycle_summary(root / "output", market.run_id.removeprefix("agent-cycle-").removesuffix("-market"))
+
+        scan_runner.assert_not_called()
+        self.assertEqual(market.outputs["market_scan_policy"], "use_latest_scan")
+        self.assertFalse(market.outputs["fresh_data_pulled"])
+        self.assertEqual(cycle["market_scan"]["policy"], "use_latest_scan")
+        self.assertFalse(cycle["market_scan"]["fresh_data_pulled"])
+
+    def test_run_fresh_scan_policy_is_recorded(self) -> None:
+        with _isolated_env() as root:
+            fake_scan = _fake_scan(root / "output", "scan-all-fresh")
+            with patch("atlas_os.agents.orchestrator.run_population_scan", return_value=fake_scan) as scan_runner:
+                runs = run_agent_cycle(root / "output", root / "atlas.db", market_scan_policy="run_fresh_scan")
+            market = next(run for run in runs if run.agent_id == "market")
+
+        scan_runner.assert_called_once()
+        self.assertEqual(market.outputs["market_scan_policy"], "run_fresh_scan")
+        self.assertTrue(market.outputs["fresh_data_pulled"])
+        self.assertEqual(market.outputs["latest_scan_id"], "scan-all-fresh")
+
+    def test_run_if_stale_respects_threshold(self) -> None:
+        with _isolated_env() as root:
+            run_population_scan(root / "output", "all", provider=FullHistoryProvider())
+            with patch("atlas_os.agents.orchestrator.run_population_scan") as scan_runner:
+                fresh_runs = run_agent_cycle(root / "output", root / "atlas.db", market_scan_policy="run_if_stale", stale_hours=24)
+            scan_runner.assert_not_called()
+            fresh_market = next(run for run in fresh_runs if run.agent_id == "market")
+            self.assertFalse(fresh_market.outputs["fresh_data_pulled"])
+
+            scan = next((root / "output" / "greenrock" / "scans").iterdir())
+            old_timestamp = (datetime.now(timezone.utc) - timedelta(days=2)).timestamp()
+            os.utime(scan / "scan_results.csv", (old_timestamp, old_timestamp))
+            fake_scan = _fake_scan(root / "output", "scan-all-stale-refresh")
+            with patch("atlas_os.agents.orchestrator.run_population_scan", return_value=fake_scan) as stale_runner:
+                stale_runs = run_agent_cycle(root / "output", root / "atlas.db", market_scan_policy="run_if_stale", stale_hours=1)
+            stale_market = next(run for run in stale_runs if run.agent_id == "market")
+
+        stale_runner.assert_called_once()
+        self.assertTrue(stale_market.outputs["fresh_data_pulled"])
+        self.assertEqual(stale_market.outputs["latest_scan_id"], "scan-all-stale-refresh")
 
     def test_agent_cycle_browser_and_inbox_are_local(self) -> None:
         with _isolated_env() as root:
@@ -614,13 +666,16 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("Atlas Inbox", inbox_page.body)
         self.assertIn("Staging underfilled", inbox_page.body)
         self.assertIn("Why", inbox_page.body)
+        self.assertIn("Created", inbox_page.body)
+        self.assertIn("Updated", inbox_page.body)
+        self.assertIn("Cycle", inbox_page.body)
         self.assertIn("Complete", inbox_page.body)
         self.assertIn("Last Agent Cycle", morning.body)
         self.assertIn("Agent Health", morning.body)
         self.assertIn("Cycle Diff", morning.body)
         self.assertIn("Agent Cycle", dashboard.body)
         self.assertIn("Run Agent Cycle", dashboard.body)
-        self.assertIn("return confirm('Run the safe local Agent Cycle?", dashboard.body)
+        self.assertIn("using latest scan only", dashboard.body)
         self.assertTrue(agent_state_exists)
         self.assertTrue(inbox_exists)
         self.assertTrue(cycle_files)
@@ -638,8 +693,34 @@ class CommandCenterTests(unittest.TestCase):
         self.assertEqual(detail.status, 200)
         self.assertIn("Why This Item Exists", detail.body)
         self.assertIn("Agent Run", detail.body)
+        self.assertIn("Created Date", detail.body)
+        self.assertIn("Created Time", detail.body)
+        self.assertIn("Cycle", detail.body)
         self.assertIn("Report Run", detail.body)
         self.assertEqual(complete.status, 303)
+
+    def test_inbox_items_sort_newest_open_first_and_show_timestamps(self) -> None:
+        with _isolated_env() as root:
+            create_inbox_item(root / "output", "qa", "warning", "Older", "old detail", "/old", related_cycle_id="cycle-old")
+            create_inbox_item(root / "output", "market", "info", "Newer", "new detail", "/new", related_cycle_id="cycle-new")
+            path = root / "output" / "atlas" / "inbox" / "items.json"
+            rows = json.loads(path.read_text(encoding="utf-8"))
+            for row in rows:
+                if row["title"] == "Older":
+                    row["created_at"] = "2026-01-01T00:00:00+00:00"
+                    row["updated_at"] = "2026-01-01T00:00:00+00:00"
+                if row["title"] == "Newer":
+                    row["created_at"] = "2026-01-02T00:00:00+00:00"
+                    row["updated_at"] = "2026-01-02T00:00:00+00:00"
+            path.write_text(json.dumps(rows), encoding="utf-8")
+
+            items = list_inbox_items(root / "output")
+            page = dispatch_request("GET", "/atlas/inbox")
+
+        self.assertEqual(items[0].title, "Newer")
+        self.assertEqual(items[0].related_cycle_id, "cycle-new")
+        self.assertIn("2026-01-02", page.body)
+        self.assertIn("cycle-new", page.body)
 
     def test_env_provider_loading_works(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1001,6 +1082,25 @@ class _isolated_env:
     def __exit__(self, exc_type, exc, tb):
         self.patch.__exit__(exc_type, exc, tb)
         self.temp_dir.cleanup()
+
+
+def _fake_scan(output_dir: Path, scan_id: str) -> ScanResult:
+    scan_dir = output_dir / "greenrock" / "scans" / scan_id
+    scan_dir.mkdir(parents=True, exist_ok=True)
+    results_path = scan_dir / "scan_results.csv"
+    summary_path = scan_dir / "scan_summary.md"
+    results_path.write_text("symbol,greenrock_score\nLC01,80\n", encoding="utf-8")
+    summary_path.write_text("# fake scan\n", encoding="utf-8")
+    return ScanResult(
+        scan_id=scan_id,
+        population="all",
+        data_source="test",
+        results_path=results_path,
+        summary_path=summary_path,
+        rows=({"symbol": "LC01", "greenrock_score": "80"},),
+        configured_ticker_count=1,
+        fetched_ticker_count=1,
+    )
 
 
 if __name__ == "__main__":

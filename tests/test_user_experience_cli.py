@@ -95,6 +95,9 @@ class UserExperienceCliTests(unittest.TestCase):
 
                 cycle = _run_cli(["agents", "run"])
                 self.assertIn("safe_local_mode: true", cycle)
+                self.assertIn("market_scan_policy: use_latest_scan", cycle)
+                self.assertIn("fresh_data_pulled: no", cycle)
+                self.assertIn("stale_threshold_hours:", cycle)
                 self.assertIn("cycle_id:", cycle)
                 cycle_id = _line_value(cycle, "cycle_id")
                 self.assertIn("market: completed", cycle)
@@ -110,6 +113,7 @@ class UserExperienceCliTests(unittest.TestCase):
                 self.assertIn(cycle_id, cycles)
 
                 cycle_detail = _run_cli(["agents", "cycle", cycle_id])
+                self.assertIn("market_scan:", cycle_detail)
                 self.assertIn("cycle_diff:", cycle_detail)
                 self.assertIn("new_inbox_items", cycle_detail)
 
@@ -119,7 +123,10 @@ class UserExperienceCliTests(unittest.TestCase):
                 item_id = _first_inbox_id(inbox)
 
                 item = _run_cli(["inbox", "show", item_id])
+                self.assertIn("created_at:", item)
+                self.assertIn("updated_at:", item)
                 self.assertIn("related_agent_run_id:", item)
+                self.assertIn("related_cycle_id:", item)
                 self.assertIn("created_reason:", item)
 
                 complete = _run_cli(["inbox", "complete", item_id])

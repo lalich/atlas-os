@@ -84,6 +84,41 @@ Market -> Evidence -> Memory -> Report -> QA -> Inbox
 
 The cycle is deliberately deterministic and local. Later agents can reference prior agent outputs from the same cycle. The Inbox Agent runs last so it can convert findings into operator-visible local items.
 
+## Market Agent Scan Policy
+
+The Market Agent does not automatically pull fresh data by default. Its default safe policy is:
+
+```text
+use_latest_scan
+```
+
+Policies:
+
+- `use_latest_scan`: reference the latest successful scan only. This is the default.
+- `run_fresh_scan`: run a new local Market Pulse/population scan.
+- `run_if_stale`: run a new local scan only if the latest scan is older than the stale threshold.
+
+The stale threshold defaults to 24 hours.
+
+CLI:
+
+```bash
+atlas agents run --market-scan-policy use_latest_scan
+atlas agents run --market-scan-policy run_fresh_scan
+atlas agents run --market-scan-policy run_if_stale --stale-hours 24
+```
+
+Cycle output records:
+
+- market scan policy used
+- latest scan ID referenced
+- whether fresh data was pulled
+- scan age
+- stale threshold
+- reason
+
+Use fresh scans only when the operator intentionally wants current provider data. Fresh scans remain local-only and do not email, publish, trade, create client files, approve reports, bypass gates, or export PDFs.
+
 After a cycle, Atlas writes a cycle summary with:
 
 - `cycle_id`
@@ -141,11 +176,15 @@ Fields:
 - `detail`
 - `target_url`
 - `status`: `open`, `dismissed`, or `completed`
+- `updated_at`
 - `related_agent_run_id`
+- `related_cycle_id`
 - `related_scan_id`
 - `related_report_run_id`
 - `related_approval_id`
 - `created_reason`
+
+Inbox lists sort newest open items first by default. Browser and CLI views show created date/time, updated date/time, source agent, related cycle, status, severity, and the reason the item exists.
 
 CLI:
 

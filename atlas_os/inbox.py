@@ -19,6 +19,7 @@ INBOX_SEVERITIES = {"info", "warning", "critical", "action"}
 class InboxItem:
     item_id: str
     created_at: str
+    updated_at: str
     source_agent: str
     severity: str
     title: str
@@ -26,6 +27,7 @@ class InboxItem:
     target_url: str
     status: str = "open"
     related_agent_run_id: str | None = None
+    related_cycle_id: str | None = None
     related_scan_id: str | None = None
     related_report_run_id: str | None = None
     related_approval_id: int | None = None
@@ -36,7 +38,13 @@ def inbox_path(output_dir: Path) -> Path:
     return Path(output_dir) / INBOX_ROOT / INBOX_FILE
 
 
-def list_inbox_items(output_dir: Path, include_closed: bool = False) -> tuple[InboxItem, ...]:
+def list_inbox_items(
+    output_dir: Path,
+    include_closed: bool = False,
+    status: str | None = None,
+    severity: str | None = None,
+    source_agent: str | None = None,
+) -> tuple[InboxItem, ...]:
     path = inbox_path(output_dir)
     if not path.exists():
         return ()
@@ -45,9 +53,15 @@ def list_inbox_items(output_dir: Path, include_closed: bool = False) -> tuple[In
     except (OSError, json.JSONDecodeError):
         return ()
     items = tuple(_item_from_dict(item) for item in raw_items if isinstance(item, dict))
-    if include_closed:
-        return items
-    return tuple(item for item in items if item.status == "open")
+    if not include_closed:
+        items = tuple(item for item in items if item.status == "open")
+    if status:
+        items = tuple(item for item in items if item.status == status)
+    if severity:
+        items = tuple(item for item in items if item.severity == severity)
+    if source_agent:
+        items = tuple(item for item in items if item.source_agent == source_agent)
+    return _sorted_items(items)
 
 
 def create_inbox_item(
@@ -58,6 +72,7 @@ def create_inbox_item(
     detail: str,
     target_url: str,
     related_agent_run_id: str | None = None,
+    related_cycle_id: str | None = None,
     related_scan_id: str | None = None,
     related_report_run_id: str | None = None,
     related_approval_id: int | None = None,
@@ -68,12 +83,14 @@ def create_inbox_item(
     item = InboxItem(
         item_id="inbox-" + now.replace("+00:00", "Z").replace(":", "").replace("-", "").replace(".", "") + "-" + uuid4().hex[:8],
         created_at=now,
+        updated_at=now,
         source_agent=source_agent,
         severity=normalized_severity,
         title=title,
         detail=detail,
         target_url=target_url,
         related_agent_run_id=related_agent_run_id,
+        related_cycle_id=related_cycle_id,
         related_scan_id=related_scan_id,
         related_report_run_id=related_report_run_id,
         related_approval_id=related_approval_id,
@@ -111,7 +128,7 @@ def _update_inbox_status(output_dir: Path, item_id: str, status: str) -> InboxIt
     items = list(list_inbox_items(output_dir, include_closed=True))
     for index, item in enumerate(items):
         if item.item_id == item_id:
-            updated = InboxItem(**{**item.__dict__, "status": status})
+            updated = InboxItem(**{**item.__dict__, "status": status, "updated_at": _now()})
             items[index] = updated
             _write_items(output_dir, tuple(items))
             return updated
@@ -128,6 +145,7 @@ def _item_from_dict(item: dict) -> InboxItem:
     return InboxItem(
         item_id=str(item.get("item_id", "")),
         created_at=str(item.get("created_at", "")),
+        updated_at=str(item.get("updated_at", item.get("created_at", ""))),
         source_agent=str(item.get("source_agent", "")),
         severity=str(item.get("severity", "info")),
         title=str(item.get("title", "")),
@@ -135,11 +153,33 @@ def _item_from_dict(item: dict) -> InboxItem:
         target_url=str(item.get("target_url", "")),
         status=str(item.get("status", "open")) if str(item.get("status", "open")) in INBOX_STATUSES else "open",
         related_agent_run_id=item.get("related_agent_run_id"),
+        related_cycle_id=item.get("related_cycle_id"),
         related_scan_id=item.get("related_scan_id"),
         related_report_run_id=item.get("related_report_run_id"),
         related_approval_id=item.get("related_approval_id"),
         created_reason=str(item.get("created_reason", "")),
     )
+
+
+def _sorted_items(items: tuple[InboxItem, ...]) -> tuple[InboxItem, ...]:
+    return tuple(
+        sorted(
+            items,
+            key=lambda item: (
+                0 if item.status == "open" else 1,
+                _sort_timestamp(item.created_at),
+                item.item_id,
+            ),
+            reverse=False,
+        )
+    )
+
+
+def _sort_timestamp(value: str) -> float:
+    try:
+        return -datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
 
 
 def _duplicate_open_item(items: list[InboxItem], item: InboxItem) -> bool:
