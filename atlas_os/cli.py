@@ -19,7 +19,7 @@ from atlas_os.agents.orchestrator import (
     run_agent_cycle,
 )
 from atlas_os.config import get_settings
-from atlas_os.diagnostics import run_doctor
+from atlas_os.diagnostics import provider_diagnostics, run_doctor
 from atlas_os.core.approvals import (
     ApprovalRequest,
     ApprovalStatus,
@@ -109,6 +109,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("status", help="Show local Atlas OS status.")
     subparsers.add_parser("doctor", help="Check local Atlas OS setup readiness.")
     subparsers.add_parser("dashboard", help="Show analyst-friendly Atlas OS overview.")
+    subparsers.add_parser("wall", help="Show Atlas Wall display URL and local status summary.")
     morning_brief = subparsers.add_parser("morning-brief", help="Show the local Atlas Morning Brief.")
     morning_brief.add_argument("--snapshot", action="store_true", help="Save a local Morning Brief snapshot after printing.")
     morning_subparsers = morning_brief.add_subparsers(dest="morning_brief_command")
@@ -2191,6 +2192,33 @@ def run_dashboard() -> int:
     return 0
 
 
+def run_wall() -> int:
+    settings = get_settings()
+    provider = provider_diagnostics()
+    cycle = agent_cycle_summary(settings.output_dir)
+    inbox_items = list_inbox_items(settings.output_dir)
+    critical = sum(1 for item in inbox_items if item.severity == "critical")
+    warning = sum(1 for item in inbox_items if item.severity == "warning")
+    action = sum(1 for item in inbox_items if item.severity == "action")
+    print("Atlas Wall")
+    print("url: http://127.0.0.1:8000/atlas/wall")
+    print(f"provider_status: {provider.status_label}")
+    print(f"provider_name: {provider.active_provider_name}")
+    print(f"last_agent_cycle: {cycle.get('last_run', 'none')}")
+    print(f"completed_agents: {cycle.get('completed', 0)}")
+    print(f"failed_agents: {cycle.get('failed', 0)}")
+    print(f"blocked_agents: {cycle.get('blocked', 0)}")
+    print(f"open_inbox_items: {cycle.get('open_inbox_items', 0)}")
+    print("inbox_counts:")
+    print(f"  critical: {critical}")
+    print(f"  warning: {warning}")
+    print(f"  action: {action}")
+    print("Start the wall display with: atlas serve")
+    print("Stale launcher fallback: ./scripts/atlas-serve")
+    print("No email, publishing, trading, broker/API order, client-file, credential, or external LLM/API action was created.")
+    return 0
+
+
 def run_agents_list() -> int:
     print("Atlas Agents")
     print("agent_id name division responsibility")
@@ -2591,6 +2619,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "dashboard":
         return run_dashboard()
+
+    if args.command == "wall":
+        return run_wall()
 
     if args.command == "morning-brief":
         if args.morning_brief_command == "history":

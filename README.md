@@ -13,6 +13,17 @@ source .venv/bin/activate
 python3 -m pip install -e .
 ```
 
+## Dev Bootstrap
+
+For local development, prefer the bootstrap scripts. They avoid stale console-script launcher issues such as `ModuleNotFoundError: No module named 'atlas_os'` by running Atlas through `python3 -m atlas_os.cli`.
+
+```bash
+./scripts/atlas-dev
+./scripts/atlas-serve
+```
+
+`scripts/atlas-dev` creates `.venv` if missing, installs the editable package with market-data extras, creates `.env` when needed, verifies `import atlas_os`, and runs Doctor. `scripts/atlas-serve` performs the same safety checks and starts the server with the module runner.
+
 ## Offline Local Run
 
 If the editable install cannot fetch Python build tools, use the included local launcher:
@@ -85,6 +96,7 @@ atlas agents run --market-scan-policy run_if_stale --stale-hours 24
 atlas agents cycles
 atlas agents cycle <cycle_id>
 atlas agents show <run_id>
+atlas wall
 atlas inbox list
 atlas inbox show <item_id>
 atlas inbox dismiss <item_id>
@@ -478,6 +490,7 @@ Command Center pages:
 - `/greenrock/market-pulse` latest successful scan overview by archetype, with one-click staging of top Market Pulse candidates, Atlas Analyst report slate generation, and approval-gated draft generation from staging.
 - `/atlas/morning-brief` branded operator summary of latest scan health, Atlas Memory movers, latest agent cycle, agent health cards, pending approvals, PDF readiness, action buttons, and linked Atlas Inbox items.
 - `/atlas/inbox` local agent-created operator queue with dismiss actions.
+- `/atlas/wall` big-screen Agent Wall for office Mission Control.
 - `/greenrock/watchlists` local GreenRock watchlist overview with ticker counts, tickers, Finviz links, promotion source, and latest promoted timestamp when available.
 - `/greenrock/staging` Report Candidate Staging page for final local curation into Mega Rock, Large Cap, Small/Mid, Research Only, and Excluded buckets before approval-gated report drafts.
 - `/greenrock/score` GreenRock Score Calculator with confidence, Evidence Agreement, Fundamental Guardrails, research priority, evidence cards, watch-next notes, methodology explanation, and preview-only score breakdown.
@@ -512,6 +525,15 @@ Run records live at `.atlas/output/agents/runs/`, cycle summaries and diffs live
 Market Agent scan policy defaults to `use_latest_scan`, which references the latest successful Market Pulse scan and does not pull fresh data. Operators can explicitly choose `run_fresh_scan` to pull a new local scan, or `run_if_stale --stale-hours 24` to refresh only when the latest scan is older than the threshold. Fresh scan policies remain local-only and do not email, publish, trade, create client files, approve reports, or export PDFs.
 
 `atlas agents cycle <cycle_id>` shows the cycle-to-cycle diff plus market scan policy, referenced scan ID, whether fresh data was pulled, scan age, stale threshold, and reason. Inbox items include visible created/updated timestamps and provenance fields for related cycle, related agent run, scan, report run, approval, target URL, status, severity, and created reason.
+
+Agent Wall:
+
+```bash
+atlas wall
+./scripts/atlas-serve
+```
+
+Open `http://127.0.0.1:8000/atlas/wall` for the office-TV view. It auto-refreshes every 60 seconds and shows agent cards, provider status, latest cycle state, Atlas Inbox counts, Market Pulse summary, Morning Brief snapshot status, pending approvals, and PDF readiness. The wall Run Agent Cycle button uses the default `use_latest_scan` policy and remains confirmation-gated.
 
 ## Using Atlas Command Center
 

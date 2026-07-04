@@ -119,6 +119,17 @@ Cycle output records:
 
 Use fresh scans only when the operator intentionally wants current provider data. Fresh scans remain local-only and do not email, publish, trade, create client files, approve reports, bypass gates, or export PDFs.
 
+## Dev Bootstrap
+
+Use the local bootstrap scripts when setting up a workstation or when the `atlas` launcher points at stale Python paths:
+
+```bash
+./scripts/atlas-dev
+./scripts/atlas-serve
+```
+
+The scripts run Atlas through `python3 -m atlas_os.cli`, which avoids stale console-script issues such as `ModuleNotFoundError: No module named 'atlas_os'`. They create or reuse `.venv`, install the editable package with market-data extras, ensure local `.env` exists, run Doctor, and start the local server without enabling email, publishing, trading, client-file actions, external LLM/API calls, or approval bypasses.
+
 After a cycle, Atlas writes a cycle summary with:
 
 - `cycle_id`
@@ -154,6 +165,7 @@ atlas agents show <run_id>
 Browser:
 
 - `/agents` shows cards, status, task, latest message, health, output summary, and run history.
+- `/atlas/wall` shows the office-TV Agent Wall with large agent cards, provider status, latest cycle, Inbox counts, Market Pulse summary, Morning Brief snapshot status, approvals, and PDF readiness.
 - `/` shows the Agent Cycle card and a confirmed `Run Agent Cycle` action.
 - `/atlas/morning-brief` shows latest agent run summary, health cards, inbox items, and Last Agent Cycle timestamp.
 - `/atlas/inbox` and inbox detail pages show provenance, status, created reason, related run/cycle context where available, target URL, and local dismiss/complete actions.

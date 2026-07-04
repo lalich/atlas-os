@@ -599,6 +599,38 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("Run Fresh Scan", response.body)
         self.assertIn("Run If Stale", response.body)
 
+    def test_agent_wall_route_returns_big_screen_status(self) -> None:
+        with _isolated_env():
+            response = dispatch_request("GET", "/atlas/wall")
+
+        self.assertEqual(response.status, 200)
+        self.assertIn("Agent Wall", response.body)
+        self.assertIn('http-equiv="refresh" content="60"', response.body)
+        self.assertIn("local time", response.body)
+        for agent in ("Market Agent", "Evidence Agent", "Memory Agent", "Report Agent", "QA Agent", "Inbox Agent"):
+            self.assertIn(agent, response.body)
+        self.assertIn("Atlas Inbox", response.body)
+        self.assertIn("Critical", response.body)
+        self.assertIn("Warning", response.body)
+        self.assertIn("Action", response.body)
+        self.assertIn("Latest Cycle", response.body)
+        self.assertIn("Market Pulse", response.body)
+        self.assertIn("Morning Brief", response.body)
+
+    def test_dev_bootstrap_scripts_exist_and_are_executable(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        dev = root / "scripts" / "atlas-dev"
+        serve = root / "scripts" / "atlas-serve"
+
+        self.assertTrue(dev.exists())
+        self.assertTrue(serve.exists())
+        self.assertTrue(os.access(dev, os.X_OK))
+        self.assertTrue(os.access(serve, os.X_OK))
+        self.assertIn("python3 -m atlas_os.cli doctor", dev.read_text(encoding="utf-8"))
+        self.assertIn("python3 -m atlas_os.cli serve", serve.read_text(encoding="utf-8"))
+        self.assertNotIn("open ", dev.read_text(encoding="utf-8"))
+        self.assertNotIn("open ", serve.read_text(encoding="utf-8"))
+
     def test_default_agent_cycle_uses_latest_scan_without_fresh_pull(self) -> None:
         with _isolated_env() as root:
             with patch("atlas_os.agents.orchestrator.run_population_scan") as scan_runner:

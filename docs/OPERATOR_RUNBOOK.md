@@ -8,6 +8,17 @@ export PATH="$PWD/bin:$PATH"
 atlas greenrock report-draft
 ```
 
+## Start Local Development
+
+Use the bootstrap scripts when the local `atlas` command is stale or fails with `ModuleNotFoundError: No module named 'atlas_os'`.
+
+```bash
+./scripts/atlas-dev
+./scripts/atlas-serve
+```
+
+`atlas-dev` creates `.venv` when needed, installs the editable package with market-data extras, ensures `.env` exists, verifies `import atlas_os`, and runs Doctor. `atlas-serve` starts the Command Center through `python3 -m atlas_os.cli serve`, avoiding broken console-script launchers.
+
 The report is written to:
 
 ```text
@@ -130,11 +141,14 @@ Browser:
 
 ```text
 http://127.0.0.1:8000/agents
+http://127.0.0.1:8000/atlas/wall
 http://127.0.0.1:8000/atlas/inbox
 http://127.0.0.1:8000/atlas/morning-brief
 ```
 
 The browser **Run Agent Cycle** action requires confirmation and creates local records only. Agents do not email, publish, trade, place broker/API orders, touch client files, use credentials, call external LLM/API services, approve reports, or export PDFs.
+
+Use `/atlas/wall` for the office-TV Mission Control view. It auto-refreshes every 60 seconds and shows provider status, latest agent cycle status, all six agent cards, Inbox counts, newest Inbox items, Market Pulse summary, Morning Brief snapshot status, approvals, and PDF readiness. The wall Run Agent Cycle button uses `use_latest_scan` and requires confirmation.
 
 ## Check Local Setup
 

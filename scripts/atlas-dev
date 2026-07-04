@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+echo "Atlas dev bootstrap"
+echo "project_root: $ROOT"
+
+if [ ! -d ".venv" ]; then
+  echo "Creating .venv"
+  python3 -m venv .venv
+fi
+
+# shellcheck disable=SC1091
+source ".venv/bin/activate"
+
+echo "Installing Atlas OS editable package with market-data extras"
+python3 -m pip install -e ".[market-data]"
+
+if [ ! -f ".env" ]; then
+  if [ -f ".env.example" ]; then
+    cp ".env.example" ".env"
+  else
+    printf "ATLAS_MARKET_DATA_PROVIDER=yfinance\n" > ".env"
+  fi
+  if ! grep -q "^ATLAS_MARKET_DATA_PROVIDER=" ".env"; then
+    printf "\nATLAS_MARKET_DATA_PROVIDER=yfinance\n" >> ".env"
+  fi
+fi
+
+python3 -c "import atlas_os"
+python3 -m atlas_os.cli doctor
+
+cat <<'NEXT'
+
+Next commands:
+  atlas serve
+  atlas agents run
+  atlas morning-brief
+
+If a stale atlas launcher fails, use:
+  python3 -m atlas_os.cli serve
+NEXT

@@ -140,6 +140,13 @@ class UserExperienceCliTests(unittest.TestCase):
                 self.assertIn("output_dir_writable:", doctor)
                 self.assertIn("database_initialized:", doctor)
 
+                wall = _run_cli(["wall"])
+                self.assertIn("Atlas Wall", wall)
+                self.assertIn("url: http://127.0.0.1:8000/atlas/wall", wall)
+                self.assertIn("provider_status:", wall)
+                self.assertIn("inbox_counts:", wall)
+                self.assertIn("scripts/atlas-serve", wall)
+
     def test_greenrock_score_audit_cli(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

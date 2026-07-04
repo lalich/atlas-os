@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+if [ ! -d ".venv" ]; then
+  echo ".venv missing; running ./scripts/atlas-dev first"
+  ./scripts/atlas-dev
+else
+  # shellcheck disable=SC1091
+  source ".venv/bin/activate"
+  if [ ! -f ".env" ]; then
+    echo ".env missing; running ./scripts/atlas-dev first"
+    ./scripts/atlas-dev
+    # shellcheck disable=SC1091
+    source ".venv/bin/activate"
+  fi
+  python3 -c "import atlas_os"
+fi
+
+echo "Starting Atlas Command Center with module runner"
+python3 -m atlas_os.cli serve

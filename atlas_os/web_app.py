@@ -186,6 +186,15 @@ def create_app():
     def atlas_inbox() -> str:
         return render_atlas_inbox()
 
+    @app.get("/atlas/wall", response_class=HTMLResponse)
+    def atlas_wall() -> str:
+        return render_atlas_wall()
+
+    @app.post("/atlas/wall/run")
+    def atlas_wall_run():
+        message = run_agent_cycle_from_browser("use_latest_scan", 24.0)
+        return RedirectResponse(_with_status("/atlas/wall", message), status_code=303)
+
     @app.get("/atlas/inbox/{item_id}", response_class=HTMLResponse)
     def atlas_inbox_detail(item_id: str) -> str:
         return render_atlas_inbox_detail(item_id)
@@ -470,6 +479,8 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
             return _error_response(404, "Snapshot Not Found", f"No Morning Brief snapshot exists for {snapshot_id}.")
     if method == "GET" and route == "/atlas/inbox":
         return WebResponse(200, render_atlas_inbox(_first(query, "status")))
+    if method == "GET" and route == "/atlas/wall":
+        return WebResponse(200, render_atlas_wall(_first(query, "status")))
     if method == "GET" and route.startswith("/atlas/inbox/"):
         item_id = unquote(route.removeprefix("/atlas/inbox/").strip("/"))
         try:
@@ -575,6 +586,8 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
                 run_agent_cycle_from_browser(form.get("market_scan_policy", "use_latest_scan"), _float_form_value(form.get("stale_hours"), 24.0)),
             ),
         )
+    if method == "POST" and route == "/atlas/wall/run":
+        return WebResponse(303, "", location=_with_status("/atlas/wall", run_agent_cycle_from_browser("use_latest_scan", 24.0)))
     if method == "POST" and route.startswith("/atlas/inbox/") and route.endswith("/dismiss"):
         item_id = unquote(route.removeprefix("/atlas/inbox/").removesuffix("/dismiss").strip("/"))
         try:
@@ -1964,11 +1977,11 @@ def render_tasks(status_message: str | None = None) -> str:
 
 
 def render_agents(status_message: str | None = None) -> str:
-    settings = get_settings()
-    agents = list_agent_states(settings.output_dir)
-    runs = list_agent_runs(settings.output_dir)[:12]
-    cycle = agent_cycle_summary(settings.output_dir)
-    market_scan = cycle.get("market_scan", {})
+    summary = _agent_status_summary()
+    agents = summary["agents"]
+    runs = summary["runs"][:12]
+    cycle = summary["cycle"]
+    market_scan = summary["market_scan"]
     cards = "".join(_agent_health_card(agent) for agent in agents)
     history = "".join(_agent_run_row(run) for run in runs) or "<tr><td colspan='5' class='empty'>No agent runs yet.</td></tr>"
     diff = _agent_cycle_diff_block(cycle.get("diff", {}))
@@ -2022,6 +2035,77 @@ def render_agents(status_message: str | None = None) -> str:
     </section>
     """
     return _page("Atlas Agent Monitor", content, active="/agents")
+
+
+def render_atlas_wall(status_message: str | None = None) -> str:
+    context = _load_context()
+    summary = _agent_status_summary()
+    provider = provider_diagnostics()
+    scan = latest_scan(get_settings().output_dir)
+    movers = memory_movers(get_settings().output_dir)
+    inbox_items = list_inbox_items(get_settings().output_dir)
+    pending_approvals = [approval for approval in context["approvals"] if approval.status == ApprovalStatus.PENDING]
+    pdf_ready = _approved_reports_missing_pdf(context)
+    pdf_exported = [artifact for artifact in context["artifacts"] if artifact.artifact_type == "report_final_pdf"]
+    latest_snapshot = latest_morning_brief_snapshot(get_settings().output_dir)
+    inbox_counts = {
+        "critical": sum(1 for item in inbox_items if item.severity == "critical"),
+        "warning": sum(1 for item in inbox_items if item.severity == "warning"),
+        "action": sum(1 for item in inbox_items if item.severity == "action"),
+    }
+    top_mover = _wall_top_mover(movers)
+    top_opportunity = scan.rows[0] if scan and scan.rows else None
+    content = f"""
+    {_status_banner(status_message)}
+    <section class="wall-hero">
+      <div class="wall-brand">{_atlas_logo("wall-logo")}{_greenrock_logo("wall-logo")}<div><p>Atlas OS</p><h1>Agent Wall</h1></div></div>
+      <div class="wall-clock"><strong>{_safe(datetime.now().strftime("%Y-%m-%d %H:%M"))}</strong><span>local time</span></div>
+    </section>
+    <section class="wall-grid wall-topline">
+      {_wall_stat("Provider", provider.status_label, provider.active_provider_name, _wall_color(provider.score_calculator_ready))}
+      {_wall_stat("Latest Cycle", summary["cycle"].get("last_run", "none"), f"{summary['cycle'].get('completed', 0)} complete / {summary['cycle'].get('blocked', 0)} blocked", _wall_color(not summary["cycle"].get("failed", 0)))}
+      {_wall_stat("Market Pulse", scan.scan_id if scan else "none", f"scored {len(scan.rows) if scan else 0} / skipped {scan.skipped_ticker_count if scan else 0}", _wall_color(bool(scan and scan.rows)))}
+      {_wall_stat("Approvals", str(len(pending_approvals)), f"PDF ready {len(pdf_ready)} / exported {len(pdf_exported)}", "yellow" if pending_approvals or pdf_ready else "green")}
+    </section>
+    <section class="wall-agent-grid">{''.join(_wall_agent_card(agent) for agent in summary["agents"])}</section>
+    <section class="wall-grid">
+      <article class="wall-panel">
+        <h2>Atlas Inbox</h2>
+        <div class="wall-counts">
+          {_wall_count("Critical", inbox_counts["critical"], "red")}
+          {_wall_count("Warning", inbox_counts["warning"], "yellow")}
+          {_wall_count("Action", inbox_counts["action"], "green")}
+        </div>
+        <div class="wall-list">{''.join(_wall_inbox_item(item) for item in inbox_items[:5]) or "<p>No open inbox items.</p>"}</div>
+      </article>
+      <article class="wall-panel">
+        <h2>Market Pulse</h2>
+        <p><strong>Latest scan:</strong> {_safe(scan.scan_id if scan else "none")}</p>
+        <p><strong>Configured / scored / skipped:</strong> {_safe(str(scan.configured_ticker_count if scan else 0))} / {_safe(str(len(scan.rows) if scan else 0))} / {_safe(str(scan.skipped_ticker_count if scan else 0))}</p>
+        <p><strong>Top opportunity:</strong> {_safe(_wall_opportunity(top_opportunity))}</p>
+        <p><strong>Top mover:</strong> {_safe(top_mover)}</p>
+      </article>
+      <article class="wall-panel">
+        <h2>Morning Brief</h2>
+        <p><strong>Snapshot:</strong> {_safe(latest_snapshot["timestamp"] if latest_snapshot else "none saved yet")}</p>
+        <p><strong>Reports awaiting approval:</strong> {len(pending_approvals)}</p>
+        <p><strong>Approved PDFs ready:</strong> {len(pdf_ready)}</p>
+        <p><strong>PDFs exported:</strong> {len(pdf_exported)}</p>
+      </article>
+    </section>
+    <section class="wall-actions">
+      <form method="post" action="/atlas/wall/run" onsubmit="return confirm('Run Agent Cycle using latest scan only? This creates local records and inbox items only.');">
+        <input type="hidden" name="market_scan_policy" value="use_latest_scan">
+        <input type="hidden" name="stale_hours" value="24">
+        <button type="submit">Run Agent Cycle</button>
+      </form>
+      <a href="/atlas/morning-brief">Morning Brief</a>
+      <a href="/atlas/inbox">Atlas Inbox</a>
+      <a href="/greenrock/market-pulse">Market Pulse</a>
+      <a href="/agents">Agents</a>
+    </section>
+    """
+    return _wall_page("Atlas Wall", content)
 
 
 def render_agent_run_detail(run_id: str, status_message: str | None = None) -> str:
@@ -4638,6 +4722,17 @@ def _float_form_value(value: str | None, default: float) -> float:
         return default
 
 
+def _agent_status_summary() -> dict:
+    settings = get_settings()
+    cycle = agent_cycle_summary(settings.output_dir)
+    return {
+        "agents": list_agent_states(settings.output_dir),
+        "runs": list_agent_runs(settings.output_dir),
+        "cycle": cycle,
+        "market_scan": cycle.get("market_scan", {}),
+    }
+
+
 def _attention_card(color: str, value: str, label: str, note: str) -> str:
     return f"<article class='attention-card {color}'><strong>{value}</strong><h2>{_safe(label)}</h2><p>{_safe(note)}</p></article>"
 
@@ -4680,6 +4775,68 @@ def _agent_health_card(agent) -> str:
       <div class="loadbar"><span></span></div>
     </article>
     """
+
+
+def _wall_color(ok: bool) -> str:
+    return "green" if ok else "yellow"
+
+
+def _wall_stat(label: str, value: str, note: str, color: str) -> str:
+    return f"""
+    <article class="wall-stat {color}">
+      <span>{_safe(label)}</span>
+      <strong>{_safe(str(value))}</strong>
+      <p>{_safe(note)}</p>
+    </article>
+    """
+
+
+def _wall_agent_card(agent) -> str:
+    color = "green"
+    if agent.status in {"failed"} or agent.health == "red":
+        color = "red"
+    elif agent.status in {"blocked"} or agent.health in {"yellow", "blocked"}:
+        color = "yellow"
+    elif agent.status in {"idle"}:
+        color = "gray"
+    return f"""
+    <article class="wall-agent {color}">
+      <h2>{_safe(agent.name)}</h2>
+      <div><strong>{_safe(agent.status)}</strong><span>{_safe(agent.health)}</span></div>
+      <p><b>Last run:</b> {_safe(agent.last_run_at or "none")}</p>
+      <p><b>Message:</b> {_safe(agent.last_message or "none")}</p>
+      <p><b>Task:</b> {_safe(agent.current_task or "none")}</p>
+      <p><b>Output:</b> {_safe(agent.output_summary or "none")}</p>
+    </article>
+    """
+
+
+def _wall_count(label: str, value: int, color: str) -> str:
+    return f"<div class='wall-count {color}'><strong>{value}</strong><span>{_safe(label)}</span></div>"
+
+
+def _wall_inbox_item(item) -> str:
+    return f"""
+    <div class="wall-inbox-item">
+      <strong>{_safe(item.title)}</strong>
+      <span>{_safe(item.severity)} / {_safe(item.status)} / {_safe(_date_part(item.created_at))} {_safe(_time_part(item.created_at))}</span>
+    </div>
+    """
+
+
+def _wall_top_mover(movers) -> str:
+    for key in ("rank_improvers", "score_improvers", "confidence_improvers", "evidence_improvers", "deteriorations"):
+        rows = movers.get(key, ())
+        if rows:
+            item = rows[0]
+            return f"{item.ticker}: {key.replace('_', ' ')}"
+    return "none"
+
+
+def _wall_opportunity(row: dict[str, str] | None) -> str:
+    if not row:
+        return "none"
+    return f"{row.get('symbol', '')} score {row.get('greenrock_score', '')} confidence {row.get('greenrock_confidence', '')}"
 
 
 def _agent_run_row(run) -> str:
@@ -4980,6 +5137,7 @@ def _page(title: str, content: str, active: str = "/") -> str:
     nav = (
         ("Inbox", "/"),
         ("Atlas Inbox", "/atlas/inbox"),
+        ("Wall", "/atlas/wall"),
         ("Projects", "/projects"),
         ("GreenRock", "/greenrock"),
         ("Discovery", "/greenrock/discovery"),
@@ -5321,6 +5479,97 @@ def _page(title: str, content: str, active: str = "/") -> str:
     </div>
   </footer>
 </body>
+</html>"""
+
+
+def _wall_page(title: str, content: str) -> str:
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="60">
+  <title>{_safe(title)}</title>
+  <style>
+    :root {{
+      --bg: #05070b;
+      --panel: rgba(16,23,34,.92);
+      --ink: #f4fbf7;
+      --muted: #a9b7c9;
+      --green: #37d67a;
+      --yellow: #f3c969;
+      --red: #ff5f6d;
+      --gray: #7f8a99;
+      --line: rgba(255,255,255,.14);
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      min-height: 100vh;
+      background: radial-gradient(circle at 20% 0%, rgba(55,214,122,.18), transparent 32%),
+        linear-gradient(135deg, #05070b 0%, #0d1420 58%, #07110d 100%);
+      color: var(--ink);
+      font-family: Arial, Helvetica, sans-serif;
+    }}
+    main {{ padding: 30px; display: grid; gap: 22px; }}
+    .wall-hero, .wall-panel, .wall-stat, .wall-agent, .wall-actions {{
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 8px;
+      padding: 22px;
+      box-shadow: 0 20px 60px rgba(0,0,0,.32);
+    }}
+    .wall-hero {{ display: flex; justify-content: space-between; align-items: center; }}
+    .wall-brand {{ display: flex; align-items: center; gap: 20px; }}
+    .wall-logo {{ width: 78px; height: 78px; object-fit: contain; border-radius: 8px; background: rgba(255,255,255,.06); padding: 7px; }}
+    .atlas-mark {{ display: inline-grid; place-items: center; width: 78px; height: 78px; border-radius: 8px; background: rgba(255,255,255,.08); font-size: 42px; font-weight: 900; }}
+    .wall-brand p {{ margin: 0; color: var(--yellow); text-transform: uppercase; font-weight: 800; letter-spacing: .08em; }}
+    h1 {{ margin: 0; font-size: 64px; line-height: 1; }}
+    h2 {{ margin: 0 0 14px; font-size: 30px; }}
+    p {{ font-size: 22px; line-height: 1.35; color: var(--muted); }}
+    .wall-clock {{ text-align: right; }}
+    .wall-clock strong {{ display: block; font-size: 48px; }}
+    .wall-clock span {{ color: var(--muted); font-size: 22px; }}
+    .wall-grid {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }}
+    .wall-topline {{ grid-template-columns: repeat(4, minmax(0, 1fr)); }}
+    .wall-agent-grid {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }}
+    .wall-stat span, .wall-count span, .wall-inbox-item span {{ color: var(--muted); font-size: 20px; }}
+    .wall-stat strong {{ display: block; margin: 10px 0; font-size: 34px; overflow-wrap: anywhere; }}
+    .wall-stat.green, .wall-agent.green, .wall-count.green {{ border-color: rgba(55,214,122,.6); }}
+    .wall-stat.yellow, .wall-agent.yellow, .wall-count.yellow {{ border-color: rgba(243,201,105,.7); }}
+    .wall-stat.red, .wall-agent.red, .wall-count.red {{ border-color: rgba(255,95,109,.7); }}
+    .wall-stat.gray, .wall-agent.gray {{ border-color: rgba(127,138,153,.6); }}
+    .wall-agent div {{ display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }}
+    .wall-agent div strong {{ font-size: 30px; }}
+    .wall-agent div span {{ border-radius: 999px; padding: 7px 12px; background: rgba(255,255,255,.1); font-size: 20px; }}
+    .wall-agent p {{ margin: 8px 0; }}
+    .wall-counts {{ display: flex; gap: 14px; margin-bottom: 18px; }}
+    .wall-count {{ flex: 1; border: 1px solid var(--line); border-radius: 8px; padding: 14px; background: rgba(255,255,255,.05); }}
+    .wall-count strong {{ display: block; font-size: 44px; }}
+    .wall-list {{ display: grid; gap: 12px; }}
+    .wall-inbox-item {{ border-top: 1px solid var(--line); padding-top: 12px; }}
+    .wall-inbox-item strong {{ display: block; font-size: 24px; margin-bottom: 5px; }}
+    .wall-actions {{ display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }}
+    button, .wall-actions a {{
+      border: 1px solid rgba(55,214,122,.58);
+      background: rgba(55,214,122,.9);
+      color: #06100b;
+      border-radius: 8px;
+      padding: 14px 18px;
+      font-size: 22px;
+      font-weight: 800;
+      text-decoration: none;
+      cursor: pointer;
+    }}
+    .wall-actions a {{ background: rgba(255,255,255,.08); color: var(--ink); border-color: var(--line); }}
+    @media (max-width: 1200px) {{
+      .wall-grid, .wall-topline, .wall-agent-grid {{ grid-template-columns: 1fr; }}
+      .wall-hero {{ align-items: flex-start; flex-direction: column; gap: 18px; }}
+      h1 {{ font-size: 46px; }}
+    }}
+  </style>
+</head>
+<body><main>{content}</main></body>
 </html>"""
 
 
