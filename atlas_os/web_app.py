@@ -18,7 +18,7 @@ from atlas_os import __version__
 from atlas_os.agents.orchestrator import agent_cycle_summary, get_agent_run, list_agent_runs, list_agent_states, run_agent_cycle
 from atlas_os.agents.updates import latest_agent_update, list_agent_updates
 from atlas_os.config import get_settings
-from atlas_os.daily import latest_daily_brief
+from atlas_os.daily import latest_daily_brief, run_daily_cycle
 from atlas_os.diagnostics import provider_diagnostics
 from atlas_os.core.approvals import (
     ApprovalStatus,
@@ -49,6 +49,7 @@ from atlas_os.greenrock.market_pulse import (
 )
 from atlas_os.greenrock.memory import compare_ticker, load_memory_rows, memory_movers, movement_explanation, movement_symbol, ticker_history
 from atlas_os.greenrock.population import GREENROCK_POPULATION_LABELS
+from atlas_os.greenrock.report_workbench import report_readiness, report_workbench_summary
 from atlas_os.greenrock.score import calculate_score_preview, score_signal
 from atlas_os.greenrock.scanner import (
     latest_scan,
@@ -214,6 +215,15 @@ def create_app():
     @app.get("/greenrock", response_class=HTMLResponse)
     def greenrock() -> str:
         return render_greenrock()
+
+    @app.get("/greenrock/report-workbench", response_class=HTMLResponse)
+    def greenrock_report_workbench(request: Request) -> str:
+        return render_greenrock_report_workbench(request.query_params.get("status"))
+
+    @app.post("/greenrock/report-workbench/action")
+    def greenrock_report_workbench_action(action: str = Form("")):
+        message, target = run_greenrock_report_workbench_action(action)
+        return RedirectResponse(_with_status(target, message), status_code=303)
 
     @app.get("/greenrock/picks", response_class=HTMLResponse)
     def greenrock_picks() -> str:
@@ -495,6 +505,8 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
             return _error_response(404, "Inbox Item Not Found", f"No inbox item exists for {item_id}.")
     if method == "GET" and route == "/greenrock":
         return WebResponse(200, render_greenrock(_first(query, "status")))
+    if method == "GET" and route == "/greenrock/report-workbench":
+        return WebResponse(200, render_greenrock_report_workbench(_first(query, "status")))
     if method == "GET" and route == "/greenrock/picks":
         return WebResponse(200, render_greenrock_picks_board(_first(query, "status")))
     if method == "GET" and route == "/greenrock/discovery":
@@ -611,6 +623,9 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
         except KeyError:
             return _error_response(404, "Inbox Item Not Found", f"No inbox item exists for {item_id}.")
         return WebResponse(303, "", location=_with_status("/atlas/inbox", "Inbox item completed."))
+    if method == "POST" and route == "/greenrock/report-workbench/action":
+        message, target = run_greenrock_report_workbench_action(form.get("action", ""))
+        return WebResponse(303, "", location=_with_status(target, message))
     if method == "POST" and route == "/greenrock/scanner/run":
         message = run_greenrock_scan_from_browser(form.get("population", "qqq"))
         return WebResponse(303, "", location=_with_status("/greenrock/scanner", message))
@@ -832,6 +847,7 @@ def render_morning_brief(status_message: str | None = None) -> str:
     actions = "".join(_inbox_card(item) for item in brief["action_items"])
     latest_snapshot = latest_morning_brief_snapshot(get_settings().output_dir)
     daily_brief = latest_daily_brief(get_settings().output_dir)
+    report_state = report_readiness(get_settings().output_dir, get_settings().db_path)
     content = f"""
     {_status_banner(status_message)}
     {_branded_title_hero("Morning Brief", "Atlas OS Command Center", "Local operator attention view. No email, publishing, trading, client files, or external calls.", context)}
@@ -857,6 +873,7 @@ def render_morning_brief(status_message: str | None = None) -> str:
       {_attention_card("neutral", str(brief["high_confidence_count"]), "High Confidence", "Confidence >= 75")}
       {_attention_card("neutral", _safe(brief["last_agent_cycle"]), "Last Agent Cycle", "Safe local agents")}
     </section>
+    {_report_readiness_block(report_state)}
     <section class="panel">
       <div class="section-head"><h2>Agent Health</h2><span class="subtle">Latest local cycle</span></div>
       <div class="agent-grid">{''.join(_agent_health_card(agent) for agent in brief["agent_health_cards"])}</div>
@@ -962,6 +979,27 @@ def _daily_agent_update_card(update: dict) -> str:
       <p>{_safe(update.get("summary", ""))}</p>
       <p class="subtle">Reason: {_safe(update.get("recommended_operator_action", ""))}</p>
     </article>
+    """
+
+
+def _report_readiness_block(readiness: dict) -> str:
+    settings = get_settings()
+    task_count = len(report_workbench_summary(settings.output_dir, settings.db_path, create_tasks=False)["tasks"])
+    return f"""
+    <section class="panel">
+      <div class="section-head">
+        <h2>GreenRock Report Readiness</h2>
+        <span class="subtle">Approval-gated production workflow</span>
+      </div>
+      <section class="board-meta">
+        {_attention_card(_readiness_color(readiness["state"]), readiness["state"], "Readiness State", readiness["next_operator_action"])}
+        {_attention_card("neutral", str(task_count), "Report Tasks", "local agent task records")}
+        {_attention_card("neutral", _safe(readiness.get("latest_report_run_id") or "none"), "Latest Report Run", readiness.get("latest_report_status", "none"))}
+        {_attention_card("yellow" if readiness.get("pending_approvals") else "neutral", str(readiness.get("pending_approvals", 0)), "Pending Approval", str(readiness.get("pending_approval_id") or "none"))}
+        {_attention_card("green" if readiness.get("final_pdf_complete") else ("yellow" if readiness.get("approved_pdf_ready") else "neutral"), readiness.get("pdf_status", "not_ready"), "PDF Status", "gated export")}
+      </section>
+      <p><a class="button secondary" href="/greenrock/report-workbench">Open Report Workbench</a></p>
+    </section>
     """
 
 
@@ -1158,6 +1196,99 @@ def render_greenrock(status_message: str | None = None) -> str:
     </section>
     """
     return _page("GreenRock Command Center", content, active="/greenrock")
+
+
+def render_greenrock_report_workbench(status_message: str | None = None) -> str:
+    settings = get_settings()
+    summary = report_workbench_summary(settings.output_dir, settings.db_path)
+    readiness = summary["readiness"]
+    tasks = summary["tasks"]
+    latest_review = f"/greenrock/reports/{quote(readiness['latest_report_run_id'])}/review" if readiness.get("latest_report_run_id") else "/greenrock"
+    pending_href = f"/approvals/{readiness['pending_approval_id']}" if readiness.get("pending_approval_id") else "/greenrock"
+    task_rows = "".join(_report_task_row(task) for task in tasks) or "<tr><td colspan='6' class='empty'>No report tasks yet.</td></tr>"
+    reasons = "".join(f"<li>{_safe(reason)}</li>" for reason in readiness["reasons"]) or "<li>none</li>"
+    content = f"""
+    {_status_banner(status_message)}
+    <section class="hero compact">
+      <p class="eyebrow">GreenRock Report Workbench</p>
+      <h1>One approval-gated report workflow</h1>
+      <p>Local-only production control for scan, Daily Intelligence, Analyst Slate, readiness, approvals, and PDF state.</p>
+    </section>
+    <section class="board-meta">
+      {_attention_card(_readiness_color(readiness["state"]), readiness["state"], "Readiness", readiness["next_operator_action"])}
+      {_attention_card("green" if readiness["market_pulse_status"] == "available" else "yellow", readiness["latest_scan_id"], "Latest Scan", f"age {readiness['scan_age_hours']}h")}
+      {_attention_card("green" if readiness["daily_status"] == "available" else "yellow", readiness["daily_id"], "Daily Intelligence", readiness["daily_status"])}
+      {_attention_card("green" if readiness["analytics_complete"] else "yellow", str(readiness["staged_count"]), "Staged Slate", f"missing analytics {readiness['missing_analytics']}")}
+      {_attention_card("yellow" if readiness["pending_approvals"] else "neutral", str(readiness["pending_approvals"]), "Pending Approvals", readiness["latest_report_status"])}
+      {_attention_card("green" if readiness["final_pdf_complete"] else ("yellow" if readiness["approved_pdf_ready"] else "neutral"), readiness["pdf_status"], "PDF Status", "approval gate intact")}
+    </section>
+    <section class="panel">
+      <div class="section-head"><h2>Next Operator Action</h2><span class="subtle">Agents recommend; operator decides</span></div>
+      <div class="primary-action">
+        <span class="badge attention">{_safe(readiness["state"])}</span>
+        <strong>{_safe(readiness["next_operator_action"])}</strong>
+        <ul>{reasons}</ul>
+      </div>
+    </section>
+    <section class="panel command-actions">
+      <div class="section-head"><h2>Workbench Controls</h2><span class="subtle">Existing gates preserved</span></div>
+      <div class="action-row">
+        {_workbench_action_button("daily", "Run Daily Intelligence Cycle", "Run Daily Intelligence using latest scan by default?")}
+        {_workbench_action_button("stage_slate", "Stage Analyst Slate", "Stage the Analyst Slate from latest Market Pulse? This only updates local staging.")}
+        {_workbench_action_button("enrich", "Enrich Staged Candidates", "Refresh staged candidate analytics locally?")}
+        <a class="button" href="/greenrock/staging/generate/confirm">Generate Draft From Staging</a>
+        <a class="button secondary" href="{_safe(latest_review)}">Open Latest Review Center</a>
+        <a class="button secondary" href="{_safe(pending_href)}">Review Pending Approvals</a>
+        {_workbench_export_button(readiness)}
+        <a class="button secondary" href="/greenrock/final-reports">Open Final Reports</a>
+      </div>
+      <p class="subtle">Buttons may prepare local staging or drafts, but approvals and PDF export remain explicit gated actions.</p>
+    </section>
+    <section class="panel">
+      <div class="section-head"><h2>Agent Recommendations</h2><span class="subtle">Local task chain</span></div>
+      <table>
+        <thead><tr><th>Agent</th><th>Task</th><th>Status</th><th>Output</th><th>Action</th><th>Updated</th></tr></thead>
+        <tbody>{task_rows}</tbody>
+      </table>
+    </section>
+    """
+    return _page("GreenRock Report Workbench", content, active="/greenrock")
+
+
+def _report_task_row(task: dict) -> str:
+    return f"""
+    <tr>
+      <td>{_safe(task.get("agent_id", ""))}</td>
+      <td>{_safe(task.get("title", ""))}</td>
+      <td><span class="badge { _safe(task.get("status", "")) }">{_safe(task.get("status", ""))}</span></td>
+      <td>{_safe(task.get("output_summary", ""))}</td>
+      <td>{_safe(task.get("operator_action_required", ""))}</td>
+      <td>{_safe(task.get("updated_at", ""))}</td>
+    </tr>
+    """
+
+
+def _workbench_action_button(action: str, label: str, confirm: str) -> str:
+    return f"""
+    <form method="post" action="/greenrock/report-workbench/action" class="inline-form" onsubmit="return confirm('{_safe(confirm)}');">
+      <input type="hidden" name="action" value="{_safe(action)}">
+      <button type="submit">{_safe(label)}</button>
+    </form>
+    """
+
+
+def _workbench_export_button(readiness: dict) -> str:
+    if readiness.get("approved_pdf_ready"):
+        return _workbench_action_button("export_pdf", "Export Approved PDF", "Export approved PDF locally? Approval must already be approved.")
+    return '<span class="button disabled">Export Approved PDF: approval required</span>'
+
+
+def _readiness_color(state: str) -> str:
+    if state in {"Ready to Draft", "Final PDF Complete"}:
+        return "green"
+    if state in {"Needs Review", "Draft Awaiting Approval", "Approved, PDF Ready"}:
+        return "yellow"
+    return "red"
 
 
 def render_greenrock_picks_board(status_message: str | None = None) -> str:
@@ -2171,6 +2302,7 @@ def render_atlas_wall(status_message: str | None = None) -> str:
     pdf_exported = [artifact for artifact in context["artifacts"] if artifact.artifact_type == "report_final_pdf"]
     latest_snapshot = latest_morning_brief_snapshot(get_settings().output_dir)
     daily = latest_daily_brief(get_settings().output_dir)
+    report_state = report_readiness(get_settings().output_dir, get_settings().db_path)
     inbox_counts = {
         "critical": sum(1 for item in inbox_items if item.severity == "critical"),
         "warning": sum(1 for item in inbox_items if item.severity == "warning"),
@@ -2189,6 +2321,12 @@ def render_atlas_wall(status_message: str | None = None) -> str:
       {_wall_stat("Latest Cycle", summary["cycle"].get("last_run", "none"), f"{summary['cycle'].get('completed', 0)} complete / {summary['cycle'].get('blocked', 0)} blocked", _wall_color(not summary["cycle"].get("failed", 0)))}
       {_wall_stat("Market Pulse", scan.scan_id if scan else "none", f"scored {len(scan.rows) if scan else 0} / skipped {scan.skipped_ticker_count if scan else 0}", _wall_color(bool(scan and scan.rows)))}
       {_wall_stat("Approvals", str(len(pending_approvals)), f"PDF ready {len(pdf_ready)} / exported {len(pdf_exported)}", "yellow" if pending_approvals or pdf_ready else "green")}
+    </section>
+    <section class="wall-grid wall-topline">
+      {_wall_stat("Report Ready", report_state["state"], report_state["next_operator_action"], _readiness_color(report_state["state"]))}
+      {_wall_stat("Report Tasks", str(len(report_workbench_summary(get_settings().output_dir, get_settings().db_path, create_tasks=False)["tasks"])), f"latest run {report_state.get('latest_report_run_id') or 'none'}", "green")}
+      {_wall_stat("Pending Approval", str(report_state.get("pending_approvals", 0)), str(report_state.get("pending_approval_id") or "none"), "yellow" if report_state.get("pending_approvals") else "green")}
+      {_wall_stat("PDF", report_state.get("pdf_status", "not_ready"), "approval gate intact", "green" if report_state.get("final_pdf_complete") else ("yellow" if report_state.get("approved_pdf_ready") else "gray"))}
     </section>
     <section class="wall-agent-grid">{''.join(_wall_agent_card(agent) for agent in summary["agents"])}</section>
     <section class="wall-grid">
@@ -3156,6 +3294,36 @@ def run_agent_cycle_from_browser(market_scan_policy: str = "use_latest_scan", st
         f"fresh data pulled: {'yes' if market_scan.get('fresh_data_pulled') else 'no'}. "
         "No email, publishing, trading, broker/API order, client-file, credential, or external LLM/API action was created."
     )
+
+
+def run_greenrock_report_workbench_action(action: str) -> tuple[str, str]:
+    settings = get_settings()
+    normalized = action.strip()
+    if normalized == "daily":
+        brief = run_daily_cycle(settings.output_dir, settings.db_path, market_scan_policy="use_latest_scan")
+        return (
+            f"Daily Intelligence Cycle complete: {brief['daily_id']}. No email, publishing, trading, client-file, PDF export, approval, or external action was created.",
+            "/greenrock/report-workbench",
+        )
+    if normalized == "stage_slate":
+        return stage_market_pulse_from_browser(overwrite_staging=True, slate_mode="analyst"), "/greenrock/report-workbench"
+    if normalized == "enrich":
+        page = enrich_greenrock_staging_candidates()
+        status = "Staged candidate enrichment attempted. Review staging for details. No approval, PDF, email, publishing, trading, client-file, or external action was created."
+        if "Provider required" in page:
+            status = "Staged candidate enrichment blocked: provider required. No report, approval, PDF, email, publishing, trading, client-file, or external action was created."
+        return status, "/greenrock/report-workbench"
+    if normalized == "export_pdf":
+        readiness = report_readiness(settings.output_dir, settings.db_path)
+        approval_id = readiness.get("approved_approval_id")
+        if not approval_id:
+            return "PDF export blocked: no approved report is ready for PDF export.", "/greenrock/report-workbench"
+        try:
+            export_greenrock_pdf(int(approval_id))
+        except (KeyError, ValueError) as error:
+            return f"PDF export blocked: {error}", "/greenrock/report-workbench"
+        return f"Approved PDF exported for approval {approval_id}.", "/greenrock/final-reports"
+    return "Unknown workbench action. No local changes were made.", "/greenrock/report-workbench"
 
 
 def dismiss_atlas_inbox_item(item_id: str) -> None:
@@ -5318,6 +5486,7 @@ def _page(title: str, content: str, active: str = "/") -> str:
         ("Wall", "/atlas/wall"),
         ("Projects", "/projects"),
         ("GreenRock", "/greenrock"),
+        ("Workbench", "/greenrock/report-workbench"),
         ("Discovery", "/greenrock/discovery"),
         ("Picks", "/greenrock/picks"),
         ("Universe", "/greenrock/universe"),

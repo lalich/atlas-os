@@ -176,6 +176,47 @@ Review the result in `/atlas/morning-brief`. The Daily Intelligence Brief appear
 
 Daily Intelligence does not approve, publish, email, trade, place broker/API orders, touch client files, export PDFs, or call external LLM/API services.
 
+## Use GreenRock Report Workbench
+
+Open:
+
+```text
+http://127.0.0.1:8000/greenrock/report-workbench
+```
+
+Or inspect from CLI:
+
+```bash
+atlas greenrock report-workbench
+atlas greenrock report-ready
+atlas greenrock report-tasks
+atlas greenrock report-task <task_id>
+```
+
+The workbench is the one-page production surface for one approval-gated GreenRock report. It shows latest scan, Market Pulse status, Daily Intelligence status, staged Analyst Slate, readiness checks, pending approvals, PDF status, agent recommendations, and next operator action.
+
+Readiness states are deterministic:
+
+- Not Ready
+- Needs Review
+- Ready to Draft
+- Draft Awaiting Approval
+- Approved, PDF Ready
+- Final PDF Complete
+
+Use the workbench controls in order:
+
+1. Run Daily Intelligence Cycle.
+2. Stage Analyst Slate.
+3. Enrich staged candidates if analytics are missing.
+4. Generate Draft From Staging when readiness allows it.
+5. Open Latest Review Center.
+6. Review Pending Approvals through the confirmation gate.
+7. Export Approved PDF only after approval.
+8. Open Final Reports.
+
+Agent task records live under `.atlas/output/agents/tasks/`. They are local workflow records only. The workbench does not approve, reject, publish, email, trade, place broker/API orders, touch client files, use credentials, call external LLM/API services, or bypass PDF gates.
+
 ## Check Local Setup
 
 Use Doctor when Score Calculator or scanner setup is unclear:

@@ -550,6 +550,21 @@ atlas daily show <daily_id>
 
 The Daily Intelligence Brief includes an executive summary, What Changed, up to five research priorities, agent update cards, up to five operator actions, and prior-cycle comparison. `/atlas/morning-brief` now places this brief first, with system metrics below. `/atlas/wall` shows the latest daily cycle, executive summary, top priorities, QA health, biggest mover, report readiness, Inbox counts, and agent status. `/agents/<agent_id>` shows structured local update history for each agent.
 
+GreenRock Report Workbench:
+
+```bash
+atlas greenrock report-workbench
+atlas greenrock report-ready
+atlas greenrock report-tasks
+atlas greenrock report-task <task_id>
+```
+
+Open `/greenrock/report-workbench` for the single report-production control page. It shows the latest scan, Market Pulse status, Daily Intelligence status, staged Analyst Slate, readiness checks, pending approvals, PDF status, agent recommendations, and the next operator action.
+
+The workbench creates local agent task records under `.atlas/output/agents/tasks/` for Market, Evidence, Fundamental, Memory, Report, QA, and Inbox responsibilities. Readiness is deterministic: `Not Ready`, `Needs Review`, `Ready to Draft`, `Draft Awaiting Approval`, `Approved, PDF Ready`, or `Final PDF Complete`, with reasons such as stale scan, staging underfilled, analytics missing, QA warnings, pending approval, or approved PDF missing.
+
+Workbench controls run existing gated actions only: Daily Intelligence, Stage Analyst Slate, Enrich Staged Candidates, Generate Draft From Staging, Review Draft, Review Pending Approvals, Export Approved PDF, and Open Final Reports. Agents may recommend and prepare local staging/drafts, but they never approve, export without approval, email, publish, trade, touch client files, or bypass gates.
+
 ## Using Atlas Command Center
 
 ```bash

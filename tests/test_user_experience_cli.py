@@ -148,6 +148,26 @@ class UserExperienceCliTests(unittest.TestCase):
                 self.assertIn("inbox_counts:", wall)
                 self.assertIn("scripts/atlas-serve", wall)
 
+                ready = _run_cli(["greenrock", "report-ready"])
+                self.assertIn("GreenRock Report Readiness", ready)
+                self.assertIn("readiness_state:", ready)
+                self.assertIn("next_operator_action:", ready)
+
+                workbench = _run_cli(["greenrock", "report-workbench"])
+                self.assertIn("GreenRock Report Workbench", workbench)
+                self.assertIn("report_task_count:", workbench)
+                self.assertIn("agent_recommendations:", workbench)
+                self.assertIn("No approval, PDF export, email, publishing, trading", workbench)
+
+                tasks = _run_cli(["greenrock", "report-tasks"])
+                self.assertIn("GreenRock Report Agent Tasks", tasks)
+                self.assertIn("market", tasks)
+                task_id = _first_task_id(tasks)
+
+                task = _run_cli(["greenrock", "report-task", task_id])
+                self.assertIn("GreenRock Report Agent Task", task)
+                self.assertIn("operator_action_required:", task)
+
     def test_daily_intelligence_cli(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -222,6 +242,13 @@ def _first_inbox_id(output: str) -> str:
         if line.startswith("inbox-"):
             return line.split()[0]
     raise AssertionError(f"Missing inbox item in output:\n{output}")
+
+
+def _first_task_id(output: str) -> str:
+    for line in output.splitlines():
+        if line.startswith("agent-task-"):
+            return line.split()[0]
+    raise AssertionError(f"Missing report task in output:\n{output}")
 
 
 if __name__ == "__main__":

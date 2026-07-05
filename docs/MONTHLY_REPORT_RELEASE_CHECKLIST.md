@@ -5,6 +5,9 @@ Use this checklist for the local GreenRock monthly report workflow. Preferred pa
 ## 1. Generate Draft
 
 ```bash
+atlas greenrock report-ready
+atlas greenrock report-workbench
+atlas greenrock report-tasks
 atlas greenrock staging ready
 atlas greenrock staging enrich
 atlas greenrock report-from-staging
@@ -20,6 +23,7 @@ atlas greenrock report-draft
 ```
 
 - Confirm the command completed successfully.
+- Open `/greenrock/report-workbench` and confirm readiness state, next operator action, task records, latest scan, Daily Intelligence status, staged Analyst Slate, pending approvals, and PDF status.
 - Confirm staged analytics are complete before report generation. Underfilled sections and missing analytics are different warnings.
 - Record the `run_id` and `approval_id`.
 - Confirm the report path is run-specific.
@@ -114,6 +118,7 @@ atlas morning-brief
 - Confirm final PDF status is `exported`.
 - Confirm pending approvals are expected.
 - Open `/atlas/morning-brief` and confirm action buttons point to Market Pulse, pending approvals, latest report review, Analyst Slate staging, staging draft generation when ready, and final PDF archive.
+- Confirm `/atlas/morning-brief` and `/atlas/wall` show the GreenRock report readiness block.
 
 ## 8. Optional Draft Cleanup
 

@@ -51,6 +51,12 @@ from atlas_os.greenrock.population import (
     validate_populations,
 )
 from atlas_os.greenrock.report import build_sample_report
+from atlas_os.greenrock.report_workbench import (
+    get_report_task,
+    list_report_tasks,
+    report_readiness,
+    report_workbench_summary,
+)
 from atlas_os.greenrock.score import calculate_score_preview, score_signal
 from atlas_os.greenrock.scanner import (
     cleanup_failed_tickers,
@@ -310,6 +316,23 @@ def build_parser() -> argparse.ArgumentParser:
     greenrock_subparsers.add_parser(
         "review",
         help="Show latest GreenRock report review summary.",
+    )
+    greenrock_subparsers.add_parser(
+        "report-workbench",
+        help="Show GreenRock report production workbench summary.",
+    )
+    greenrock_subparsers.add_parser(
+        "report-tasks",
+        help="Create and list local GreenRock report agent tasks.",
+    )
+    report_task = greenrock_subparsers.add_parser(
+        "report-task",
+        help="Show one local GreenRock report agent task.",
+    )
+    report_task.add_argument("task_id")
+    greenrock_subparsers.add_parser(
+        "report-ready",
+        help="Show deterministic GreenRock report readiness state.",
     )
     greenrock_subparsers.add_parser(
         "open-latest",
@@ -606,6 +629,14 @@ def run_morning_brief(snapshot: bool = False) -> int:
             print(f"  {item.severity} {item.title}: {item.detail}")
     else:
         print("  none")
+    readiness = report_readiness(settings.output_dir, db_path)
+    print("greenrock_report_readiness:")
+    print(f"  state: {readiness['state']}")
+    print(f"  next_operator_action: {readiness['next_operator_action']}")
+    print(f"  report_task_count: {len(list_report_tasks(settings.output_dir))}")
+    print(f"  latest_report_run: {readiness['latest_report_run_id'] or 'none'}")
+    print(f"  pending_approval: {readiness['pending_approval_id'] or 'none'}")
+    print(f"  pdf_status: {readiness['pdf_status']}")
     print("suggested_actions:")
     for action in _morning_actions(scan, len(pending), len(pdf_ready), movers):
         print(f"  {action}")
@@ -990,6 +1021,93 @@ def run_greenrock_picks_board() -> int:
     _print_candidate_rows("Small/mid-cap picks", small_rows)
     print("Start the local Command Center with: atlas serve")
     return 0
+
+
+def run_greenrock_report_workbench() -> int:
+    settings = get_settings()
+    summary = report_workbench_summary(settings.output_dir, settings.db_path)
+    readiness = summary["readiness"]
+    print("GreenRock Report Workbench")
+    _print_report_readiness(readiness)
+    print(f"report_task_count: {len(summary['tasks'])}")
+    print("agent_recommendations:")
+    for task in summary["tasks"][:7]:
+        print(f"  {task['agent_id']}: {task['status']} - {task['operator_action_required'] or task['output_summary']}")
+    print("url: http://127.0.0.1:8000/greenrock/report-workbench")
+    print("No approval, PDF export, email, publishing, trading, client-file, credential, broker/API order, or external LLM/API action was created.")
+    return 0
+
+
+def run_greenrock_report_ready() -> int:
+    settings = get_settings()
+    readiness = report_readiness(settings.output_dir, settings.db_path)
+    print("GreenRock Report Readiness")
+    _print_report_readiness(readiness)
+    print("No approval, PDF export, email, publishing, trading, client-file, credential, broker/API order, or external LLM/API action was created.")
+    return 0
+
+
+def run_greenrock_report_tasks() -> int:
+    settings = get_settings()
+    report_workbench_summary(settings.output_dir, settings.db_path)
+    tasks = list_report_tasks(settings.output_dir)
+    print("GreenRock Report Agent Tasks")
+    if not tasks:
+        print("No report tasks found.")
+        return 0
+    print("task_id agent status updated target action title")
+    for task in tasks:
+        print(
+            f"{task.task_id} {task.agent_id} {task.status} {task.updated_at} "
+            f"{task.target_url or '-'} {task.operator_action_required.replace(' ', '_') or '-'} {task.title.replace(' ', '_')}"
+        )
+    return 0
+
+
+def run_greenrock_report_task(task_id: str) -> int:
+    settings = get_settings()
+    try:
+        task = get_report_task(settings.output_dir, task_id)
+    except KeyError:
+        print("GreenRock report task not found")
+        print(f"task_id: {task_id}")
+        return 1
+    print("GreenRock Report Agent Task")
+    print(f"task_id: {task.task_id}")
+    print(f"agent_id: {task.agent_id}")
+    print(f"title: {task.title}")
+    print(f"status: {task.status}")
+    print(f"created_at: {task.created_at}")
+    print(f"updated_at: {task.updated_at}")
+    print(f"input_summary: {task.input_summary}")
+    print(f"output_summary: {task.output_summary}")
+    print(f"related_scan_id: {task.related_scan_id or 'none'}")
+    print(f"related_daily_id: {task.related_daily_id or 'none'}")
+    print(f"related_report_run_id: {task.related_report_run_id or 'none'}")
+    print(f"related_approval_id: {task.related_approval_id or 'none'}")
+    print(f"target_url: {task.target_url or 'none'}")
+    print(f"operator_action_required: {task.operator_action_required or 'none'}")
+    return 0
+
+
+def _print_report_readiness(readiness: dict) -> None:
+    print(f"readiness_state: {readiness['state']}")
+    print(f"next_operator_action: {readiness['next_operator_action']}")
+    print(f"latest_scan_id: {readiness['latest_scan_id']}")
+    print(f"daily_id: {readiness['daily_id']}")
+    print(f"staged_count: {readiness['staged_count']}")
+    print(f"analytics_complete: {_yes_no(readiness['analytics_complete'])}")
+    print(f"missing_analytics: {readiness['missing_analytics']}")
+    print(f"pending_approvals: {readiness['pending_approvals']}")
+    print(f"pending_approval_id: {readiness['pending_approval_id'] or 'none'}")
+    print(f"latest_report_run_id: {readiness['latest_report_run_id'] or 'none'}")
+    print(f"pdf_status: {readiness['pdf_status']}")
+    print("reasons:")
+    if readiness["reasons"]:
+        for reason in readiness["reasons"]:
+            print(f"  {reason}")
+    else:
+        print("  none")
 
 
 def run_greenrock_score(ticker: str, data_mode: str = "real", selection_mode: str | None = None) -> int:
@@ -2839,6 +2957,14 @@ def main(argv: list[str] | None = None) -> int:
             )
         if args.greenrock_command == "review":
             return run_greenrock_review()
+        if args.greenrock_command == "report-workbench":
+            return run_greenrock_report_workbench()
+        if args.greenrock_command == "report-tasks":
+            return run_greenrock_report_tasks()
+        if args.greenrock_command == "report-task":
+            return run_greenrock_report_task(args.task_id)
+        if args.greenrock_command == "report-ready":
+            return run_greenrock_report_ready()
         if args.greenrock_command == "open-latest":
             return run_greenrock_open_latest()
         if args.greenrock_command == "export-pdf":

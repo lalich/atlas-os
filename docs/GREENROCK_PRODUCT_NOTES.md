@@ -63,6 +63,7 @@
 - Keep browser Run Agent Cycle actions confirmation-gated and local-only. They must not send email, publish, trade, place broker/API orders, touch client files, use credentials, call external LLM/API services, approve reports, or export PDFs.
 - Keep Morning Brief agent integration concise: latest agent run summary, health cards, Atlas Inbox items, and Last Agent Cycle timestamp.
 - Keep Daily Intelligence as the top operator synthesis layer: it may create structured local AgentUpdate records, Daily Intelligence Brief JSON, material deduplicated Inbox items, and Morning Brief snapshots, but it must consume canonical scoring/ranking outputs rather than creating a separate scoring path.
+- Treat `/greenrock/report-workbench` as the single report-production workbench. It may refresh local agent task records, recommend next operator actions, stage an Analyst Slate when explicitly invoked, enrich staged candidates, and point to existing draft/approval/PDF controls. It must not approve, export without approval, email, publish, trade, touch client files, call external LLM/API services, or bypass approval/PDF gates.
 - Keep `/agents` as an operational monitor: cards, status, current task, last message, health, latest output summary, and run history.
 - Keep the dashboard Agent Cycle card focused on last run, completed agents, failed agents, blocked agents, inbox items generated, and a confirmed Run Agent Cycle button.
 

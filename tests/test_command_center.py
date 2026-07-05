@@ -13,12 +13,15 @@ from pathlib import Path
 from unittest.mock import patch
 
 from atlas_os.agents.orchestrator import get_agent_cycle_summary, run_agent_cycle
+from atlas_os.agents.tasks import list_agent_tasks
 from atlas_os.agents.updates import list_agent_updates
 from atlas_os.cli import build_parser, main
 from atlas_os.config import get_settings
 from atlas_os.core.approvals import list_approvals
 from atlas_os.core.artifacts import list_artifacts
 from atlas_os.daily import get_daily_brief, list_daily_briefs, run_daily_cycle
+from atlas_os.greenrock.market_pulse import stage_analyst_slate_candidates
+from atlas_os.greenrock.report_workbench import report_readiness
 from atlas_os.core.workflow_runs import list_workflow_runs
 from atlas_os.db.database import connect, initialize_database
 from atlas_os.greenrock.market_data import MarketDataProvider
@@ -618,6 +621,65 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("Latest Cycle", response.body)
         self.assertIn("Market Pulse", response.body)
         self.assertIn("Morning Brief", response.body)
+        self.assertIn("Report Ready", response.body)
+
+    def test_greenrock_report_workbench_route_creates_local_tasks(self) -> None:
+        with _isolated_env() as root:
+            response = dispatch_request("GET", "/greenrock/report-workbench")
+            tasks = list_agent_tasks(root / "output")
+            morning = dispatch_request("GET", "/atlas/morning-brief")
+            wall = dispatch_request("GET", "/atlas/wall")
+            tasks_dir_exists = (root / "output" / "agents" / "tasks").exists()
+
+        self.assertEqual(response.status, 200)
+        self.assertIn("GreenRock Report Workbench", response.body)
+        self.assertIn("Next Operator Action", response.body)
+        self.assertIn("Agent Recommendations", response.body)
+        self.assertIn("Run Daily Intelligence Cycle", response.body)
+        self.assertIn("Stage Analyst Slate", response.body)
+        self.assertIn("Generate Draft From Staging", response.body)
+        self.assertTrue(tasks_dir_exists)
+        self.assertEqual({task.agent_id for task in tasks}, {"market", "evidence", "memory", "fundamental", "report", "qa", "inbox"})
+        self.assertIn("GreenRock Report Readiness", morning.body)
+        self.assertIn("Report Ready", wall.body)
+
+    def test_report_readiness_states_progress_without_bypassing_gates(self) -> None:
+        with _isolated_env() as root:
+            empty = report_readiness(root / "output", root / "atlas.db")
+            run_population_scan(root / "output", "all", provider=FullHistoryProvider())
+            stage_analyst_slate_candidates(root / "output", overwrite=True)
+            staged = report_readiness(root / "output", root / "atlas.db")
+            main(["greenrock", "report-from-staging", "--allow-underfilled", "--allow-missing-analytics"])
+            draft = report_readiness(root / "output", root / "atlas.db")
+            with connect(initialize_database(root / "atlas.db")) as connection:
+                approvals = list_approvals(connection)
+                artifacts = list_artifacts(connection)
+
+        self.assertEqual(empty["state"], "Not Ready")
+        self.assertIn(staged["state"], {"Ready to Draft", "Needs Review"})
+        self.assertEqual(draft["state"], "Draft Awaiting Approval")
+        self.assertEqual(len(approvals), 1)
+        self.assertTrue(any(artifact.artifact_type == "report_draft_md" for artifact in artifacts))
+        self.assertFalse(any(artifact.artifact_type == "report_final_pdf" for artifact in artifacts))
+
+    def test_workbench_actions_preserve_gates(self) -> None:
+        with _isolated_env() as root:
+            run_population_scan(root / "output", "all", provider=FullHistoryProvider())
+            stage_response = dispatch_request("POST", "/greenrock/report-workbench/action", "action=stage_slate")
+            daily_response = dispatch_request("POST", "/greenrock/report-workbench/action", "action=daily")
+            export_response = dispatch_request("POST", "/greenrock/report-workbench/action", "action=export_pdf")
+            with connect(initialize_database(root / "atlas.db")) as connection:
+                approvals = list_approvals(connection)
+                artifacts = list_artifacts(connection)
+
+        self.assertEqual(stage_response.status, 303)
+        self.assertEqual(daily_response.status, 303)
+        self.assertEqual(export_response.status, 303)
+        self.assertIn("No+report", stage_response.location)
+        self.assertIn("Daily+Intelligence+Cycle+complete", daily_response.location)
+        self.assertIn("PDF+export+blocked", export_response.location)
+        self.assertEqual(approvals, ())
+        self.assertFalse(any(artifact.artifact_type == "report_final_pdf" for artifact in artifacts))
 
     def test_daily_intelligence_cycle_persists_updates_and_brief(self) -> None:
         with _isolated_env() as root:

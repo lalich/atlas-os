@@ -115,6 +115,64 @@ Daily records live under:
 .atlas/output/agents/updates/
 ```
 
+## Agent Tasks
+
+Phase 9B adds local task records for report-production work:
+
+```text
+.atlas/output/agents/tasks/
+```
+
+Each task includes `task_id`, `agent_id`, title, status, created/updated timestamps, input/output summaries, related scan/daily/report/approval IDs, target URL, and any operator action required.
+
+GreenRock report tasks are refreshed by `/greenrock/report-workbench` and:
+
+```bash
+atlas greenrock report-workbench
+atlas greenrock report-tasks
+atlas greenrock report-task <task_id>
+atlas greenrock report-ready
+```
+
+Task responsibilities:
+
+- Market Agent verifies the latest scan, stale policy, and scan health.
+- Evidence Agent reviews Market Pulse leaders and weak evidence candidates.
+- Memory Agent identifies rank, score, confidence, and evidence movers relevant to the report.
+- Fundamental Agent flags Red Flag guardrails and strongest balance-sheet support among report candidates.
+- Report Agent prepares the recommended Analyst Slate workflow and recommends draft generation only when ready or explicitly underfilled.
+- QA Agent checks missing analytics, underfilled buckets, provider failures, stale scans, duplicate tickers, logos, source disclosure, and approval state.
+- Inbox Agent creates only material report workflow actions.
+
+Agents may recommend and prepare local staging or approval-gated drafts through existing operator-invoked workflows. They may not approve, export PDFs without approval, email, publish, trade, place broker/API orders, touch client files, use credentials, or bypass gates.
+
+## GreenRock Report Workbench
+
+`/greenrock/report-workbench` is the single local page for one GreenRock report production workflow. It shows:
+
+- latest successful scan
+- Market Pulse status
+- Daily Intelligence status
+- staged Analyst Slate
+- readiness checks
+- pending approvals
+- PDF status
+- agent recommendations
+- next operator action
+
+Deterministic readiness states:
+
+- `Not Ready`
+- `Needs Review`
+- `Ready to Draft`
+- `Draft Awaiting Approval`
+- `Approved, PDF Ready`
+- `Final PDF Complete`
+
+Reasons include stale scan, staging underfilled, analytics missing, QA warnings, pending approval, and approved-but-missing PDF.
+
+The workbench controls route to the existing safe local actions: Run Daily Intelligence Cycle, Stage Analyst Slate, Enrich Staged Candidates, Generate Draft From Staging, Open Latest Review Center, Review Pending Approvals, Export Approved PDF, and Open Final Reports.
+
 Structured `AgentUpdate` records include `update_id`, `cycle_id`, `agent_name`, timestamps, status, severity, headline, summary, findings, supporting metrics, related tickers, scan/report/approval links, recommended operator action, target URL, and provenance. The update records are deterministic local JSON files.
 
 The Daily Intelligence Brief includes:
