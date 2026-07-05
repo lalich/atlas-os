@@ -514,13 +514,13 @@ atlas agents status
 atlas inbox list
 ```
 
-The cycle runs Market, Evidence, Memory, Report, QA, and Inbox agents in order. Agents are local workflow operators, not autonomous external actors. They may read local Atlas state and write local run records, local artifacts, local snapshots, and Atlas Inbox items only.
+The cycle runs Market, Evidence, Fundamental, Memory, Report, QA, and Inbox agents in order. Agents are local workflow operators, not autonomous external actors. They may read local Atlas state and write local run records, local artifacts, local snapshots, and Atlas Inbox items only.
 
 Agents may not send email, publish, trade, place broker/API orders, touch client files, commit credentials, call external LLM/API services, or bypass report approval/PDF gates. Report Agent only recommends that a draft can be generated; it does not generate reports unless the operator explicitly invokes the existing report workflow.
 
 Run records live at `.atlas/output/agents/runs/`, cycle summaries and diffs live at `.atlas/output/agents/cycles/`, current state lives at `.atlas/output/agents/agent_state.json`, and Atlas Inbox items live at `.atlas/output/atlas/inbox/items.json`.
 
-`atlas agents run` prints a cycle ID, timestamps, completed/failed/blocked counts, inbox items created, warnings, top operator actions, and the Market Agent scan policy used.
+`atlas agents run` prints a cycle ID, timestamps, completed/failed/blocked counts, inbox items created, warnings, top operator actions, and the Market Agent scan policy used. The full local cycle order is Market, Evidence, Fundamental, Memory, Report, QA, then Inbox.
 
 Market Agent scan policy defaults to `use_latest_scan`, which references the latest successful Market Pulse scan and does not pull fresh data. Operators can explicitly choose `run_fresh_scan` to pull a new local scan, or `run_if_stale --stale-hours 24` to refresh only when the latest scan is older than the threshold. Fresh scan policies remain local-only and do not email, publish, trade, create client files, approve reports, or export PDFs.
 
@@ -534,6 +534,21 @@ atlas wall
 ```
 
 Open `http://127.0.0.1:8000/atlas/wall` for the office-TV view. It auto-refreshes every 60 seconds and shows agent cards, provider status, latest cycle state, Atlas Inbox counts, Market Pulse summary, Morning Brief snapshot status, pending approvals, and PDF readiness. The wall Run Agent Cycle button uses the default `use_latest_scan` policy and remains confirmation-gated.
+
+Daily Intelligence Cycle:
+
+```bash
+atlas daily
+atlas daily --market-scan-policy use_latest_scan
+atlas daily --market-scan-policy run_if_stale --stale-hours 24
+atlas daily --market-scan-policy run_fresh_scan
+atlas daily history
+atlas daily show <daily_id>
+```
+
+`atlas daily` is the operator-facing synthesis layer. It checks provider/system health, applies the Market Agent scan policy, runs the coordinated local agent cycle, writes structured agent updates under `.atlas/output/agents/updates/`, creates a Daily Intelligence Brief under `.atlas/output/atlas/daily/`, creates only material deduplicated Atlas Inbox items, and saves a Morning Brief snapshot. It consumes existing Market Pulse, Ranking, Score, Evidence, Memory, staging, approval, report, and PDF state; it does not create a second scoring path.
+
+The Daily Intelligence Brief includes an executive summary, What Changed, up to five research priorities, agent update cards, up to five operator actions, and prior-cycle comparison. `/atlas/morning-brief` now places this brief first, with system metrics below. `/atlas/wall` shows the latest daily cycle, executive summary, top priorities, QA health, biggest mover, report readiness, Inbox counts, and agent status. `/agents/<agent_id>` shows structured local update history for each agent.
 
 ## Using Atlas Command Center
 

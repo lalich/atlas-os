@@ -16,7 +16,9 @@ from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 
 from atlas_os import __version__
 from atlas_os.agents.orchestrator import agent_cycle_summary, get_agent_run, list_agent_runs, list_agent_states, run_agent_cycle
+from atlas_os.agents.updates import latest_agent_update, list_agent_updates
 from atlas_os.config import get_settings
+from atlas_os.daily import latest_daily_brief
 from atlas_os.diagnostics import provider_diagnostics
 from atlas_os.core.approvals import (
     ApprovalStatus,
@@ -388,6 +390,10 @@ def create_app():
     def agents() -> str:
         return render_agents()
 
+    @app.get("/agents/{agent_name}", response_class=HTMLResponse)
+    def agent_detail(agent_name: str) -> str:
+        return render_agent_update_history(agent_name)
+
     @app.post("/agents/run")
     def agents_run(
         market_scan_policy: str = Form("use_latest_scan"),
@@ -529,6 +535,9 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
             return WebResponse(200, render_agent_run_detail(run_id, _first(query, "status")))
         except KeyError:
             return _error_response(404, "Agent Run Not Found", f"No agent run exists for {run_id}.")
+    if method == "GET" and route.startswith("/agents/"):
+        agent_name = unquote(route.removeprefix("/agents/"))
+        return WebResponse(200, render_agent_update_history(agent_name, _first(query, "status")))
     if method == "GET" and route == "/reports":
         return WebResponse(200, render_reports(_first(query, "status")))
     if method == "GET" and route == "/open-local":
@@ -822,9 +831,11 @@ def render_morning_brief(status_message: str | None = None) -> str:
     movers = brief["movers"]
     actions = "".join(_inbox_card(item) for item in brief["action_items"])
     latest_snapshot = latest_morning_brief_snapshot(get_settings().output_dir)
+    daily_brief = latest_daily_brief(get_settings().output_dir)
     content = f"""
     {_status_banner(status_message)}
     {_branded_title_hero("Morning Brief", "Atlas OS Command Center", "Local operator attention view. No email, publishing, trading, client files, or external calls.", context)}
+    {_daily_intelligence_panel(daily_brief)}
     {_morning_brief_action_buttons(context, brief)}
     <section class="panel command-actions">
       <div class="section-head">
@@ -885,6 +896,73 @@ def render_morning_brief(status_message: str | None = None) -> str:
     </section>
     """
     return _page("Atlas Morning Brief", content, active="/")
+
+
+def _daily_intelligence_panel(brief: dict | None) -> str:
+    if not brief:
+        return """
+        <section class="panel">
+          <div class="section-head"><h2>Daily Intelligence Brief</h2><span class="subtle">No daily cycle yet</span></div>
+          <p class="empty">Run <a href="/agents">Agent Cycle</a> or use atlas daily to create the first Daily Intelligence Brief.</p>
+        </section>
+        """
+    priorities = brief.get("research_priorities", ())[:5]
+    updates = brief.get("agent_updates", ())[:6]
+    actions = brief.get("operator_actions", ())[:5]
+    return f"""
+    <section class="panel daily-brief">
+      <div class="section-head">
+        <h2>Daily Intelligence Brief</h2>
+        <span class="subtle">{_safe(brief.get("created_at", ""))} / cycle {_safe(brief.get("cycle_id", ""))}</span>
+      </div>
+      <section class="panel inner-panel">
+        <h2>Executive Summary</h2>
+        <p>{_safe(brief.get("executive_summary", ""))}</p>
+      </section>
+      <section class="watchlist-grid">
+        <article>
+          <h3>What Changed</h3>
+          <ul>{''.join(f"<li>{_safe(item)}</li>" for item in brief.get("what_changed", ())[:6])}</ul>
+        </article>
+        <article>
+          <h3>Operator Actions</h3>
+          <ul>{''.join(f"<li><strong>{_safe(action.get('severity', 'info'))}</strong> {_safe(action.get('title', ''))}</li>" for action in actions) or "<li>No urgent local action items.</li>"}</ul>
+        </article>
+      </section>
+      <section class="panel inner-panel">
+        <div class="section-head"><h2>Today's Research Priorities</h2><span class="subtle">Max 5</span></div>
+        <div class="inbox-list">{''.join(_daily_priority_card(priority) for priority in priorities) or "<p class='empty'>No current research priorities.</p>"}</div>
+      </section>
+      <section class="panel inner-panel">
+        <div class="section-head"><h2>Agent Updates</h2><span class="subtle">Why the brief exists</span></div>
+        <div class="agent-grid">{''.join(_daily_agent_update_card(update) for update in updates)}</div>
+      </section>
+    </section>
+    """
+
+
+def _daily_priority_card(priority: dict) -> str:
+    return f"""
+    <article class="inbox-card">
+      <div><strong>{_safe(priority.get("ticker", ""))}</strong><span>{_safe(priority.get("priority", ""))}</span></div>
+      <p>Rank {_safe(priority.get("rank", ""))} / change {_safe(str(priority.get("rank_change", 0)))} / score {_safe(priority.get("score", ""))} / confidence {_safe(priority.get("confidence", ""))} / evidence {_safe(priority.get("evidence", ""))}</p>
+      <p>{_safe(priority.get("thesis", ""))}</p>
+      <p class="subtle">Risk: {_safe(priority.get("risk", ""))}</p>
+      <a class="button secondary" href="{_safe(priority.get("link", "/greenrock/market-pulse"))}">Open</a>
+    </article>
+    """
+
+
+def _daily_agent_update_card(update: dict) -> str:
+    return f"""
+    <article class="agent-card { _safe(update.get("status", "completed")) }">
+      <h2>{_safe(update.get("agent_name", ""))}</h2>
+      <span class="badge">{_safe(update.get("severity", "info"))}</span>
+      <p><strong>{_safe(update.get("headline", ""))}</strong></p>
+      <p>{_safe(update.get("summary", ""))}</p>
+      <p class="subtle">Reason: {_safe(update.get("recommended_operator_action", ""))}</p>
+    </article>
+    """
 
 
 def render_morning_brief_history(status_message: str | None = None) -> str:
@@ -1995,7 +2073,7 @@ def render_agents(status_message: str | None = None) -> str:
     <section class="panel command-actions">
       <div class="section-head">
         <h2>Run Agent Cycle</h2>
-        <span class="subtle">Market -> Evidence -> Memory -> Report -> QA -> Inbox</span>
+        <span class="subtle">Market -> Evidence -> Fundamental -> Memory -> Report -> QA -> Inbox</span>
       </div>
       <section class="board-meta">
         {_attention_card("neutral", _safe(cycle["last_run"]), "Last Run", "Last Agent Cycle")}
@@ -2037,6 +2115,50 @@ def render_agents(status_message: str | None = None) -> str:
     return _page("Atlas Agent Monitor", content, active="/agents")
 
 
+def render_agent_update_history(agent_name: str, status_message: str | None = None) -> str:
+    settings = get_settings()
+    agent_lookup = {agent.agent_id: agent.name for agent in list_agent_states(settings.output_dir)}
+    clean_name = agent_lookup.get(agent_name, agent_name.replace("-", " "))
+    updates = list_agent_updates(settings.output_dir, clean_name)
+    if not updates:
+        updates = list_agent_updates(settings.output_dir, agent_name)
+    rows = "".join(
+        f"""
+        <tr>
+          <td>{_safe(update.created_at)}</td>
+          <td>{_safe(update.cycle_id)}</td>
+          <td>{_safe(update.status)} / {_safe(update.severity)}</td>
+          <td>{_safe(update.headline)}</td>
+          <td>{_safe(update.summary)}</td>
+        </tr>
+        """
+        for update in updates[:50]
+    ) or "<tr><td colspan='5' class='empty'>No structured agent updates yet.</td></tr>"
+    latest = updates[0] if updates else None
+    content = f"""
+    {_status_banner(status_message)}
+    <section class="hero compact agent-hero">
+      <p class="eyebrow">Agent Update History</p>
+      <h1>{_safe(latest.agent_name if latest else clean_name.title())}</h1>
+      <p>Local structured updates with provenance. No email, publishing, trading, client files, credentials, or external LLM/API calls.</p>
+    </section>
+    <section class="panel">
+      <div class="section-head"><h2>Latest Update</h2><span class="subtle">{_safe(latest.created_at if latest else "none")}</span></div>
+      <p><strong>{_safe(latest.headline if latest else "No update yet.")}</strong></p>
+      <p>{_safe(latest.summary if latest else "Run atlas daily to create structured daily agent updates.")}</p>
+      <p class="subtle">Provenance: cycle {_safe(latest.cycle_id if latest else "none")} / scan {_safe(latest.related_scan_id if latest else "none")}</p>
+    </section>
+    <section class="panel">
+      <div class="section-head"><h2>Update History</h2><span class="subtle">Local JSON records</span></div>
+      <table>
+        <thead><tr><th>Created</th><th>Cycle</th><th>Status</th><th>Headline</th><th>Summary</th></tr></thead>
+        <tbody>{rows}</tbody>
+      </table>
+    </section>
+    """
+    return _page("Agent Update History", content, active="/agents")
+
+
 def render_atlas_wall(status_message: str | None = None) -> str:
     context = _load_context()
     summary = _agent_status_summary()
@@ -2048,6 +2170,7 @@ def render_atlas_wall(status_message: str | None = None) -> str:
     pdf_ready = _approved_reports_missing_pdf(context)
     pdf_exported = [artifact for artifact in context["artifacts"] if artifact.artifact_type == "report_final_pdf"]
     latest_snapshot = latest_morning_brief_snapshot(get_settings().output_dir)
+    daily = latest_daily_brief(get_settings().output_dir)
     inbox_counts = {
         "critical": sum(1 for item in inbox_items if item.severity == "critical"),
         "warning": sum(1 for item in inbox_items if item.severity == "warning"),
@@ -2068,6 +2191,24 @@ def render_atlas_wall(status_message: str | None = None) -> str:
       {_wall_stat("Approvals", str(len(pending_approvals)), f"PDF ready {len(pdf_ready)} / exported {len(pdf_exported)}", "yellow" if pending_approvals or pdf_ready else "green")}
     </section>
     <section class="wall-agent-grid">{''.join(_wall_agent_card(agent) for agent in summary["agents"])}</section>
+    <section class="wall-grid">
+      <article class="wall-panel">
+        <h2>Daily Intelligence</h2>
+        <p><strong>Latest daily cycle:</strong> {_safe(daily.get("daily_id", "none") if daily else "none")}</p>
+        <p>{_safe(daily.get("executive_summary", "Run atlas daily to create the first Daily Intelligence Brief.") if daily else "Run atlas daily to create the first Daily Intelligence Brief.")}</p>
+      </article>
+      <article class="wall-panel">
+        <h2>Top Priorities</h2>
+        <div class="wall-list">{''.join(_wall_priority_item(item) for item in (daily or {}).get("research_priorities", [])[:3]) or "<p>No daily priorities yet.</p>"}</div>
+      </article>
+      <article class="wall-panel">
+        <h2>Cycle Signals</h2>
+        <p><strong>Biggest rank mover:</strong> {_safe(top_mover)}</p>
+        <p><strong>New archetype leader:</strong> {_safe(_wall_new_leader(daily))}</p>
+        <p><strong>QA health:</strong> {_safe(_wall_qa_health(daily))}</p>
+        <p><strong>Last successful scan:</strong> {_safe(scan.scan_id if scan else "none")}</p>
+      </article>
+    </section>
     <section class="wall-grid">
       <article class="wall-panel">
         <h2>Atlas Inbox</h2>
@@ -4763,6 +4904,14 @@ def _inbox_item_to_card(item) -> dict[str, str]:
 
 def _agent_health_card(agent) -> str:
     status = agent.status or "idle"
+    update = latest_agent_update(get_settings().output_dir, agent.name)
+    update_block = ""
+    if update:
+        update_block = f"""
+        <p><strong>Latest update:</strong> {_safe(update.headline)}</p>
+        <p class="subtle">{_safe(update.created_at)} / cycle {_safe(update.cycle_id)}</p>
+        <p>{_safe(update.summary)}</p>
+        """
     return f"""
     <article class="agent-card {status}">
       <div class="agent-ring"></div>
@@ -4772,6 +4921,8 @@ def _agent_health_card(agent) -> str:
       <span class="badge {status}">{_safe(status)} / {_safe(agent.health)}</span>
       <p><strong>Current task:</strong> {_safe(agent.current_task or "none")}</p>
       <p>{_safe(agent.last_message)}</p>
+      {update_block}
+      <a class="button secondary" href="/agents/{quote(agent.agent_id)}">Update History</a>
       <div class="loadbar"><span></span></div>
     </article>
     """
@@ -4822,6 +4973,33 @@ def _wall_inbox_item(item) -> str:
       <span>{_safe(item.severity)} / {_safe(item.status)} / {_safe(_date_part(item.created_at))} {_safe(_time_part(item.created_at))}</span>
     </div>
     """
+
+
+def _wall_priority_item(item: dict) -> str:
+    return f"""
+    <div class="wall-inbox-item">
+      <strong>{_safe(item.get("ticker", ""))} / Rank {_safe(item.get("rank", ""))}</strong>
+      <span>Score {_safe(item.get("score", ""))} / Confidence {_safe(item.get("confidence", ""))} / Evidence {_safe(item.get("evidence", ""))}</span>
+    </div>
+    """
+
+
+def _wall_new_leader(daily: dict | None) -> str:
+    if not daily:
+        return "none"
+    for item in daily.get("what_changed", ()):
+        if "leader" in str(item).lower():
+            return str(item)
+    return "none"
+
+
+def _wall_qa_health(daily: dict | None) -> str:
+    if not daily:
+        return "no daily cycle"
+    for update in daily.get("agent_updates", ()):
+        if update.get("agent_name") == "QA Agent":
+            return f"{update.get('severity', 'info')}: {update.get('headline', '')}"
+    return "QA update unavailable"
 
 
 def _wall_top_mover(movers) -> str:

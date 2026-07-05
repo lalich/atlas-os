@@ -13,10 +13,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 from atlas_os.agents.orchestrator import get_agent_cycle_summary, run_agent_cycle
+from atlas_os.agents.updates import list_agent_updates
 from atlas_os.cli import build_parser, main
 from atlas_os.config import get_settings
 from atlas_os.core.approvals import list_approvals
 from atlas_os.core.artifacts import list_artifacts
+from atlas_os.daily import get_daily_brief, list_daily_briefs, run_daily_cycle
 from atlas_os.core.workflow_runs import list_workflow_runs
 from atlas_os.db.database import connect, initialize_database
 from atlas_os.greenrock.market_data import MarketDataProvider
@@ -607,7 +609,7 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("Agent Wall", response.body)
         self.assertIn('http-equiv="refresh" content="60"', response.body)
         self.assertIn("local time", response.body)
-        for agent in ("Market Agent", "Evidence Agent", "Memory Agent", "Report Agent", "QA Agent", "Inbox Agent"):
+        for agent in ("Market Agent", "Evidence Agent", "Fundamental Agent", "Memory Agent", "Report Agent", "QA Agent", "Inbox Agent"):
             self.assertIn(agent, response.body)
         self.assertIn("Atlas Inbox", response.body)
         self.assertIn("Critical", response.body)
@@ -616,6 +618,48 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("Latest Cycle", response.body)
         self.assertIn("Market Pulse", response.body)
         self.assertIn("Morning Brief", response.body)
+
+    def test_daily_intelligence_cycle_persists_updates_and_brief(self) -> None:
+        with _isolated_env() as root:
+            run_population_scan(root / "output", "all", provider=FullHistoryProvider())
+            brief = run_daily_cycle(root / "output", root / "atlas.db")
+            updates = list_agent_updates(root / "output")
+            briefs = list_daily_briefs(root / "output")
+            loaded = get_daily_brief(root / "output", brief["daily_id"])
+            morning = dispatch_request("GET", "/atlas/morning-brief")
+            wall = dispatch_request("GET", "/atlas/wall")
+            agent_detail = dispatch_request("GET", "/agents/market")
+            updates_dir_exists = (root / "output" / "agents" / "updates").exists()
+
+        self.assertEqual(brief["market_scan_policy"], "use_latest_scan")
+        self.assertFalse(brief["market_scan"]["fresh_data_pulled"])
+        self.assertTrue(updates_dir_exists)
+        self.assertEqual({update.agent_name for update in updates}, {"Market Agent", "Evidence Agent", "Fundamental Agent", "Memory Agent", "Report Agent", "QA Agent"})
+        self.assertIn("update_id", updates[0].__dict__)
+        self.assertLessEqual(len(brief["research_priorities"]), 5)
+        self.assertLessEqual(len(brief["operator_actions"]), 5)
+        self.assertEqual(briefs[0]["daily_id"], brief["daily_id"])
+        self.assertEqual(loaded["daily_id"], brief["daily_id"])
+        self.assertIn("Daily Intelligence Brief", morning.body)
+        self.assertIn("Executive Summary", morning.body)
+        self.assertIn("Today's Research Priorities", morning.body)
+        self.assertIn("Daily Intelligence", wall.body)
+        self.assertIn("Top Priorities", wall.body)
+        self.assertIn("Agent Update History", agent_detail.body)
+        self.assertIn("Market Pulse reviewed", agent_detail.body)
+
+    def test_daily_inbox_material_items_are_deduped(self) -> None:
+        with _isolated_env() as root:
+            run_population_scan(root / "output", "all", provider=FullHistoryProvider())
+            first = run_daily_cycle(root / "output", root / "atlas.db")
+            first_daily_items = [item for item in list_inbox_items(root / "output") if item.source_agent == "daily"]
+            second = run_daily_cycle(root / "output", root / "atlas.db")
+            second_daily_items = [item for item in list_inbox_items(root / "output") if item.source_agent == "daily"]
+
+        self.assertNotEqual(first["daily_id"], second["daily_id"])
+        self.assertLessEqual(len(first_daily_items), 5)
+        self.assertLessEqual(len(second_daily_items), 5)
+        self.assertEqual({item.title for item in first_daily_items}, {item.title for item in second_daily_items})
 
     def test_dev_bootstrap_scripts_exist_and_are_executable(self) -> None:
         root = Path(__file__).resolve().parents[1]

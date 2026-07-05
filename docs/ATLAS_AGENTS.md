@@ -44,6 +44,7 @@ Configured agents:
 
 - Market Agent: checks provider status, references the latest Market Pulse scan, and reports universe size, scored count, skipped count, and provider failures.
 - Evidence Agent: summarizes latest Market Pulse evidence and identifies top rank movers, score improvers, confidence improvers, and evidence improvers.
+- Fundamental Agent: reviews Fundamental Guardrails for strongest support, red flags with strong technical scores, changes, and missing data. It does not run valuation models.
 - Memory Agent: verifies Atlas Memory state, summarizes scan-history changes, and identifies new archetype leaders.
 - Report Agent: checks Analyst Slate/staging readiness and recommends whether a report draft can be generated. It does not generate the report.
 - QA Agent: flags provider failures, missing analytics, underfilled or overfilled staging buckets, pending approvals, and approved reports missing PDFs.
@@ -79,10 +80,69 @@ Each run records:
 `atlas agents run` executes agents sequentially:
 
 ```text
-Market -> Evidence -> Memory -> Report -> QA -> Inbox
+Market -> Evidence -> Fundamental -> Memory -> Report -> QA -> Inbox
 ```
 
 The cycle is deliberately deterministic and local. Later agents can reference prior agent outputs from the same cycle. The Inbox Agent runs last so it can convert findings into operator-visible local items.
+
+## Daily Intelligence Cycle
+
+Phase 9A adds the Daily Intelligence Cycle as the operator-facing synthesis layer:
+
+```bash
+atlas daily
+atlas daily --market-scan-policy use_latest_scan
+atlas daily --market-scan-policy run_if_stale --stale-hours 24
+atlas daily --market-scan-policy run_fresh_scan
+atlas daily history
+atlas daily show <daily_id>
+```
+
+The daily cycle:
+
+- inspects provider/system health
+- applies the explicit Market Agent scan policy
+- runs the coordinated local agent cycle
+- stores structured agent updates
+- synthesizes the Daily Intelligence Brief
+- creates only material deduplicated Atlas Inbox items
+- saves a local Morning Brief snapshot
+
+Daily records live under:
+
+```text
+.atlas/output/atlas/daily/
+.atlas/output/agents/updates/
+```
+
+Structured `AgentUpdate` records include `update_id`, `cycle_id`, `agent_name`, timestamps, status, severity, headline, summary, findings, supporting metrics, related tickers, scan/report/approval links, recommended operator action, target URL, and provenance. The update records are deterministic local JSON files.
+
+The Daily Intelligence Brief includes:
+
+- Executive Summary
+- What Changed
+- Today's Research Priorities, capped at five
+- Agent Updates
+- Operator Actions, capped at five
+- prior daily-cycle comparison
+
+Atlas synthesis consumes existing canonical outputs: Market Pulse scan rows, Ranking, Score fields, Evidence Agreement, Atlas Memory, staging readiness, approvals, report records, PDF artifacts, provider diagnostics, and Inbox state. It does not duplicate GreenRock scoring or ranking logic.
+
+Architecture:
+
+```mermaid
+flowchart LR
+  MP["Market Pulse / Ranking / Score"] --> AC["Local Agent Cycle"]
+  MEM["Atlas Memory"] --> AC
+  STG["Staging / Reports / Approvals / PDFs"] --> AC
+  AC --> AU["AgentUpdate JSON"]
+  AU --> SYN["Atlas Daily Synthesis"]
+  SYN --> DB["Daily Intelligence Brief"]
+  SYN --> INB["Material Atlas Inbox Items"]
+  DB --> MB["Morning Brief"]
+  DB --> WALL["Agent Wall"]
+  AU --> MON["Agent Monitor / Agent Detail"]
+```
 
 ## Market Agent Scan Policy
 
@@ -165,9 +225,10 @@ atlas agents show <run_id>
 Browser:
 
 - `/agents` shows cards, status, task, latest message, health, output summary, and run history.
-- `/atlas/wall` shows the office-TV Agent Wall with large agent cards, provider status, latest cycle, Inbox counts, Market Pulse summary, Morning Brief snapshot status, approvals, and PDF readiness.
+- `/agents/<agent_id>` shows local structured update history for that agent.
+- `/atlas/wall` shows the office-TV Agent Wall with large agent cards, provider status, latest Daily Intelligence cycle, executive summary, top priorities, QA health, latest cycle, Inbox counts, Market Pulse summary, Morning Brief snapshot status, approvals, and PDF readiness.
 - `/` shows the Agent Cycle card and a confirmed `Run Agent Cycle` action.
-- `/atlas/morning-brief` shows latest agent run summary, health cards, inbox items, and Last Agent Cycle timestamp.
+- `/atlas/morning-brief` shows the Daily Intelligence Brief first, followed by latest agent run summary, health cards, inbox items, and Last Agent Cycle timestamp.
 - `/atlas/inbox` and inbox detail pages show provenance, status, created reason, related run/cycle context where available, target URL, and local dismiss/complete actions.
 
 ## Atlas Inbox

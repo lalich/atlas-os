@@ -116,7 +116,7 @@ atlas inbox dismiss <item_id>
 atlas inbox complete <item_id>
 ```
 
-The cycle order is Market, Evidence, Memory, Report, QA, and Inbox. Report Agent may recommend `Report draft can be generated`, but it does not generate the report. Use the normal staging/report commands when you decide to create a draft.
+The cycle order is Market, Evidence, Fundamental, Memory, Report, QA, and Inbox. Fundamental Agent reviews guardrail support and red flags without running valuation models. Report Agent may recommend `Report draft can be generated`, but it does not generate the report. Use the normal staging/report commands when you decide to create a draft.
 
 Market Agent scan policy is explicit:
 
@@ -148,7 +148,33 @@ http://127.0.0.1:8000/atlas/morning-brief
 
 The browser **Run Agent Cycle** action requires confirmation and creates local records only. Agents do not email, publish, trade, place broker/API orders, touch client files, use credentials, call external LLM/API services, approve reports, or export PDFs.
 
-Use `/atlas/wall` for the office-TV Mission Control view. It auto-refreshes every 60 seconds and shows provider status, latest agent cycle status, all six agent cards, Inbox counts, newest Inbox items, Market Pulse summary, Morning Brief snapshot status, approvals, and PDF readiness. The wall Run Agent Cycle button uses `use_latest_scan` and requires confirmation.
+Use `/atlas/wall` for the office-TV Mission Control view. It auto-refreshes every 60 seconds and shows provider status, latest agent cycle status, agent cards, Inbox counts, newest Inbox items, Market Pulse summary, Morning Brief snapshot status, approvals, and PDF readiness. The wall Run Agent Cycle button uses `use_latest_scan` and requires confirmation.
+
+## Run Daily Intelligence Cycle
+
+Use Daily Intelligence when you want Atlas to turn the agent cycle into an operator brief:
+
+```bash
+atlas daily
+atlas daily --market-scan-policy use_latest_scan
+atlas daily --market-scan-policy run_if_stale --stale-hours 24
+atlas daily --market-scan-policy run_fresh_scan
+atlas daily history
+atlas daily show <daily_id>
+```
+
+Default mode is still `use_latest_scan`; agents do not pull fresh data unless you explicitly choose `run_fresh_scan` or the stale policy decides the latest scan is older than the threshold.
+
+The command writes local records only:
+
+- structured agent updates: `.atlas/output/agents/updates/`
+- Daily Intelligence Briefs: `.atlas/output/atlas/daily/`
+- material Atlas Inbox items with provenance
+- a Morning Brief snapshot
+
+Review the result in `/atlas/morning-brief`. The Daily Intelligence Brief appears first with Executive Summary, What Changed, Today’s Research Priorities, Agent Updates, and Operator Actions. `/atlas/wall` shows the latest daily cycle, top three priorities, QA health, biggest mover, report readiness, Inbox counts, and agent status. `/agents/<agent_id>` shows that agent’s structured update history.
+
+Daily Intelligence does not approve, publish, email, trade, place broker/API orders, touch client files, export PDFs, or call external LLM/API services.
 
 ## Check Local Setup
 

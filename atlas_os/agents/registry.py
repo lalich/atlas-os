@@ -19,6 +19,12 @@ DEFAULT_AGENTS: tuple[Agent, ...] = (
         responsibility="Summarize latest Market Pulse movement, including score, confidence, and evidence improvers.",
     ),
     Agent(
+        agent_id="fundamental",
+        name="Fundamental Agent",
+        division="greenrock",
+        responsibility="Review Fundamental Guardrails for confidence support, red flags, and missing data without running valuation models.",
+    ),
+    Agent(
         agent_id="memory",
         name="Memory Agent",
         division="greenrock",

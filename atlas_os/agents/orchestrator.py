@@ -26,7 +26,7 @@ AGENT_ROOT = Path("agents")
 RUNS_ROOT = AGENT_ROOT / "runs"
 CYCLES_ROOT = AGENT_ROOT / "cycles"
 STATE_FILE = "agent_state.json"
-ORDERED_AGENT_IDS = ("market", "evidence", "memory", "report", "qa", "inbox")
+ORDERED_AGENT_IDS = ("market", "evidence", "fundamental", "memory", "report", "qa", "inbox")
 MARKET_SCAN_POLICIES = {"use_latest_scan", "run_fresh_scan", "run_if_stale"}
 DEFAULT_MARKET_SCAN_POLICY = "use_latest_scan"
 DEFAULT_STALE_HOURS = 24.0
@@ -222,6 +222,8 @@ def _agent_outputs(
         return _market_agent(output_dir, cycle_context)
     if agent_id == "evidence":
         return _evidence_agent(output_dir)
+    if agent_id == "fundamental":
+        return _fundamental_agent(output_dir)
     if agent_id == "memory":
         return _memory_agent(output_dir)
     if agent_id == "report":
@@ -278,6 +280,29 @@ def _evidence_agent(output_dir: Path) -> tuple[dict, tuple[str, ...], dict]:
         "summary": "Latest Market Pulse evidence summarized." if scan else "No Market Pulse evidence available yet.",
     }
     return outputs, () if scan else ("No latest Market Pulse scan found.",), {"related_scan_id": scan.scan_id if scan else None}
+
+
+def _fundamental_agent(output_dir: Path) -> tuple[dict, tuple[str, ...], dict]:
+    scan = latest_scan(output_dir)
+    rows = scan.rows if scan else ()
+    strong = [row.get("symbol", "") for row in rows if row.get("fundamental_guardrail") == "Strong Balance Sheet"][:5]
+    red_flags = [
+        row.get("symbol", "")
+        for row in rows
+        if row.get("fundamental_guardrail") == "Red Flag" and _safe_float(row.get("greenrock_score", "")) >= 70
+    ][:5]
+    missing = [row.get("symbol", "") for row in rows if row.get("fundamental_guardrail") == "Insufficient Data"][:5]
+    outputs = {
+        "latest_scan_id": scan.scan_id if scan else "none",
+        "strong_support": strong,
+        "red_flags_with_strong_technicals": red_flags,
+        "missing_fundamental_data": missing,
+        "summary": "Fundamental Guardrails reviewed for confidence support." if scan else "No Fundamental Guardrail data available yet.",
+    }
+    warnings = tuple(f"{ticker} has Red Flag guardrails with strong technical score." for ticker in red_flags)
+    if not scan:
+        warnings = ("No latest Market Pulse scan found.",)
+    return outputs, warnings, {"related_scan_id": scan.scan_id if scan else None}
 
 
 def _memory_agent(output_dir: Path) -> tuple[dict, tuple[str, ...], dict]:
@@ -417,6 +442,13 @@ def _mover_summaries(items) -> list[str]:
         f"{item.ticker}: rank {item.previous.get('rank', '')}->{item.current.get('rank', '')}; score {item.previous.get('greenrock_score', '')}->{item.current.get('greenrock_score', '')}"
         for item in items[:3]
     ]
+
+
+def _safe_float(value: str) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _new_archetype_leaders(rows: tuple[dict[str, str], ...]) -> list[str]:

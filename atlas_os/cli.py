@@ -20,6 +20,7 @@ from atlas_os.agents.orchestrator import (
 )
 from atlas_os.config import get_settings
 from atlas_os.diagnostics import provider_diagnostics, run_doctor
+from atlas_os.daily import get_daily_brief, latest_daily_brief, list_daily_briefs, run_daily_cycle
 from atlas_os.core.approvals import (
     ApprovalRequest,
     ApprovalStatus,
@@ -110,6 +111,23 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("doctor", help="Check local Atlas OS setup readiness.")
     subparsers.add_parser("dashboard", help="Show analyst-friendly Atlas OS overview.")
     subparsers.add_parser("wall", help="Show Atlas Wall display URL and local status summary.")
+    daily = subparsers.add_parser("daily", help="Run or inspect the Atlas Daily Intelligence Cycle.")
+    daily.add_argument(
+        "--market-scan-policy",
+        choices=("use_latest_scan", "run_fresh_scan", "run_if_stale"),
+        default="use_latest_scan",
+        help="Market Agent scan policy. Defaults to reusing the latest successful scan.",
+    )
+    daily.add_argument(
+        "--stale-hours",
+        type=float,
+        default=24.0,
+        help="Stale threshold for run_if_stale policy. Defaults to 24.",
+    )
+    daily_subparsers = daily.add_subparsers(dest="daily_command")
+    daily_subparsers.add_parser("history", help="List saved Daily Intelligence Briefs.")
+    daily_show = daily_subparsers.add_parser("show", help="Show one saved Daily Intelligence Brief.")
+    daily_show.add_argument("daily_id")
     morning_brief = subparsers.add_parser("morning-brief", help="Show the local Atlas Morning Brief.")
     morning_brief.add_argument("--snapshot", action="store_true", help="Save a local Morning Brief snapshot after printing.")
     morning_subparsers = morning_brief.add_subparsers(dest="morning_brief_command")
@@ -2219,6 +2237,97 @@ def run_wall() -> int:
     return 0
 
 
+def run_daily(market_scan_policy: str = "use_latest_scan", stale_hours: float = 24.0) -> int:
+    settings = get_settings()
+    brief = run_daily_cycle(settings.output_dir, settings.db_path, market_scan_policy=market_scan_policy, stale_hours=stale_hours)
+    print("Atlas Daily Intelligence Cycle")
+    print(f"daily_id: {brief.get('daily_id', '')}")
+    print(f"cycle_id: {brief.get('cycle_id', '')}")
+    print(f"created_at: {brief.get('created_at', '')}")
+    print(f"completed_at: {brief.get('completed_at', '')}")
+    print(f"market_scan_policy: {brief.get('market_scan_policy', '')}")
+    market_scan = brief.get("market_scan", {})
+    print(f"latest_scan_id: {market_scan.get('latest_scan_id', 'none')}")
+    print(f"fresh_data_pulled: {_yes_no(bool(market_scan.get('fresh_data_pulled', False)))}")
+    print(f"morning_brief_snapshot_id: {brief.get('morning_brief_snapshot_id', 'none')}")
+    print("executive_summary:")
+    print(f"  {brief.get('executive_summary', '')}")
+    print("what_changed:")
+    for item in brief.get("what_changed", ()) or ("No material cycle-to-cycle change detected.",):
+        print(f"  {item}")
+    print("today_research_priorities:")
+    priorities = brief.get("research_priorities", ())
+    if priorities:
+        for priority in priorities[:5]:
+            print(
+                f"  {priority.get('ticker', '')}: rank={priority.get('rank', '')} "
+                f"rank_change={priority.get('rank_change', 0)} score={priority.get('score', '')} "
+                f"confidence={priority.get('confidence', '')} evidence={priority.get('evidence', '')}"
+            )
+    else:
+        print("  none")
+    print("operator_actions:")
+    for action in brief.get("operator_actions", ())[:5]:
+        print(f"  {action.get('severity', 'info')} {action.get('title', '')} ({action.get('source_agent', '')})")
+    print("agent_updates:")
+    for update in brief.get("agent_updates", ()):
+        print(f"  {update.get('agent_name', '')}: {update.get('headline', '')} [{update.get('severity', 'info')}]")
+    print("No email, publishing, trading, client-file, broker/API order, credential, or external LLM/API action was created.")
+    return 0
+
+
+def run_daily_history() -> int:
+    settings = get_settings()
+    briefs = list_daily_briefs(settings.output_dir)
+    print("Atlas Daily Intelligence History")
+    if not briefs:
+        print("No Daily Intelligence Briefs found.")
+        return 0
+    print("daily_id created_at cycle_id priorities actions policy")
+    for brief in briefs:
+        print(
+            f"{brief.get('daily_id', '')} "
+            f"{brief.get('created_at', '')} "
+            f"{brief.get('cycle_id', '')} "
+            f"{len(brief.get('research_priorities', ()))} "
+            f"{len(brief.get('operator_actions', ()))} "
+            f"{brief.get('market_scan_policy', '')}"
+        )
+    return 0
+
+
+def run_daily_show(daily_id: str) -> int:
+    settings = get_settings()
+    try:
+        brief = get_daily_brief(settings.output_dir, daily_id)
+    except KeyError:
+        print("Daily Intelligence Brief not found")
+        print(f"daily_id: {daily_id}")
+        return 1
+    print("Atlas Daily Intelligence Brief")
+    print(f"daily_id: {brief.get('daily_id', '')}")
+    print(f"cycle_id: {brief.get('cycle_id', '')}")
+    print(f"created_at: {brief.get('created_at', '')}")
+    print(f"completed_at: {brief.get('completed_at', '')}")
+    print(f"market_scan_policy: {brief.get('market_scan_policy', '')}")
+    print("executive_summary:")
+    print(f"  {brief.get('executive_summary', '')}")
+    print("what_changed:")
+    for item in brief.get("what_changed", ()) or ("No material cycle-to-cycle change detected.",):
+        print(f"  {item}")
+    print("today_research_priorities:")
+    for priority in brief.get("research_priorities", ())[:5]:
+        print(f"  {priority.get('ticker', '')}: {priority.get('thesis', '')} Risk: {priority.get('risk', '')}")
+    print("operator_actions:")
+    for action in brief.get("operator_actions", ())[:5]:
+        print(f"  {action.get('severity', 'info')} {action.get('title', '')} - {action.get('reason', '')}")
+    print("agent_updates:")
+    for update in brief.get("agent_updates", ()):
+        print(f"  {update.get('agent_name', '')}: {update.get('summary', '')}")
+    print("No email, publishing, trading, client-file, broker/API order, credential, or external LLM/API action was created.")
+    return 0
+
+
 def run_agents_list() -> int:
     print("Atlas Agents")
     print("agent_id name division responsibility")
@@ -2622,6 +2731,13 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "wall":
         return run_wall()
+
+    if args.command == "daily":
+        if args.daily_command == "history":
+            return run_daily_history()
+        if args.daily_command == "show":
+            return run_daily_show(args.daily_id)
+        return run_daily(args.market_scan_policy, args.stale_hours)
 
     if args.command == "morning-brief":
         if args.morning_brief_command == "history":

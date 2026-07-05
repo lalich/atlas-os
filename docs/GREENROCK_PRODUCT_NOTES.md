@@ -54,14 +54,15 @@
 - Keep staging-sourced report tables editorial and readable: compact main columns, clean empty-bucket sentences, long bullish/caution signals moved into candidate notes or an appendix, and green table headers with yellow text.
 - Keep bucket-list guardrails firm. If market-cap bucket data conflicts with Mega Rock, Large Cap, or Small/Mid destinations, block the save and suggest the proper list or Personal Watchlist.
 - Treat Atlas Agent Orchestration as the local coordination layer across Morning Brief, Atlas Inbox, Agent Monitor, and Mission Control. Agents should make Atlas OS feel coordinated without becoming autonomous external actors.
-- Keep the Phase 8A agent roster fixed until a future phase deliberately expands it: Market, Evidence, Memory, Report, QA, and Inbox.
+- Keep the local agent roster deliberate and inspectable: Market, Evidence, Fundamental, Memory, Report, QA, and Inbox.
 - Keep agent runs local and inspectable. Store run records under `.atlas/output/agents/runs/`, current state under `.atlas/output/agents/agent_state.json`, and Atlas Inbox items under `.atlas/output/atlas/inbox/items.json`.
-- Keep `atlas agents run` deterministic: Market, Evidence, Memory, Report, QA, then Inbox.
+- Keep `atlas agents run` deterministic: Market, Evidence, Fundamental, Memory, Report, QA, then Inbox.
 - Keep Inbox Agent item creation local-only. It may create operator prompts such as Review latest Market Pulse, Stage Analyst Slate, Review pending approval, Export approved PDF, Provider failures require cleanup, Staging underfilled, and Morning Brief snapshot available.
 - Keep Report Agent advisory. It may recommend `Report draft can be generated`, but it must not generate reports automatically or bypass staging, report approval, or PDF gates.
 - Keep QA Agent focused on safety issues: provider failures, missing analytics, underfilled/overfilled staging buckets, pending approvals, and approved reports missing PDFs.
 - Keep browser Run Agent Cycle actions confirmation-gated and local-only. They must not send email, publish, trade, place broker/API orders, touch client files, use credentials, call external LLM/API services, approve reports, or export PDFs.
 - Keep Morning Brief agent integration concise: latest agent run summary, health cards, Atlas Inbox items, and Last Agent Cycle timestamp.
+- Keep Daily Intelligence as the top operator synthesis layer: it may create structured local AgentUpdate records, Daily Intelligence Brief JSON, material deduplicated Inbox items, and Morning Brief snapshots, but it must consume canonical scoring/ranking outputs rather than creating a separate scoring path.
 - Keep `/agents` as an operational monitor: cards, status, current task, last message, health, latest output summary, and run history.
 - Keep the dashboard Agent Cycle card focused on last run, completed agents, failed agents, blocked agents, inbox items generated, and a confirmed Run Agent Cycle button.
 

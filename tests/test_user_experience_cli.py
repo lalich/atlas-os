@@ -91,6 +91,7 @@ class UserExperienceCliTests(unittest.TestCase):
                 agents = _run_cli(["agents", "list"])
                 self.assertIn("Market Agent", agents)
                 self.assertIn("Evidence Agent", agents)
+                self.assertIn("Fundamental Agent", agents)
                 self.assertIn("Inbox Agent", agents)
 
                 cycle = _run_cli(["agents", "run"])
@@ -146,6 +147,36 @@ class UserExperienceCliTests(unittest.TestCase):
                 self.assertIn("provider_status:", wall)
                 self.assertIn("inbox_counts:", wall)
                 self.assertIn("scripts/atlas-serve", wall)
+
+    def test_daily_intelligence_cli(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {
+                "ATLAS_DB_PATH": str(root / "atlas.db"),
+                "ATLAS_OUTPUT_DIR": str(root / "output"),
+            }
+
+            with patch.dict("os.environ", env, clear=False):
+                daily = _run_cli(["daily"])
+                self.assertIn("Atlas Daily Intelligence Cycle", daily)
+                self.assertIn("daily_id:", daily)
+                self.assertIn("market_scan_policy: use_latest_scan", daily)
+                self.assertIn("executive_summary:", daily)
+                self.assertIn("today_research_priorities:", daily)
+                self.assertIn("operator_actions:", daily)
+                self.assertIn("agent_updates:", daily)
+                self.assertIn("Fundamental Agent", daily)
+                self.assertIn("No email, publishing, trading", daily)
+                daily_id = _line_value(daily, "daily_id")
+
+                history = _run_cli(["daily", "history"])
+                self.assertIn("Atlas Daily Intelligence History", history)
+                self.assertIn(daily_id, history)
+
+                detail = _run_cli(["daily", "show", daily_id])
+                self.assertIn("Atlas Daily Intelligence Brief", detail)
+                self.assertIn(daily_id, detail)
+                self.assertIn("what_changed:", detail)
 
     def test_greenrock_score_audit_cli(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
