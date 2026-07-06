@@ -807,6 +807,7 @@ def render_dashboard(status_message: str | None = None) -> str:
         <a class="button secondary" href="/atlas/inbox">Open Atlas Inbox</a>
       </div>
     </section>
+    {_future_integrations_panel()}
     <section class="panel">
       <div class="section-head">
         <h2>Atlas Inbox</h2>
@@ -979,6 +980,30 @@ def _daily_agent_update_card(update: dict) -> str:
       <p>{_safe(update.get("summary", ""))}</p>
       <p class="subtle">Reason: {_safe(update.get("recommended_operator_action", ""))}</p>
     </article>
+    """
+
+
+def _future_integrations_panel(compact: bool = False) -> str:
+    if compact:
+        return """
+        <article class="wall-panel future-integrations">
+          <h2>Future Integrations</h2>
+          <p><strong>Slack:</strong> planned / not configured</p>
+          <p><strong>Email:</strong> disabled</p>
+          <p><strong>Publishing:</strong> disabled</p>
+          <p><strong>Trading:</strong> disabled</p>
+        </article>
+        """
+    return """
+    <section class="panel">
+      <div class="section-head"><h2>Future Integrations</h2><span class="subtle">Local-only placeholders</span></div>
+      <section class="board-meta">
+        <article class="attention-card neutral"><strong>planned / not configured</strong><span>Slack</span><p>No Slack token, app, webhook, or API action exists yet.</p></article>
+        <article class="attention-card neutral"><strong>disabled</strong><span>Email</span><p>No send action is available.</p></article>
+        <article class="attention-card neutral"><strong>disabled</strong><span>Publishing</span><p>No publish action is available.</p></article>
+        <article class="attention-card neutral"><strong>disabled</strong><span>Trading</span><p>No broker/API order action is available.</p></article>
+      </section>
+    </section>
     """
 
 
@@ -1252,7 +1277,7 @@ def render_greenrock_report_workbench(status_message: str | None = None) -> str:
       </table>
     </section>
     """
-    return _page("GreenRock Report Workbench", content, active="/greenrock")
+    return _page("GreenRock Report Workbench", content, active="/greenrock/report-workbench")
 
 
 def _report_task_row(task: dict) -> str:
@@ -2309,27 +2334,29 @@ def render_atlas_wall(status_message: str | None = None) -> str:
         "action": sum(1 for item in inbox_items if item.severity == "action"),
     }
     top_mover = _wall_top_mover(movers)
-    top_opportunity = scan.rows[0] if scan and scan.rows else None
+    task_count = len(report_workbench_summary(get_settings().output_dir, get_settings().db_path, create_tasks=False)["tasks"])
     content = f"""
     {_status_banner(status_message)}
     <section class="wall-hero">
-      <div class="wall-brand">{_atlas_logo("wall-logo")}{_greenrock_logo("wall-logo")}<div><p>Atlas OS</p><h1>Agent Wall</h1></div></div>
-      <div class="wall-clock"><strong>{_safe(datetime.now().strftime("%Y-%m-%d %H:%M"))}</strong><span>local time</span></div>
+      <div class="wall-brand">{_atlas_logo("wall-logo")}{_greenrock_logo("wall-logo")}<div><p>Atlas OS Wall</p><h1>Command Center</h1></div></div>
+      <div class="wall-header-status">
+        <div class="provider-pill {_wall_color(provider.score_calculator_ready)}"><strong>{_safe(provider.status_label)}</strong><span>{_safe(provider.active_provider_name)}</span></div>
+        <div class="wall-clock"><strong>{_safe(datetime.now().strftime("%Y-%m-%d"))}</strong><span>{_safe(datetime.now().strftime("%H:%M"))} local time</span></div>
+      </div>
     </section>
-    <section class="wall-grid wall-topline">
-      {_wall_stat("Provider", provider.status_label, provider.active_provider_name, _wall_color(provider.score_calculator_ready))}
-      {_wall_stat("Latest Cycle", summary["cycle"].get("last_run", "none"), f"{summary['cycle'].get('completed', 0)} complete / {summary['cycle'].get('blocked', 0)} blocked", _wall_color(not summary["cycle"].get("failed", 0)))}
-      {_wall_stat("Market Pulse", scan.scan_id if scan else "none", f"scored {len(scan.rows) if scan else 0} / skipped {scan.skipped_ticker_count if scan else 0}", _wall_color(bool(scan and scan.rows)))}
-      {_wall_stat("Approvals", str(len(pending_approvals)), f"PDF ready {len(pdf_ready)} / exported {len(pdf_exported)}", "yellow" if pending_approvals or pdf_ready else "green")}
+    <section class="wall-actions wall-actions-top">
+      <form method="post" action="/atlas/wall/run" onsubmit="return confirm('Run Agent Cycle using latest scan only? This creates local records and inbox items only.');">
+        <input type="hidden" name="market_scan_policy" value="use_latest_scan">
+        <input type="hidden" name="stale_hours" value="24">
+        <button type="submit">Run Agent Cycle</button>
+      </form>
+      <a href="/atlas/morning-brief">Morning Brief</a>
+      <a href="/atlas/inbox">Atlas Inbox</a>
+      <a href="/greenrock/market-pulse">Market Pulse</a>
+      <a href="/agents">Agents</a>
+      <a href="/greenrock/report-workbench">Report Workbench</a>
     </section>
-    <section class="wall-grid wall-topline">
-      {_wall_stat("Report Ready", report_state["state"], report_state["next_operator_action"], _readiness_color(report_state["state"]))}
-      {_wall_stat("Report Tasks", str(len(report_workbench_summary(get_settings().output_dir, get_settings().db_path, create_tasks=False)["tasks"])), f"latest run {report_state.get('latest_report_run_id') or 'none'}", "green")}
-      {_wall_stat("Pending Approval", str(report_state.get("pending_approvals", 0)), str(report_state.get("pending_approval_id") or "none"), "yellow" if report_state.get("pending_approvals") else "green")}
-      {_wall_stat("PDF", report_state.get("pdf_status", "not_ready"), "approval gate intact", "green" if report_state.get("final_pdf_complete") else ("yellow" if report_state.get("approved_pdf_ready") else "gray"))}
-    </section>
-    <section class="wall-agent-grid">{''.join(_wall_agent_card(agent) for agent in summary["agents"])}</section>
-    <section class="wall-grid">
+    <section class="wall-intel-row">
       <article class="wall-panel">
         <h2>Daily Intelligence</h2>
         <p><strong>Latest daily cycle:</strong> {_safe(daily.get("daily_id", "none") if daily else "none")}</p>
@@ -2346,8 +2373,6 @@ def render_atlas_wall(status_message: str | None = None) -> str:
         <p><strong>QA health:</strong> {_safe(_wall_qa_health(daily))}</p>
         <p><strong>Last successful scan:</strong> {_safe(scan.scan_id if scan else "none")}</p>
       </article>
-    </section>
-    <section class="wall-grid">
       <article class="wall-panel">
         <h2>Atlas Inbox</h2>
         <div class="wall-counts">
@@ -2355,15 +2380,32 @@ def render_atlas_wall(status_message: str | None = None) -> str:
           {_wall_count("Warning", inbox_counts["warning"], "yellow")}
           {_wall_count("Action", inbox_counts["action"], "green")}
         </div>
-        <div class="wall-list">{''.join(_wall_inbox_item(item) for item in inbox_items[:5]) or "<p>No open inbox items.</p>"}</div>
+        <div class="wall-list">{''.join(_wall_inbox_item(item) for item in inbox_items[:3]) or "<p>No open inbox items.</p>"}{_wall_more(len(inbox_items), 3)}</div>
       </article>
+    </section>
+    <section class="agent-room">
+      <div class="section-head"><h2>Agent Room</h2><span>local workflow operators</span></div>
+      <div class="agent-room-line"></div>
+      <section class="wall-agent-grid">{''.join(_wall_agent_card(agent) for agent in summary["agents"])}</section>
+    </section>
+    <section class="wall-status-grid">
+      {_wall_stat("Provider", provider.status_label, provider.active_provider_name, _wall_color(provider.score_calculator_ready))}
+      {_wall_stat("Latest Cycle", summary["cycle"].get("last_run", "none"), f"{summary['cycle'].get('completed', 0)} complete / {summary['cycle'].get('blocked', 0)} blocked", _wall_color(not summary["cycle"].get("failed", 0)))}
+      {_wall_stat("Market Pulse", scan.scan_id if scan else "none", f"scored {len(scan.rows) if scan else 0} / skipped {scan.skipped_ticker_count if scan else 0}", _wall_color(bool(scan and scan.rows)))}
+      {_wall_stat("Approvals", str(len(pending_approvals)), f"PDF ready {len(pdf_ready)} / exported {len(pdf_exported)}", "yellow" if pending_approvals or pdf_ready else "green")}
+      {_wall_stat("Report Ready", report_state["state"], report_state["next_operator_action"], _readiness_color(report_state["state"]))}
+      {_wall_stat("Report Tasks", str(task_count), f"latest run {report_state.get('latest_report_run_id') or 'none'}", "green")}
+      {_wall_stat("Pending Approval", str(report_state.get("pending_approvals", 0)), str(report_state.get("pending_approval_id") or "none"), "yellow" if report_state.get("pending_approvals") else "green")}
+      {_wall_stat("PDF Status", report_state.get("pdf_status", "not_ready"), "approval gate intact", "green" if report_state.get("final_pdf_complete") else ("yellow" if report_state.get("approved_pdf_ready") else "gray"))}
+    </section>
+    <section class="wall-footer-grid">
       <article class="wall-panel">
         <h2>Market Pulse</h2>
         <p><strong>Latest scan:</strong> {_safe(scan.scan_id if scan else "none")}</p>
         <p><strong>Configured / scored / skipped:</strong> {_safe(str(scan.configured_ticker_count if scan else 0))} / {_safe(str(len(scan.rows) if scan else 0))} / {_safe(str(scan.skipped_ticker_count if scan else 0))}</p>
-        <p><strong>Top opportunity:</strong> {_safe(_wall_opportunity(top_opportunity))}</p>
         <p><strong>Top mover:</strong> {_safe(top_mover)}</p>
       </article>
+      {_future_integrations_panel(compact=True)}
       <article class="wall-panel">
         <h2>Morning Brief</h2>
         <p><strong>Snapshot:</strong> {_safe(latest_snapshot["timestamp"] if latest_snapshot else "none saved yet")}</p>
@@ -2371,17 +2413,6 @@ def render_atlas_wall(status_message: str | None = None) -> str:
         <p><strong>Approved PDFs ready:</strong> {len(pdf_ready)}</p>
         <p><strong>PDFs exported:</strong> {len(pdf_exported)}</p>
       </article>
-    </section>
-    <section class="wall-actions">
-      <form method="post" action="/atlas/wall/run" onsubmit="return confirm('Run Agent Cycle using latest scan only? This creates local records and inbox items only.');">
-        <input type="hidden" name="market_scan_policy" value="use_latest_scan">
-        <input type="hidden" name="stale_hours" value="24">
-        <button type="submit">Run Agent Cycle</button>
-      </form>
-      <a href="/atlas/morning-brief">Morning Brief</a>
-      <a href="/atlas/inbox">Atlas Inbox</a>
-      <a href="/greenrock/market-pulse">Market Pulse</a>
-      <a href="/agents">Agents</a>
     </section>
     """
     return _wall_page("Atlas Wall", content)
@@ -5047,12 +5078,14 @@ def _attention_card(color: str, value: str, label: str, note: str) -> str:
 
 
 def _inbox_card(item: dict[str, str]) -> str:
+    meta = item.get("meta", item.get("label", ""))
     return f"""
     <a class="inbox-card {item['status']}" href="{item['href']}">
       <span class="check"></span>
       <div>
         <h3>{_safe(item['title'])}</h3>
         <p>{_safe(item['detail'])}</p>
+        <p class="subtle">{_safe(meta)}</p>
       </div>
       <span class="badge">{_safe(item['label'])}</span>
     </a>
@@ -5063,16 +5096,48 @@ def _inbox_item_to_card(item) -> dict[str, str]:
     status = "attention" if item.severity in {"warning", "critical", "action"} else "neutral"
     return {
         "title": item.title,
-        "detail": f"{item.detail} Created {item.created_at}. Source: {item.source_agent}. Cycle: {item.related_cycle_id or 'none'}. Why: {item.created_reason}" if item.created_reason else f"{item.detail} Created {item.created_at}. Source: {item.source_agent}. Cycle: {item.related_cycle_id or 'none'}.",
+        "detail": item.detail,
         "href": item.target_url or "/atlas/inbox",
         "status": status,
         "label": f"{item.severity} / {item.status}",
+        "meta": (
+            f"Created {_date_part(item.created_at)} {_time_part(item.created_at)}; "
+            f"updated {_date_part(item.updated_at)} {_time_part(item.updated_at)}; "
+            f"source {item.source_agent}; cycle {item.related_cycle_id or 'none'}"
+        ),
     }
 
 
 def _agent_health_card(agent) -> str:
+    return _agent_card(agent, "monitor")
+
+
+def _agent_card(agent, variant: str = "monitor") -> str:
     status = agent.status or "idle"
     update = latest_agent_update(get_settings().output_dir, agent.name)
+    headline = update.headline if update else "No structured update yet"
+    summary = update.summary if update else (agent.output_summary or agent.last_message or "No output summary yet.")
+    timestamp = update.created_at if update else (agent.last_run_at or "none")
+    cycle_id = update.cycle_id if update else "none"
+    if variant == "wall":
+        color = "green"
+        if agent.status in {"failed"} or agent.health == "red":
+            color = "red"
+        elif agent.status in {"blocked"} or agent.health in {"yellow", "blocked"}:
+            color = "yellow"
+        elif agent.status in {"idle"}:
+            color = "gray"
+        return f"""
+        <article class="wall-agent agent-card {status} {color}">
+          <div class="agent-ring"></div>
+          <h2>{_safe(agent.name)}</h2>
+          <div class="agent-status-line"><strong>{_safe(status)}</strong><span>{_safe(agent.health)}</span></div>
+          <p><b>Last run:</b> {_safe(agent.last_run_at or "none")}</p>
+          <p><b>Headline:</b> {_safe(headline)}</p>
+          <p>{_safe(summary)}</p>
+          <p class="subtle">History: {_safe(timestamp)} / cycle {_safe(cycle_id)}</p>
+        </article>
+        """
     update_block = ""
     if update:
         update_block = f"""
@@ -5111,23 +5176,7 @@ def _wall_stat(label: str, value: str, note: str, color: str) -> str:
 
 
 def _wall_agent_card(agent) -> str:
-    color = "green"
-    if agent.status in {"failed"} or agent.health == "red":
-        color = "red"
-    elif agent.status in {"blocked"} or agent.health in {"yellow", "blocked"}:
-        color = "yellow"
-    elif agent.status in {"idle"}:
-        color = "gray"
-    return f"""
-    <article class="wall-agent {color}">
-      <h2>{_safe(agent.name)}</h2>
-      <div><strong>{_safe(agent.status)}</strong><span>{_safe(agent.health)}</span></div>
-      <p><b>Last run:</b> {_safe(agent.last_run_at or "none")}</p>
-      <p><b>Message:</b> {_safe(agent.last_message or "none")}</p>
-      <p><b>Task:</b> {_safe(agent.current_task or "none")}</p>
-      <p><b>Output:</b> {_safe(agent.output_summary or "none")}</p>
-    </article>
-    """
+    return _agent_card(agent, "wall")
 
 
 def _wall_count(label: str, value: int, color: str) -> str:
@@ -5138,7 +5187,8 @@ def _wall_inbox_item(item) -> str:
     return f"""
     <div class="wall-inbox-item">
       <strong>{_safe(item.title)}</strong>
-      <span>{_safe(item.severity)} / {_safe(item.status)} / {_safe(_date_part(item.created_at))} {_safe(_time_part(item.created_at))}</span>
+      <span>{_safe(item.severity)} / {_safe(item.status)} / created {_safe(_date_part(item.created_at))} {_safe(_time_part(item.created_at))}</span>
+      <span>updated {_safe(_date_part(item.updated_at))} {_safe(_time_part(item.updated_at))} / source {_safe(item.source_agent)} / cycle {_safe(item.related_cycle_id or "none")}</span>
     </div>
     """
 
@@ -5150,6 +5200,11 @@ def _wall_priority_item(item: dict) -> str:
       <span>Score {_safe(item.get("score", ""))} / Confidence {_safe(item.get("confidence", ""))} / Evidence {_safe(item.get("evidence", ""))}</span>
     </div>
     """
+
+
+def _wall_more(total: int, shown: int) -> str:
+    remaining = max(0, total - shown)
+    return f"<p class='wall-more'>+{remaining} more</p>" if remaining else ""
 
 
 def _wall_new_leader(daily: dict | None) -> str:
@@ -5858,59 +5913,87 @@ def _wall_page(title: str, content: str) -> str:
       color: var(--ink);
       font-family: Arial, Helvetica, sans-serif;
     }}
-    main {{ padding: 30px; display: grid; gap: 22px; }}
-    .wall-hero, .wall-panel, .wall-stat, .wall-agent, .wall-actions {{
+    body {{ overflow: hidden; }}
+    main {{
+      height: 100vh;
+      padding: 14px;
+      display: grid;
+      gap: 10px;
+      grid-template-rows: 86px 48px 1.15fr 1.35fr 90px 104px;
+    }}
+    .wall-hero, .wall-panel, .wall-stat, .wall-agent, .wall-actions, .agent-room {{
       border: 1px solid var(--line);
       background: var(--panel);
       border-radius: 8px;
-      padding: 22px;
+      padding: 12px;
       box-shadow: 0 20px 60px rgba(0,0,0,.32);
+      overflow: hidden;
     }}
     .wall-hero {{ display: flex; justify-content: space-between; align-items: center; }}
-    .wall-brand {{ display: flex; align-items: center; gap: 20px; }}
-    .wall-logo {{ width: 78px; height: 78px; object-fit: contain; border-radius: 8px; background: rgba(255,255,255,.06); padding: 7px; }}
-    .atlas-mark {{ display: inline-grid; place-items: center; width: 78px; height: 78px; border-radius: 8px; background: rgba(255,255,255,.08); font-size: 42px; font-weight: 900; }}
+    .wall-brand {{ display: flex; align-items: center; gap: 14px; min-width: 0; }}
+    .wall-logo {{ width: 58px; height: 58px; object-fit: contain; border-radius: 8px; background: rgba(255,255,255,.06); padding: 5px; }}
+    .atlas-mark {{ display: inline-grid; place-items: center; width: 58px; height: 58px; border-radius: 8px; background: rgba(255,255,255,.08); font-size: 32px; font-weight: 900; }}
     .wall-brand p {{ margin: 0; color: var(--yellow); text-transform: uppercase; font-weight: 800; letter-spacing: .08em; }}
-    h1 {{ margin: 0; font-size: 64px; line-height: 1; }}
-    h2 {{ margin: 0 0 14px; font-size: 30px; }}
-    p {{ font-size: 22px; line-height: 1.35; color: var(--muted); }}
+    h1 {{ margin: 0; font-size: 42px; line-height: 1; }}
+    h2 {{ margin: 0 0 7px; font-size: 19px; }}
+    p {{ margin: 4px 0; font-size: 14px; line-height: 1.22; color: var(--muted); }}
+    .wall-header-status {{ display: flex; gap: 12px; align-items: center; }}
+    .provider-pill {{ border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; text-align: right; min-width: 170px; }}
+    .provider-pill.green {{ border-color: rgba(55,214,122,.6); }}
+    .provider-pill.yellow {{ border-color: rgba(243,201,105,.7); }}
+    .provider-pill strong, .provider-pill span {{ display: block; }}
     .wall-clock {{ text-align: right; }}
-    .wall-clock strong {{ display: block; font-size: 48px; }}
-    .wall-clock span {{ color: var(--muted); font-size: 22px; }}
-    .wall-grid {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }}
-    .wall-topline {{ grid-template-columns: repeat(4, minmax(0, 1fr)); }}
-    .wall-agent-grid {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }}
-    .wall-stat span, .wall-count span, .wall-inbox-item span {{ color: var(--muted); font-size: 20px; }}
-    .wall-stat strong {{ display: block; margin: 10px 0; font-size: 34px; overflow-wrap: anywhere; }}
+    .wall-clock strong {{ display: block; font-size: 27px; }}
+    .wall-clock span {{ color: var(--muted); font-size: 16px; }}
+    .wall-intel-row {{ display: grid; grid-template-columns: 1.15fr .85fr .85fr 1fr; gap: 10px; min-height: 0; }}
+    .wall-footer-grid {{ display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; min-height: 0; }}
+    .wall-status-grid {{ display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 8px; min-height: 0; }}
+    .wall-grid {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }}
+    .wall-agent-grid {{ position: relative; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; min-height: 0; }}
+    .wall-stat span, .wall-count span, .wall-inbox-item span, .section-head span {{ color: var(--muted); font-size: 12px; }}
+    .wall-stat strong {{ display: block; margin: 3px 0; font-size: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+    .wall-stat p {{ font-size: 12px; max-height: 30px; overflow: hidden; }}
     .wall-stat.green, .wall-agent.green, .wall-count.green {{ border-color: rgba(55,214,122,.6); }}
     .wall-stat.yellow, .wall-agent.yellow, .wall-count.yellow {{ border-color: rgba(243,201,105,.7); }}
     .wall-stat.red, .wall-agent.red, .wall-count.red {{ border-color: rgba(255,95,109,.7); }}
-    .wall-stat.gray, .wall-agent.gray {{ border-color: rgba(127,138,153,.6); }}
-    .wall-agent div {{ display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }}
-    .wall-agent div strong {{ font-size: 30px; }}
-    .wall-agent div span {{ border-radius: 999px; padding: 7px 12px; background: rgba(255,255,255,.1); font-size: 20px; }}
-    .wall-agent p {{ margin: 8px 0; }}
-    .wall-counts {{ display: flex; gap: 14px; margin-bottom: 18px; }}
-    .wall-count {{ flex: 1; border: 1px solid var(--line); border-radius: 8px; padding: 14px; background: rgba(255,255,255,.05); }}
-    .wall-count strong {{ display: block; font-size: 44px; }}
-    .wall-list {{ display: grid; gap: 12px; }}
-    .wall-inbox-item {{ border-top: 1px solid var(--line); padding-top: 12px; }}
-    .wall-inbox-item strong {{ display: block; font-size: 24px; margin-bottom: 5px; }}
-    .wall-actions {{ display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }}
+    .wall-stat.gray, .wall-agent.gray, .wall-count.gray {{ border-color: rgba(127,138,153,.6); }}
+    .agent-room {{ position: relative; }}
+    .agent-room .section-head {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }}
+    .agent-room-line {{ position: absolute; left: 5%; right: 5%; top: 55%; height: 1px; background: linear-gradient(90deg, transparent, rgba(55,214,122,.45), transparent); pointer-events: none; }}
+    .wall-agent {{ position: relative; min-height: 0; padding: 10px; }}
+    .wall-agent::after {{ content: ">"; position: absolute; right: -8px; top: 42%; color: var(--yellow); font-size: 14px; opacity: .78; }}
+    .wall-agent:last-child::after {{ display: none; }}
+    .wall-agent .agent-ring {{ width: 22px; height: 22px; float: right; border: 3px solid rgba(55,214,122,.25); border-top-color: var(--green); border-radius: 999px; }}
+    .agent-status-line {{ display: flex; gap: 6px; align-items: center; margin: 4px 0; }}
+    .agent-status-line strong {{ font-size: 14px; }}
+    .agent-status-line span {{ border-radius: 999px; padding: 3px 7px; background: rgba(255,255,255,.1); font-size: 12px; }}
+    .wall-agent p {{ font-size: 12px; max-height: 48px; overflow: hidden; }}
+    .wall-counts {{ display: flex; gap: 6px; margin-bottom: 7px; }}
+    .wall-count {{ flex: 1; border: 1px solid var(--line); border-radius: 8px; padding: 6px; background: rgba(255,255,255,.05); }}
+    .wall-count strong {{ display: block; font-size: 20px; }}
+    .wall-list {{ display: grid; gap: 5px; }}
+    .wall-inbox-item {{ border-top: 1px solid var(--line); padding-top: 5px; }}
+    .wall-inbox-item strong {{ display: block; font-size: 13px; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+    .wall-more {{ color: var(--yellow); font-weight: 800; }}
+    .wall-actions {{ display: flex; gap: 8px; flex-wrap: nowrap; align-items: center; }}
+    .wall-actions-top {{ justify-content: center; }}
     button, .wall-actions a {{
       border: 1px solid rgba(55,214,122,.58);
       background: rgba(55,214,122,.9);
       color: #06100b;
       border-radius: 8px;
-      padding: 14px 18px;
-      font-size: 22px;
+      padding: 9px 12px;
+      font-size: 15px;
       font-weight: 800;
       text-decoration: none;
       cursor: pointer;
     }}
     .wall-actions a {{ background: rgba(255,255,255,.08); color: var(--ink); border-color: var(--line); }}
+    .future-integrations p {{ font-size: 13px; }}
     @media (max-width: 1200px) {{
-      .wall-grid, .wall-topline, .wall-agent-grid {{ grid-template-columns: 1fr; }}
+      body {{ overflow: auto; }}
+      main {{ height: auto; grid-template-rows: none; }}
+      .wall-intel-row, .wall-footer-grid, .wall-status-grid, .wall-agent-grid {{ grid-template-columns: 1fr; }}
       .wall-hero {{ align-items: flex-start; flex-direction: column; gap: 18px; }}
       h1 {{ font-size: 46px; }}
     }}

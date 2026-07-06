@@ -535,6 +535,17 @@ atlas wall
 
 Open `http://127.0.0.1:8000/atlas/wall` for the office-TV view. It auto-refreshes every 60 seconds and shows agent cards, provider status, latest cycle state, Atlas Inbox counts, Market Pulse summary, Morning Brief snapshot status, pending approvals, and PDF readiness. The wall Run Agent Cycle button uses the default `use_latest_scan` policy and remains confirmation-gated.
 
+Wall Mode is designed for a common 16:9 office TV, especially 1920x1080. The layout keeps the header, action row, Daily Intelligence, top priorities, cycle signals, Atlas Inbox, Agent Room, and bottom status grid in one fixed viewport where possible. Text is clipped to summaries, Inbox/Priority lists are capped, and any external integrations are placeholders only.
+
+Future Integrations are local-only notes for now:
+
+- Slack: planned / not configured
+- Email: disabled
+- Publishing: disabled
+- Trading: disabled
+
+No Slack token, webhook, API call, email send, publishing control, or trading control is configured by Wall Mode.
+
 Daily Intelligence Cycle:
 
 ```bash

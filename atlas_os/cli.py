@@ -2581,10 +2581,11 @@ def run_inbox_list() -> int:
     if not items:
         print("No open inbox items.")
         return 0
-    print("item_id created_at updated_at severity source_agent related_cycle_id status title target_url")
+    print("item_id created_date created_time updated_date updated_time severity source_agent related_cycle_id status title target_url")
     for item in items:
         print(
-            f"{item.item_id} {item.created_at} {item.updated_at} {item.severity} {item.source_agent} "
+            f"{item.item_id} {_cli_date_part(item.created_at)} {_cli_time_part(item.created_at)} "
+            f"{_cli_date_part(item.updated_at)} {_cli_time_part(item.updated_at)} {item.severity} {item.source_agent} "
             f"{item.related_cycle_id or 'none'} {item.status} {item.title} {item.target_url}"
         )
     return 0
@@ -2599,7 +2600,11 @@ def run_inbox_show(item_id: str) -> int:
         return 1
     print(f"Atlas Inbox Item {item.item_id}")
     print(f"created_at: {item.created_at}")
+    print(f"created_date: {_cli_date_part(item.created_at)}")
+    print(f"created_time: {_cli_time_part(item.created_at)}")
     print(f"updated_at: {item.updated_at}")
+    print(f"updated_date: {_cli_date_part(item.updated_at)}")
+    print(f"updated_time: {_cli_time_part(item.updated_at)}")
     print(f"status: {item.status}")
     print(f"severity: {item.severity}")
     print(f"source_agent: {item.source_agent}")
@@ -2809,6 +2814,16 @@ def _cli_float_or_none(value: str) -> float | None:
 
 def _yes_no(value: bool) -> str:
     return "yes" if value else "no"
+
+
+def _cli_date_part(timestamp: str) -> str:
+    return timestamp.split("T", 1)[0] if timestamp else "none"
+
+
+def _cli_time_part(timestamp: str) -> str:
+    if not timestamp or "T" not in timestamp:
+        return "none"
+    return timestamp.split("T", 1)[1].split("+", 1)[0].replace("Z", "")
 
 
 def _candidate_summary(row: dict[str, str]) -> str:

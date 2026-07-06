@@ -150,6 +150,18 @@ The browser **Run Agent Cycle** action requires confirmation and creates local r
 
 Use `/atlas/wall` for the office-TV Mission Control view. It auto-refreshes every 60 seconds and shows provider status, latest agent cycle status, agent cards, Inbox counts, newest Inbox items, Market Pulse summary, Morning Brief snapshot status, approvals, and PDF readiness. The wall Run Agent Cycle button uses `use_latest_scan` and requires confirmation.
 
+Wall Mode is tuned for a 16:9 office TV, especially 1920x1080. The intended first-screen layout is:
+
+1. Atlas/GreenRock header, clock, and provider status.
+2. Action row: Run Agent Cycle, Morning Brief, Atlas Inbox, Market Pulse, Agents, Report Workbench.
+3. Daily Intelligence, Top Priorities, Cycle Signals, and Atlas Inbox.
+4. Agent Room with local agent cards and update summaries.
+5. Bottom status grid for provider, latest cycle, Market Pulse, approvals, report readiness, report tasks, pending approval, and PDF status.
+
+If the TV crops or scrolls, use browser full-screen mode and 100% zoom first. Wall Mode clips long summaries by design so the office screen stays readable from across the room.
+
+Future integrations are placeholders only: Slack is planned/not configured, while email, publishing, and trading are disabled. Do not add Slack tokens or configure external actions for this phase.
+
 ## Run Daily Intelligence Cycle
 
 Use Daily Intelligence when you want Atlas to turn the agent cycle into an operator brief:

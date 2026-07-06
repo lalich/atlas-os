@@ -289,6 +289,18 @@ Browser:
 - `/atlas/morning-brief` shows the Daily Intelligence Brief first, followed by latest agent run summary, health cards, inbox items, and Last Agent Cycle timestamp.
 - `/atlas/inbox` and inbox detail pages show provenance, status, created reason, related run/cycle context where available, target URL, and local dismiss/complete actions.
 
+### Wall Mode UX
+
+`/atlas/wall` is intended for a 16:9 office TV. The page uses a fixed-height local display layout with:
+
+- header, local clock, logos, and provider status
+- navigation/action row directly under the header
+- top intelligence row for Daily Intelligence, priorities, cycle signals, and Atlas Inbox
+- Agent Room with consistent agent cards and update history indicators
+- bottom status grid for provider, latest cycle, Market Pulse, approvals, report readiness, report tasks, pending approval, and PDF status
+
+The wall limits lists to the newest/top items and shows `+N more` when needed. Long text is clipped to keep the screen readable. Future integrations are displayed as local placeholders only: Slack is planned/not configured, and email, publishing, and trading remain disabled.
+
 ## Atlas Inbox
 
 Atlas Inbox is local item storage for operator attention:

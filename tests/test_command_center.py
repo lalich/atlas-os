@@ -605,16 +605,27 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("Run If Stale", response.body)
 
     def test_agent_wall_route_returns_big_screen_status(self) -> None:
-        with _isolated_env():
+        with _isolated_env() as root:
+            create_inbox_item(root / "output", "qa", "warning", "Wall item", "wall detail", "/atlas/inbox", related_cycle_id="cycle-wall")
             response = dispatch_request("GET", "/atlas/wall")
 
         self.assertEqual(response.status, 200)
-        self.assertIn("Agent Wall", response.body)
+        self.assertIn("Command Center", response.body)
         self.assertIn('http-equiv="refresh" content="60"', response.body)
         self.assertIn("local time", response.body)
+        self.assertIn("wall-actions-top", response.body)
+        self.assertIn("wall-intel-row", response.body)
+        self.assertIn("Agent Room", response.body)
+        self.assertIn("wall-status-grid", response.body)
+        self.assertIn("overflow: hidden", response.body)
+        self.assertIn("height: 100vh", response.body)
+        self.assertIn("Report Workbench", response.body)
         for agent in ("Market Agent", "Evidence Agent", "Fundamental Agent", "Memory Agent", "Report Agent", "QA Agent", "Inbox Agent"):
             self.assertIn(agent, response.body)
         self.assertIn("Atlas Inbox", response.body)
+        self.assertIn("created", response.body)
+        self.assertIn("source", response.body)
+        self.assertIn("cycle", response.body)
         self.assertIn("Critical", response.body)
         self.assertIn("Warning", response.body)
         self.assertIn("Action", response.body)
@@ -622,6 +633,9 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("Market Pulse", response.body)
         self.assertIn("Morning Brief", response.body)
         self.assertIn("Report Ready", response.body)
+        self.assertIn("Future Integrations", response.body)
+        self.assertIn("Slack:", response.body)
+        self.assertIn("planned / not configured", response.body)
 
     def test_greenrock_report_workbench_route_creates_local_tasks(self) -> None:
         with _isolated_env() as root:
@@ -633,6 +647,7 @@ class CommandCenterTests(unittest.TestCase):
 
         self.assertEqual(response.status, 200)
         self.assertIn("GreenRock Report Workbench", response.body)
+        self.assertIn("href='/greenrock/report-workbench'>Workbench</a>", response.body)
         self.assertIn("Next Operator Action", response.body)
         self.assertIn("Agent Recommendations", response.body)
         self.assertIn("Run Daily Intelligence Cycle", response.body)
@@ -854,11 +869,20 @@ class CommandCenterTests(unittest.TestCase):
 
             items = list_inbox_items(root / "output")
             page = dispatch_request("GET", "/atlas/inbox")
+            dashboard = dispatch_request("GET", "/")
+            morning = dispatch_request("GET", "/atlas/morning-brief")
+            wall = dispatch_request("GET", "/atlas/wall")
 
         self.assertEqual(items[0].title, "Newer")
         self.assertEqual(items[0].related_cycle_id, "cycle-new")
         self.assertIn("2026-01-02", page.body)
+        self.assertIn("00:00:00", page.body)
         self.assertIn("cycle-new", page.body)
+        self.assertIn("created 2026-01-02", wall.body)
+        self.assertIn("source market", wall.body)
+        self.assertIn("cycle cycle-new", wall.body)
+        self.assertIn("Created 2026-01-02", dashboard.body)
+        self.assertIn("updated 2026-01-02", morning.body)
 
     def test_env_provider_loading_works(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
