@@ -156,9 +156,9 @@ Wall Mode is tuned for a 16:9 office TV, especially 1920x1080. The intended firs
 2. Action row: Run Agent Cycle, Morning Brief, Atlas Inbox, Market Pulse, Agents, Report Workbench.
 3. Daily Intelligence, Top Priorities, Cycle Signals, and Atlas Inbox.
 4. Bottom split: Agent Room on the left and System Status on the right.
-5. Agent Room uses monitor-style activity circles and local handoff visuals; System Status uses compact cards for provider, latest cycle, Market Pulse summary, approvals, report readiness, report tasks, pending approval, PDF status, and future integrations.
+5. Agent Room uses monitor-style activity circles, compact activity bars, local Update links, and handoff visuals; System Status uses compact cards for provider, latest cycle, Market Pulse summary, approvals, report readiness, report tasks, pending approval, PDF status, and future integrations.
 
-If the TV crops or scrolls, use browser full-screen mode and 100% zoom first. Wall Mode clips long summaries by design so the office screen stays readable from across the room. Morning Brief and Market Pulse stay available in the top action row and intelligence summaries instead of repeating as bottom panels.
+If the TV crops or scrolls, use browser full-screen mode and 100% zoom first. Wall Mode clips long summaries by design so the office screen stays readable from across the room. Morning Brief and Market Pulse stay available in the top action row and intelligence summaries instead of repeating as bottom panels. Agent card `Update` buttons open local agent detail/history pages only.
 
 After clicking **Run Agent Cycle** from the wall, the success state appears as a compact header pill. It should not create a large banner or push the Agent Room down. Wall timestamps are intentionally shortened; open `/agents`, `/atlas/inbox`, or `/atlas/morning-brief` for full run and provenance detail.
 

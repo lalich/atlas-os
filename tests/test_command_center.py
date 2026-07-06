@@ -622,6 +622,9 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("System Status", response.body)
         self.assertIn("wall-status-grid", response.body)
         self.assertIn("wall-agent-ring", response.body)
+        self.assertIn("wall-loadbar", response.body)
+        self.assertIn('class="badge idle"', response.body)
+        self.assertIn('class="wall-agent-action" href="/agents/market"', response.body)
         self.assertIn("handoff-plane", response.body)
         self.assertIn("overflow: hidden", response.body)
         self.assertIn("height: 100vh", response.body)
@@ -629,6 +632,8 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("Report Workbench", response.body)
         for agent in ("Market Agent", "Evidence Agent", "Fundamental Agent", "Memory Agent", "Report Agent", "QA Agent", "Inbox Agent"):
             self.assertIn(agent, response.body)
+        for agent_id in ("market", "evidence", "fundamental", "memory", "report", "qa", "inbox"):
+            self.assertIn(f'href="/agents/{agent_id}"', response.body)
         self.assertIn("Atlas Inbox", response.body)
         self.assertIn("created", response.body)
         self.assertIn("source", response.body)

@@ -5120,11 +5120,18 @@ def _agent_card(agent, variant: str = "monitor") -> str:
         return f"""
         <article class="wall-agent agent-card {status} {color}">
           <span class="handoff-plane" aria-hidden="true"></span>
-          <div class="wall-agent-head"><span class="agent-ring wall-agent-ring {color}"></span><h2>{_safe(agent.name)}</h2></div>
-          <div class="agent-status-line"><strong>{_safe(status)}</strong><span>{_safe(agent.health)}</span></div>
-          <p title="{_safe(timestamp)}"><b>Last:</b> {_safe(_wall_short_timestamp(timestamp))}</p>
-          <p title="{_safe(headline)}"><b>Latest:</b> {_safe(headline)}</p>
-          <p title="{_safe(summary)}">{_safe(summary)}</p>
+          <div class="wall-agent-head">
+            <span class="agent-ring wall-agent-ring {color}"></span>
+            <div class="wall-agent-title">
+              <h2>{_safe(agent.name)}</h2>
+              <span class="badge {status}">{_safe(status)} / {_safe(agent.health)}</span>
+            </div>
+            <a class="wall-agent-action" href="/agents/{quote(agent.agent_id)}">Update</a>
+          </div>
+          <p class="wall-agent-time" title="{_safe(timestamp)}">{_safe(_wall_short_timestamp(timestamp))}</p>
+          <p class="wall-agent-headline" title="{_safe(headline)}">{_safe(headline)}</p>
+          <p class="wall-agent-summary" title="{_safe(summary)}">{_safe(summary)}</p>
+          <div class="loadbar wall-loadbar"><span></span></div>
         </article>
         """
     update_block = ""
@@ -5914,6 +5921,7 @@ def _wall_page(title: str, content: str) -> str:
       --yellow: #f3c969;
       --red: #ff5f6d;
       --gray: #7f8a99;
+      --purple: #9d7cff;
       --line: rgba(255,255,255,.14);
     }}
     * {{ box-sizing: border-box; }}
@@ -5990,16 +5998,29 @@ def _wall_page(title: str, content: str) -> str:
       transform: skewX(-12deg);
     }}
     .wall-agent:nth-child(4) .handoff-plane, .wall-agent:last-child .handoff-plane {{ display: none; }}
-    .wall-agent-head {{ display: flex; gap: 6px; align-items: center; min-width: 0; }}
+    /* Compact wall variant of the richer Agent Monitor card language. */
+    .wall-agent-head {{ display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; gap: 6px; align-items: center; min-width: 0; }}
+    .wall-agent-title {{ min-width: 0; }}
     .wall-agent-head h2 {{ margin: 0; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
     .wall-agent-ring {{ width: 18px; height: 18px; border-radius: 999px; flex: 0 0 auto; border: 2px solid var(--gray); box-shadow: 0 0 18px rgba(127,138,153,.45); background: rgba(127,138,153,.15); }}
     .wall-agent-ring.green {{ border-color: var(--green); box-shadow: 0 0 18px rgba(55,214,122,.55); background: rgba(55,214,122,.18); }}
     .wall-agent-ring.yellow {{ border-color: var(--yellow); box-shadow: 0 0 18px rgba(243,201,105,.55); background: rgba(243,201,105,.18); }}
     .wall-agent-ring.red {{ border-color: var(--red); box-shadow: 0 0 18px rgba(255,95,109,.55); background: rgba(255,95,109,.18); }}
+    .wall-agent .badge {{ display: inline-block; max-width: 100%; border-radius: 999px; padding: 2px 6px; background: rgba(255,255,255,.1); color: var(--muted); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+    .wall-agent-action {{ border: 1px solid var(--line); border-radius: 999px; padding: 4px 7px; color: var(--ink); background: rgba(255,255,255,.08); text-decoration: none; font-size: 10px; font-weight: 800; white-space: nowrap; }}
+    .wall-agent-time {{ color: var(--yellow); font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+    .wall-agent-headline {{ color: var(--ink); font-weight: 800; }}
+    .wall-agent-summary {{ color: var(--muted); }}
+    .wall-loadbar {{ height: 5px; background: rgba(255,255,255,.08); border-radius: 999px; overflow: hidden; margin-top: 6px; }}
+    .wall-loadbar span {{ display: block; width: 38%; height: 100%; background: linear-gradient(90deg, var(--purple), var(--green)); animation: wallLoad 2.8s ease-in-out infinite alternate; }}
+    .wall-agent.idle .wall-loadbar span {{ width: 14%; background: rgba(127,138,153,.6); animation-duration: 5s; }}
+    .wall-agent.failed .wall-loadbar span {{ background: linear-gradient(90deg, var(--red), var(--yellow)); }}
+    .wall-agent.blocked .wall-loadbar span {{ background: linear-gradient(90deg, var(--yellow), rgba(255,255,255,.5)); }}
     .agent-status-line {{ display: flex; gap: 6px; align-items: center; margin: 4px 0; }}
     .agent-status-line strong {{ font-size: 14px; }}
     .agent-status-line span {{ border-radius: 999px; padding: 3px 7px; background: rgba(255,255,255,.1); font-size: 12px; }}
     .wall-agent p {{ font-size: 11px; max-height: 28px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }}
+    @keyframes wallLoad {{ from {{ transform: translateX(-20%); }} to {{ transform: translateX(180%); }} }}
     @keyframes handoffPulse {{
       0%, 100% {{ opacity: .45; transform: translateX(0) skewX(-12deg); }}
       50% {{ opacity: 1; transform: translateX(3px) skewX(-12deg); }}
@@ -6007,6 +6028,7 @@ def _wall_page(title: str, content: str) -> str:
     .handoff-active .handoff-plane::before {{ animation: handoffPulse 2.8s ease-in-out infinite; }}
     @media (prefers-reduced-motion: reduce) {{
       .handoff-active .handoff-plane::before {{ animation: none; }}
+      .wall-loadbar span {{ animation: none; }}
     }}
     .wall-counts {{ display: flex; gap: 6px; margin-bottom: 7px; }}
     .wall-count {{ flex: 1; border: 1px solid var(--line); border-radius: 8px; padding: 6px; background: rgba(255,255,255,.05); }}
