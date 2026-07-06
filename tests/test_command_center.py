@@ -612,6 +612,7 @@ class CommandCenterTests(unittest.TestCase):
         self.assertEqual(response.status, 200)
         self.assertIn("Command Center", response.body)
         self.assertIn('http-equiv="refresh" content="60"', response.body)
+        self.assertIn('class="wall-mode"', response.body)
         self.assertIn("local time", response.body)
         self.assertIn("wall-actions-top", response.body)
         self.assertIn("wall-intel-row", response.body)
@@ -619,6 +620,7 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("wall-status-grid", response.body)
         self.assertIn("overflow: hidden", response.body)
         self.assertIn("height: 100vh", response.body)
+        self.assertNotIn("status-banner", response.body)
         self.assertIn("Report Workbench", response.body)
         for agent in ("Market Agent", "Evidence Agent", "Fundamental Agent", "Memory Agent", "Report Agent", "QA Agent", "Inbox Agent"):
             self.assertIn(agent, response.body)
@@ -636,6 +638,22 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("Future Integrations", response.body)
         self.assertIn("Slack:", response.body)
         self.assertIn("planned / not configured", response.body)
+
+    def test_wall_after_agent_cycle_uses_compact_status_and_short_timestamps(self) -> None:
+        with _isolated_env():
+            redirect = dispatch_request("POST", "/atlas/wall/run")
+            self.assertEqual(redirect.status, 303)
+            status = redirect.location.split("status=", 1)[1]
+            response = dispatch_request("GET", f"/atlas/wall?status={status}")
+
+        self.assertEqual(response.status, 200)
+        self.assertIn("wall-status-pill", response.body)
+        self.assertIn("Agent Cycle complete", response.body)
+        self.assertNotIn("status-banner", response.body)
+        self.assertIn("wall-actions-top", response.body)
+        self.assertIn("Agent Room", response.body)
+        self.assertIn("wall-status-grid", response.body)
+        self.assertNotIn("+00:00</strong>", response.body)
 
     def test_greenrock_report_workbench_route_creates_local_tasks(self) -> None:
         with _isolated_env() as root:

@@ -301,6 +301,8 @@ Browser:
 
 The wall limits lists to the newest/top items and shows `+N more` when needed. Long text is clipped to keep the screen readable. Future integrations are displayed as local placeholders only: Slack is planned/not configured, and email, publishing, and trading remain disabled.
 
+After a wall-launched Agent Cycle, `/atlas/wall` redirects back to the same TV layout with a compact status pill in the header. The status does not use the full Command Center banner, so it does not push the Agent Room or bottom status grid down the screen. Wall timestamps are shortened to `YYYY-MM-DD HH:MM` where possible, with deeper details available on `/agents`, `/atlas/inbox`, and Morning Brief.
+
 ## Atlas Inbox
 
 Atlas Inbox is local item storage for operator attention:

@@ -160,6 +160,8 @@ Wall Mode is tuned for a 16:9 office TV, especially 1920x1080. The intended firs
 
 If the TV crops or scrolls, use browser full-screen mode and 100% zoom first. Wall Mode clips long summaries by design so the office screen stays readable from across the room.
 
+After clicking **Run Agent Cycle** from the wall, the success state appears as a compact header pill. It should not create a large banner or push the Agent Room down. Wall timestamps are intentionally shortened; open `/agents`, `/atlas/inbox`, or `/atlas/morning-brief` for full run and provenance detail.
+
 Future integrations are placeholders only: Slack is planned/not configured, while email, publishing, and trading are disabled. Do not add Slack tokens or configure external actions for this phase.
 
 ## Run Daily Intelligence Cycle
