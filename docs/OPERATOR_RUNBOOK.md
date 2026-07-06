@@ -148,17 +148,17 @@ http://127.0.0.1:8000/atlas/morning-brief
 
 The browser **Run Agent Cycle** action requires confirmation and creates local records only. Agents do not email, publish, trade, place broker/API orders, touch client files, use credentials, call external LLM/API services, approve reports, or export PDFs.
 
-Use `/atlas/wall` for the office-TV Mission Control view. It auto-refreshes every 60 seconds and shows provider status, latest agent cycle status, agent cards, Inbox counts, newest Inbox items, Market Pulse summary, Morning Brief snapshot status, approvals, and PDF readiness. The wall Run Agent Cycle button uses `use_latest_scan` and requires confirmation.
+Use `/atlas/wall` for the office-TV Mission Control view. It auto-refreshes every 60 seconds and shows provider status, latest agent cycle status, the Agent Room, Inbox counts, newest Inbox items, Market Pulse summary, approvals, report readiness, and PDF readiness. The wall Run Agent Cycle button uses `use_latest_scan` and requires confirmation.
 
 Wall Mode is tuned for a 16:9 office TV, especially 1920x1080. The intended first-screen layout is:
 
 1. Atlas/GreenRock header, clock, and provider status.
 2. Action row: Run Agent Cycle, Morning Brief, Atlas Inbox, Market Pulse, Agents, Report Workbench.
 3. Daily Intelligence, Top Priorities, Cycle Signals, and Atlas Inbox.
-4. Agent Room with local agent cards and update summaries.
-5. Bottom status grid for provider, latest cycle, Market Pulse, approvals, report readiness, report tasks, pending approval, and PDF status.
+4. Bottom split: Agent Room on the left and System Status on the right.
+5. Agent Room uses monitor-style activity circles and local handoff visuals; System Status uses compact cards for provider, latest cycle, Market Pulse summary, approvals, report readiness, report tasks, pending approval, PDF status, and future integrations.
 
-If the TV crops or scrolls, use browser full-screen mode and 100% zoom first. Wall Mode clips long summaries by design so the office screen stays readable from across the room.
+If the TV crops or scrolls, use browser full-screen mode and 100% zoom first. Wall Mode clips long summaries by design so the office screen stays readable from across the room. Morning Brief and Market Pulse stay available in the top action row and intelligence summaries instead of repeating as bottom panels.
 
 After clicking **Run Agent Cycle** from the wall, the success state appears as a compact header pill. It should not create a large banner or push the Agent Room down. Wall timestamps are intentionally shortened; open `/agents`, `/atlas/inbox`, or `/atlas/morning-brief` for full run and provenance detail.
 

@@ -2335,6 +2335,7 @@ def render_atlas_wall(status_message: str | None = None) -> str:
     }
     top_mover = _wall_top_mover(movers)
     task_count = len(report_workbench_summary(get_settings().output_dir, get_settings().db_path, create_tasks=False)["tasks"])
+    handoff_class = "handoff-active" if summary["cycle"].get("completed", 0) and not summary["cycle"].get("failed", 0) else ""
     content = f"""
     <section class="wall-hero">
       <div class="wall-brand">{_atlas_logo("wall-logo")}{_greenrock_logo("wall-logo")}<div><p>Atlas OS Wall</p><h1>Command Center</h1></div></div>
@@ -2383,36 +2384,26 @@ def render_atlas_wall(status_message: str | None = None) -> str:
         <div class="wall-list">{''.join(_wall_inbox_item(item) for item in inbox_items[:3]) or "<p>No open inbox items.</p>"}{_wall_more(len(inbox_items), 3)}</div>
       </article>
     </section>
-    <section class="agent-room">
-      <div class="section-head"><h2>Agent Room</h2><span>local workflow operators</span></div>
-      <div class="agent-room-line"></div>
-      <section class="wall-agent-grid">{''.join(_wall_agent_card(agent) for agent in summary["agents"])}</section>
-    </section>
-    <section class="wall-status-grid">
-      {_wall_stat("Provider", provider.status_label, provider.active_provider_name, _wall_color(provider.score_calculator_ready))}
-      {_wall_stat("Latest Cycle", _wall_short_timestamp(summary["cycle"].get("last_run", "none")), f"{summary['cycle'].get('completed', 0)} complete / {summary['cycle'].get('blocked', 0)} blocked", _wall_color(not summary["cycle"].get("failed", 0)), summary["cycle"].get("last_run", "none"))}
-      {_wall_stat("Market Pulse", scan.scan_id if scan else "none", f"scored {len(scan.rows) if scan else 0} / skipped {scan.skipped_ticker_count if scan else 0}", _wall_color(bool(scan and scan.rows)))}
-      {_wall_stat("Approvals", str(len(pending_approvals)), f"PDF ready {len(pdf_ready)} / exported {len(pdf_exported)}", "yellow" if pending_approvals or pdf_ready else "green")}
-      {_wall_stat("Report Ready", report_state["state"], report_state["next_operator_action"], _readiness_color(report_state["state"]))}
-      {_wall_stat("Report Tasks", str(task_count), f"run {_wall_short_id(report_state.get('latest_report_run_id') or 'none')}", "green", report_state.get('latest_report_run_id') or 'none')}
-      {_wall_stat("Pending Approval", str(report_state.get("pending_approvals", 0)), str(report_state.get("pending_approval_id") or "none"), "yellow" if report_state.get("pending_approvals") else "green")}
-      {_wall_stat("PDF Status", report_state.get("pdf_status", "not_ready"), "approval gate intact", "green" if report_state.get("final_pdf_complete") else ("yellow" if report_state.get("approved_pdf_ready") else "gray"))}
-    </section>
-    <section class="wall-footer-grid">
-      <article class="wall-panel">
-        <h2>Market Pulse</h2>
-        <p><strong>Latest scan:</strong> {_safe(scan.scan_id if scan else "none")}</p>
-        <p><strong>Configured / scored / skipped:</strong> {_safe(str(scan.configured_ticker_count if scan else 0))} / {_safe(str(len(scan.rows) if scan else 0))} / {_safe(str(scan.skipped_ticker_count if scan else 0))}</p>
-        <p><strong>Top mover:</strong> {_safe(top_mover)}</p>
-      </article>
-      {_future_integrations_panel(compact=True)}
-      <article class="wall-panel">
-        <h2>Morning Brief</h2>
-        <p><strong>Snapshot:</strong> {_safe(latest_snapshot["timestamp"] if latest_snapshot else "none saved yet")}</p>
-        <p><strong>Reports awaiting approval:</strong> {len(pending_approvals)}</p>
-        <p><strong>Approved PDFs ready:</strong> {len(pdf_ready)}</p>
-        <p><strong>PDFs exported:</strong> {len(pdf_exported)}</p>
-      </article>
+    <section class="wall-bottom-split">
+      <section class="agent-room {handoff_class}">
+        <div class="section-head"><h2>Agent Room</h2><span>local workflow operators</span></div>
+        <div class="agent-room-line"></div>
+        <section class="wall-agent-grid">{''.join(_wall_agent_card(agent) for agent in summary["agents"])}</section>
+      </section>
+      <section class="system-status-panel">
+        <div class="section-head"><h2>System Status</h2><span>local only / gates intact</span></div>
+        <section class="wall-status-grid">
+          {_wall_stat("Provider", provider.status_label, provider.active_provider_name, _wall_color(provider.score_calculator_ready))}
+          {_wall_stat("Latest Cycle", _wall_short_timestamp(summary["cycle"].get("last_run", "none")), f"{summary['cycle'].get('completed', 0)} complete / {summary['cycle'].get('blocked', 0)} blocked", _wall_color(not summary["cycle"].get("failed", 0)), summary["cycle"].get("last_run", "none"))}
+          {_wall_stat("Market Pulse", scan.scan_id if scan else "none", f"scored {len(scan.rows) if scan else 0} / skipped {scan.skipped_ticker_count if scan else 0}", _wall_color(bool(scan and scan.rows)))}
+          {_wall_stat("Approvals", str(len(pending_approvals)), f"PDF ready {len(pdf_ready)} / exported {len(pdf_exported)}", "yellow" if pending_approvals or pdf_ready else "green")}
+          {_wall_stat("Report Ready", report_state["state"], report_state["next_operator_action"], _readiness_color(report_state["state"]))}
+          {_wall_stat("Report Tasks", str(task_count), f"run {_wall_short_id(report_state.get('latest_report_run_id') or 'none')}", "green", report_state.get('latest_report_run_id') or 'none')}
+          {_wall_stat("Pending Approval", str(report_state.get("pending_approvals", 0)), str(report_state.get("pending_approval_id") or "none"), "yellow" if report_state.get("pending_approvals") else "green")}
+          {_wall_stat("PDF Status", report_state.get("pdf_status", "not_ready"), "approval gate intact", "green" if report_state.get("final_pdf_complete") else ("yellow" if report_state.get("approved_pdf_ready") else "gray"))}
+          {_wall_stat("Future Integrations", "Slack planned", "Email / publishing / trading disabled", "gray")}
+        </section>
+      </section>
     </section>
     """
     return _wall_page("Atlas Wall", content)
@@ -5128,7 +5119,8 @@ def _agent_card(agent, variant: str = "monitor") -> str:
             color = "gray"
         return f"""
         <article class="wall-agent agent-card {status} {color}">
-          <div class="wall-agent-head"><span class="status-dot {color}"></span><h2>{_safe(agent.name)}</h2></div>
+          <span class="handoff-plane" aria-hidden="true"></span>
+          <div class="wall-agent-head"><span class="agent-ring wall-agent-ring {color}"></span><h2>{_safe(agent.name)}</h2></div>
           <div class="agent-status-line"><strong>{_safe(status)}</strong><span>{_safe(agent.health)}</span></div>
           <p title="{_safe(timestamp)}"><b>Last:</b> {_safe(_wall_short_timestamp(timestamp))}</p>
           <p title="{_safe(headline)}"><b>Latest:</b> {_safe(headline)}</p>
@@ -5939,9 +5931,9 @@ def _wall_page(title: str, content: str) -> str:
       padding: 14px;
       display: grid;
       gap: 10px;
-      grid-template-rows: 72px 40px minmax(250px, 34fr) minmax(225px, 28fr) minmax(94px, 13fr) minmax(72px, 8fr);
+      grid-template-rows: 72px 40px minmax(250px, 34fr) minmax(0, 54fr);
     }}
-    .wall-hero, .wall-panel, .wall-stat, .wall-agent, .wall-actions, .agent-room {{
+    .wall-hero, .wall-panel, .wall-stat, .wall-agent, .wall-actions, .agent-room, .system-status-panel {{
       border: 1px solid var(--line);
       background: var(--panel);
       border-radius: 8px;
@@ -5967,13 +5959,16 @@ def _wall_page(title: str, content: str) -> str:
     .wall-clock strong {{ display: block; font-size: 23px; }}
     .wall-clock span {{ color: var(--muted); font-size: 16px; }}
     .wall-intel-row {{ display: grid; grid-template-columns: 1.15fr .85fr .85fr 1fr; gap: 10px; min-height: 0; }}
-    .wall-footer-grid {{ display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; min-height: 0; }}
-    .wall-status-grid {{ display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 8px; min-height: 0; }}
+    .wall-bottom-split {{ display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr); gap: 10px; min-height: 0; }}
+    .system-status-panel {{ min-height: 0; }}
+    .system-status-panel .section-head {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 7px; }}
+    .wall-status-grid {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: minmax(0, 1fr); gap: 8px; min-height: 0; height: calc(100% - 28px); }}
     .wall-grid {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }}
-    .wall-agent-grid {{ position: relative; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; min-height: 0; }}
+    .wall-agent-grid {{ position: relative; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-auto-rows: minmax(0, 1fr); gap: 8px 10px; min-height: 0; height: calc(100% - 30px); }}
     .wall-stat span, .wall-count span, .wall-inbox-item span, .section-head span {{ color: var(--muted); font-size: 12px; }}
-    .wall-stat strong {{ display: block; margin: 3px 0; font-size: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
-    .wall-stat p {{ font-size: 12px; max-height: 30px; overflow: hidden; }}
+    .wall-stat {{ padding: 8px; }}
+    .wall-stat strong {{ display: block; margin: 2px 0; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+    .wall-stat p {{ font-size: 11px; max-height: 28px; overflow: hidden; }}
     .wall-stat.green, .wall-agent.green, .wall-count.green {{ border-color: rgba(55,214,122,.6); }}
     .wall-stat.yellow, .wall-agent.yellow, .wall-count.yellow {{ border-color: rgba(243,201,105,.7); }}
     .wall-stat.red, .wall-agent.red, .wall-count.red {{ border-color: rgba(255,95,109,.7); }}
@@ -5982,18 +5977,37 @@ def _wall_page(title: str, content: str) -> str:
     .agent-room .section-head {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }}
     .agent-room-line {{ position: absolute; left: 5%; right: 5%; top: 55%; height: 1px; background: linear-gradient(90deg, transparent, rgba(55,214,122,.45), transparent); pointer-events: none; }}
     .wall-agent {{ position: relative; min-height: 0; padding: 8px; }}
-    .wall-agent::after {{ content: ">"; position: absolute; right: -8px; top: 42%; color: var(--yellow); font-size: 14px; opacity: .78; }}
-    .wall-agent:last-child::after {{ display: none; }}
+    .handoff-plane {{ position: absolute; right: -10px; top: 44%; width: 18px; height: 14px; z-index: 4; pointer-events: none; }}
+    .handoff-plane::before {{
+      content: "";
+      position: absolute;
+      inset: 1px 0 1px 2px;
+      border-left: 14px solid var(--yellow);
+      border-top: 6px solid transparent;
+      border-bottom: 6px solid transparent;
+      filter: drop-shadow(0 0 8px rgba(243,201,105,.38));
+      opacity: .76;
+      transform: skewX(-12deg);
+    }}
+    .wall-agent:nth-child(4) .handoff-plane, .wall-agent:last-child .handoff-plane {{ display: none; }}
     .wall-agent-head {{ display: flex; gap: 6px; align-items: center; min-width: 0; }}
     .wall-agent-head h2 {{ margin: 0; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
-    .status-dot {{ width: 10px; height: 10px; border-radius: 999px; flex: 0 0 auto; background: var(--gray); box-shadow: 0 0 16px rgba(127,138,153,.45); }}
-    .status-dot.green {{ background: var(--green); box-shadow: 0 0 16px rgba(55,214,122,.55); }}
-    .status-dot.yellow {{ background: var(--yellow); box-shadow: 0 0 16px rgba(243,201,105,.55); }}
-    .status-dot.red {{ background: var(--red); box-shadow: 0 0 16px rgba(255,95,109,.55); }}
+    .wall-agent-ring {{ width: 18px; height: 18px; border-radius: 999px; flex: 0 0 auto; border: 2px solid var(--gray); box-shadow: 0 0 18px rgba(127,138,153,.45); background: rgba(127,138,153,.15); }}
+    .wall-agent-ring.green {{ border-color: var(--green); box-shadow: 0 0 18px rgba(55,214,122,.55); background: rgba(55,214,122,.18); }}
+    .wall-agent-ring.yellow {{ border-color: var(--yellow); box-shadow: 0 0 18px rgba(243,201,105,.55); background: rgba(243,201,105,.18); }}
+    .wall-agent-ring.red {{ border-color: var(--red); box-shadow: 0 0 18px rgba(255,95,109,.55); background: rgba(255,95,109,.18); }}
     .agent-status-line {{ display: flex; gap: 6px; align-items: center; margin: 4px 0; }}
     .agent-status-line strong {{ font-size: 14px; }}
     .agent-status-line span {{ border-radius: 999px; padding: 3px 7px; background: rgba(255,255,255,.1); font-size: 12px; }}
     .wall-agent p {{ font-size: 11px; max-height: 28px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }}
+    @keyframes handoffPulse {{
+      0%, 100% {{ opacity: .45; transform: translateX(0) skewX(-12deg); }}
+      50% {{ opacity: 1; transform: translateX(3px) skewX(-12deg); }}
+    }}
+    .handoff-active .handoff-plane::before {{ animation: handoffPulse 2.8s ease-in-out infinite; }}
+    @media (prefers-reduced-motion: reduce) {{
+      .handoff-active .handoff-plane::before {{ animation: none; }}
+    }}
     .wall-counts {{ display: flex; gap: 6px; margin-bottom: 7px; }}
     .wall-count {{ flex: 1; border: 1px solid var(--line); border-radius: 8px; padding: 6px; background: rgba(255,255,255,.05); }}
     .wall-count strong {{ display: block; font-size: 20px; }}
@@ -6019,7 +6033,7 @@ def _wall_page(title: str, content: str) -> str:
     @media (max-width: 1200px) {{
       body {{ overflow: auto; }}
       main {{ height: auto; grid-template-rows: none; }}
-      .wall-intel-row, .wall-footer-grid, .wall-status-grid, .wall-agent-grid {{ grid-template-columns: 1fr; }}
+      .wall-intel-row, .wall-bottom-split, .wall-status-grid, .wall-agent-grid {{ grid-template-columns: 1fr; }}
       .wall-hero {{ align-items: flex-start; flex-direction: column; gap: 18px; }}
       h1 {{ font-size: 46px; }}
     }}

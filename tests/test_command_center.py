@@ -617,7 +617,12 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("wall-actions-top", response.body)
         self.assertIn("wall-intel-row", response.body)
         self.assertIn("Agent Room", response.body)
+        self.assertIn("wall-bottom-split", response.body)
+        self.assertIn("system-status-panel", response.body)
+        self.assertIn("System Status", response.body)
         self.assertIn("wall-status-grid", response.body)
+        self.assertIn("wall-agent-ring", response.body)
+        self.assertIn("handoff-plane", response.body)
         self.assertIn("overflow: hidden", response.body)
         self.assertIn("height: 100vh", response.body)
         self.assertNotIn("status-banner", response.body)
@@ -635,9 +640,14 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("Market Pulse", response.body)
         self.assertIn("Morning Brief", response.body)
         self.assertIn("Report Ready", response.body)
+        self.assertIn("Provider", response.body)
+        self.assertIn("Approvals", response.body)
+        self.assertIn("PDF Status", response.body)
         self.assertIn("Future Integrations", response.body)
-        self.assertIn("Slack:", response.body)
-        self.assertIn("planned / not configured", response.body)
+        self.assertIn("Slack planned", response.body)
+        self.assertIn("Email / publishing / trading disabled", response.body)
+        self.assertNotIn("<h2>Morning Brief</h2>", response.body)
+        self.assertNotIn("<h2>Market Pulse</h2>", response.body)
 
     def test_wall_after_agent_cycle_uses_compact_status_and_short_timestamps(self) -> None:
         with _isolated_env():
@@ -652,6 +662,8 @@ class CommandCenterTests(unittest.TestCase):
         self.assertNotIn("status-banner", response.body)
         self.assertIn("wall-actions-top", response.body)
         self.assertIn("Agent Room", response.body)
+        self.assertIn("handoff-active", response.body)
+        self.assertIn("handoff-plane", response.body)
         self.assertIn("wall-status-grid", response.body)
         self.assertNotIn("+00:00</strong>", response.body)
 

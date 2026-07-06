@@ -284,7 +284,7 @@ Browser:
 
 - `/agents` shows cards, status, task, latest message, health, output summary, and run history.
 - `/agents/<agent_id>` shows local structured update history for that agent.
-- `/atlas/wall` shows the office-TV Agent Wall with large agent cards, provider status, latest Daily Intelligence cycle, executive summary, top priorities, QA health, latest cycle, Inbox counts, Market Pulse summary, Morning Brief snapshot status, approvals, and PDF readiness.
+- `/atlas/wall` shows the office-TV Agent Wall with a top intelligence row, a monitor-style Agent Room, compact System Status cards, provider status, latest Daily Intelligence cycle, priorities, cycle signals, Inbox counts, Market Pulse summary, approvals, report readiness, and PDF status.
 - `/` shows the Agent Cycle card and a confirmed `Run Agent Cycle` action.
 - `/atlas/morning-brief` shows the Daily Intelligence Brief first, followed by latest agent run summary, health cards, inbox items, and Last Agent Cycle timestamp.
 - `/atlas/inbox` and inbox detail pages show provenance, status, created reason, related run/cycle context where available, target URL, and local dismiss/complete actions.
@@ -296,10 +296,11 @@ Browser:
 - header, local clock, logos, and provider status
 - navigation/action row directly under the header
 - top intelligence row for Daily Intelligence, priorities, cycle signals, and Atlas Inbox
-- Agent Room with consistent agent cards and update history indicators
-- bottom status grid for provider, latest cycle, Market Pulse, approvals, report readiness, report tasks, pending approval, and PDF status
+- bottom split layout: Agent Room on the left and System Status on the right
+- Agent Room with monitor-style activity circles, update history indicators, and local handoff visuals
+- System Status cards for provider, latest cycle, Market Pulse summary, approvals, report readiness, report tasks, pending approval, PDF status, and future integrations
 
-The wall limits lists to the newest/top items and shows `+N more` when needed. Long text is clipped to keep the screen readable. Future integrations are displayed as local placeholders only: Slack is planned/not configured, and email, publishing, and trading remain disabled.
+The wall limits lists to the newest/top items and shows `+N more` when needed. Morning Brief and Market Pulse are linked in the action row and summarized above, not repeated as separate bottom panels. Long text is clipped to keep the screen readable. Future integrations are displayed as local placeholders only: Slack is planned/not configured, and email, publishing, and trading remain disabled.
 
 After a wall-launched Agent Cycle, `/atlas/wall` redirects back to the same TV layout with a compact status pill in the header. The status does not use the full Command Center banner, so it does not push the Agent Room or bottom status grid down the screen. Wall timestamps are shortened to `YYYY-MM-DD HH:MM` where possible, with deeper details available on `/agents`, `/atlas/inbox`, and Morning Brief.
 
