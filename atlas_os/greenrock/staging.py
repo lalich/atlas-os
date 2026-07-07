@@ -10,7 +10,13 @@ from pathlib import Path
 from atlas_os.greenrock.market_data import MarketDataConfigurationError, MarketDataProvider
 from atlas_os.greenrock.score import calculate_score_preview
 from atlas_os.greenrock.scanner import latest_scan, load_promotion_metadata, load_scan
-from atlas_os.greenrock.universe import LARGE_CAP_UNIVERSE, MEGA_ROCK_UNIVERSE, SMALL_MID_CAP_UNIVERSE
+from atlas_os.greenrock.universe import (
+    GREENROCK_PLACEMENT_LABELS,
+    LARGE_CAP_UNIVERSE,
+    MEGA_ROCK_UNIVERSE,
+    SMALL_MID_CAP_UNIVERSE,
+    placement_path,
+)
 
 
 MEGA_BUCKET = "mega"
@@ -59,6 +65,24 @@ STAGING_ANALYTIC_FIELDS = (
     "top_caution_signal",
 )
 
+STAGING_ENRICHMENT_CACHE_HEADERS = [
+    "ticker",
+    "source_area",
+    "source_id",
+    "score",
+    "confidence",
+    "evidence_agreement",
+    "guardrail",
+    "research_priority",
+    "top_bullish_signal",
+    "top_caution_signal",
+    "updated_at",
+    "provider",
+    "warnings",
+]
+
+VISIBLE_ENRICHMENT_SCOPES = ("staged", "watchlists", "latest-scan", "visible")
+
 
 @dataclass(frozen=True)
 class StagingReadiness:
@@ -89,10 +113,21 @@ class StagingEnrichmentResult:
     enriched: tuple[str, ...]
     skipped: tuple[str, ...]
     errors: tuple[str, ...]
+    staged_enriched: int = 0
+    watchlist_enriched: int = 0
+    latest_scan_enriched: int = 0
+
+    @property
+    def warnings(self) -> tuple[str, ...]:
+        return self.errors
 
 
 def staging_path(output_dir: Path) -> Path:
     return Path(output_dir) / "greenrock" / "staging" / "report_candidates.csv"
+
+
+def staging_enrichment_cache_path(output_dir: Path) -> Path:
+    return Path(output_dir) / "greenrock" / "staging" / "enrichment_cache.csv"
 
 
 def load_staged_candidates(output_dir: Path) -> tuple[dict[str, str], ...]:
@@ -110,6 +145,30 @@ def save_staged_candidates(output_dir: Path, rows: tuple[dict[str, str], ...]) -
     normalized_rows = tuple(_normalize_row(row) for row in rows if row.get("ticker", "").strip())
     with path.open("w", newline="", encoding="utf-8") as csv_file:
         writer = csv.DictWriter(csv_file, fieldnames=STAGING_HEADERS)
+        writer.writeheader()
+        for row in normalized_rows:
+            writer.writerow(row)
+
+
+def load_staging_enrichment_cache(output_dir: Path) -> tuple[dict[str, str], ...]:
+    path = staging_enrichment_cache_path(output_dir)
+    if not path.exists():
+        return ()
+    with path.open(newline="", encoding="utf-8") as csv_file:
+        reader = csv.DictReader(csv_file)
+        return tuple({header: row.get(header, "") for header in STAGING_ENRICHMENT_CACHE_HEADERS} for row in reader)
+
+
+def save_staging_enrichment_cache(output_dir: Path, rows: tuple[dict[str, str], ...]) -> None:
+    path = staging_enrichment_cache_path(output_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    normalized_rows = tuple(
+        {header: row.get(header, "") for header in STAGING_ENRICHMENT_CACHE_HEADERS}
+        for row in rows
+        if row.get("ticker", "").strip()
+    )
+    with path.open("w", newline="", encoding="utf-8") as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=STAGING_ENRICHMENT_CACHE_HEADERS)
         writer.writeheader()
         for row in normalized_rows:
             writer.writerow(row)
@@ -294,7 +353,7 @@ def enrich_staged_candidates(
     skipped: list[str] = []
     errors: list[str] = []
     if not targets:
-        return StagingEnrichmentResult((), (), ())
+        return StagingEnrichmentResult((), (), (), staged_enriched=0)
 
     provider_cache = provider
     for index, row in enumerate(rows):
@@ -327,7 +386,67 @@ def enrich_staged_candidates(
         enriched.append(symbol)
     if enriched:
         save_staged_candidates(output_dir, tuple(rows))
-    return StagingEnrichmentResult(tuple(enriched), tuple(skipped), tuple(errors))
+    return StagingEnrichmentResult(
+        tuple(enriched),
+        tuple(skipped),
+        tuple(errors),
+        staged_enriched=len(enriched),
+    )
+
+
+def enrich_staging_page_candidates(
+    output_dir: Path,
+    scope: str = "staged",
+    provider: MarketDataProvider | None = None,
+) -> StagingEnrichmentResult:
+    normalized_scope = scope.strip().lower()
+    if normalized_scope not in VISIBLE_ENRICHMENT_SCOPES:
+        raise ValueError("Choose a valid staging enrichment scope.")
+    if normalized_scope == "staged":
+        return enrich_staged_candidates(output_dir, provider=provider)
+
+    staged_result = StagingEnrichmentResult((), (), (), staged_enriched=0)
+    if normalized_scope in {"visible", "staged"}:
+        staged_result = enrich_staged_candidates(output_dir, provider=provider)
+
+    cache_rows = list(load_staging_enrichment_cache(output_dir))
+    cache_rows = _remove_cache_targets(cache_rows, _cache_targets_for_scope(output_dir, normalized_scope))
+    enriched_cache_rows: list[dict[str, str]] = []
+    skipped = list(staged_result.skipped)
+    errors = list(staged_result.errors)
+    watchlist_enriched = 0
+    latest_scan_enriched = 0
+
+    for target in _visible_enrichment_targets(output_dir, normalized_scope):
+        ticker = target["ticker"]
+        try:
+            preview = calculate_score_preview(
+                ticker,
+                data_mode="real",
+                output_dir=output_dir,
+                provider=provider,
+            )
+        except (MarketDataConfigurationError, ValueError) as error:
+            skipped.append(ticker)
+            errors.append(f"{ticker}: {error}")
+            continue
+        enriched_cache_rows.append(_cache_row_from_preview(target, preview))
+        if target["source_area"] == "watchlist":
+            watchlist_enriched += 1
+        elif target["source_area"] == "latest_scan":
+            latest_scan_enriched += 1
+
+    if enriched_cache_rows:
+        save_staging_enrichment_cache(output_dir, tuple(cache_rows + enriched_cache_rows))
+
+    return StagingEnrichmentResult(
+        staged_result.enriched,
+        tuple(skipped),
+        tuple(errors),
+        staged_enriched=staged_result.staged_enriched,
+        watchlist_enriched=watchlist_enriched,
+        latest_scan_enriched=latest_scan_enriched,
+    )
 
 
 def _candidate_metadata(output_dir: Path, ticker: str, source_list: str) -> dict[str, str]:
@@ -348,6 +467,75 @@ def _candidate_metadata(output_dir: Path, ticker: str, source_list: str) -> dict
                 "top_caution_signal": "",
             }
     return {"source_list": source_list or "manual"}
+
+
+def _visible_enrichment_targets(output_dir: Path, scope: str) -> tuple[dict[str, str], ...]:
+    targets: list[dict[str, str]] = []
+    if scope in {"visible", "watchlists"}:
+        for list_key in GREENROCK_PLACEMENT_LABELS:
+            for ticker in _watchlist_tickers(output_dir, list_key):
+                targets.append({"ticker": ticker, "source_area": "watchlist", "source_id": list_key})
+                if len(targets) >= 80 and scope == "visible":
+                    break
+            if len(targets) >= 80 and scope == "visible":
+                break
+    if scope in {"visible", "latest-scan"}:
+        scan = latest_scan(output_dir)
+        if scan:
+            for row in scan.rows[:25]:
+                ticker = _normalize_ticker(row.get("symbol", ""))
+                if ticker:
+                    targets.append({"ticker": ticker, "source_area": "latest_scan", "source_id": scan.scan_id})
+    return tuple(targets)
+
+
+def _cache_targets_for_scope(output_dir: Path, scope: str) -> set[tuple[str, str, str]]:
+    if scope == "staged":
+        return set()
+    return {
+        (target["source_area"], target["source_id"], target["ticker"])
+        for target in _visible_enrichment_targets(output_dir, scope)
+    }
+
+
+def _remove_cache_targets(
+    rows: list[dict[str, str]],
+    targets: set[tuple[str, str, str]],
+) -> list[dict[str, str]]:
+    if not targets:
+        return rows
+    return [
+        row
+        for row in rows
+        if (row.get("source_area", ""), row.get("source_id", ""), row.get("ticker", "")) not in targets
+    ]
+
+
+def _cache_row_from_preview(target: dict[str, str], preview) -> dict[str, str]:
+    return {
+        "ticker": target["ticker"],
+        "source_area": target["source_area"],
+        "source_id": target["source_id"],
+        "score": f"{preview.candidate.score:.2f}",
+        "confidence": f"{preview.confidence_score:.2f}",
+        "evidence_agreement": f"{preview.evidence_agreement_score:.2f}",
+        "guardrail": preview.fundamental_guardrails.label,
+        "research_priority": preview.research_priority,
+        "top_bullish_signal": preview.bullish_evidence[0] if preview.bullish_evidence else "none",
+        "top_caution_signal": preview.bearish_evidence[0] if preview.bearish_evidence else "none",
+        "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "provider": preview.data_source,
+        "warnings": "; ".join(preview.data_quality_warnings),
+    }
+
+
+def _watchlist_tickers(output_dir: Path, list_key: str) -> tuple[str, ...]:
+    path = placement_path(output_dir, list_key)
+    if not path.exists():
+        return ()
+    with path.open(newline="", encoding="utf-8") as csv_file:
+        reader = csv.DictReader(csv_file)
+        return tuple(dict.fromkeys(_normalize_ticker(row.get("ticker", "")) for row in reader if row.get("ticker", "")))
 
 
 def _upsert_staged_row(output_dir: Path, row: dict[str, str], market_cap_bucket: str = "") -> dict[str, str]:

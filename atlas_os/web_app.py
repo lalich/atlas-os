@@ -76,7 +76,8 @@ from atlas_os.greenrock.staging import (
     STAGING_BUCKET_TARGETS,
     add_staged_candidate,
     add_staged_scan_candidate,
-    enrich_staged_candidates,
+    enrich_staging_page_candidates,
+    load_staging_enrichment_cache,
     load_staged_candidates,
     move_staged_candidate,
     remove_staged_candidate,
@@ -2059,8 +2060,9 @@ def render_greenrock_staging(status_message: str | None = None) -> str:
         <span class="badge">{_safe(analytics.label)}</span>
       </div>
       {_staging_enrichment_status(analytics)}
-      <form method="post" action="/greenrock/staging/enrich" onsubmit="return confirm('Refresh staged candidates with current GreenRock analytics?');">
-        <button type="submit">Refresh / Enrich Staged Candidates</button>
+      <p class="subtle">Updates staged candidates, watchlist candidates, and latest scan candidates using the configured real-data provider.</p>
+      <form method="post" action="/greenrock/staging/enrich" onsubmit="return confirm('Refresh all visible staging-page candidates with current GreenRock analytics?');">
+        <button type="submit">Refresh / Enrich Staging Page</button>
       </form>
     </section>
     <section class="panel warning-panel">
@@ -2270,12 +2272,21 @@ def trim_greenrock_staging_bucket(bucket: str) -> str:
 def enrich_greenrock_staging_candidates() -> str:
     settings = get_settings()
     try:
-        result = enrich_staged_candidates(settings.output_dir)
+        result = enrich_staging_page_candidates(settings.output_dir, scope="visible")
     except MarketDataConfigurationError as error:
-        return render_greenrock_staging(f"Provider required: {error}")
-    status = f"Enrichment complete: {len(result.enriched)} enriched."
+        return render_greenrock_staging(f"Provider setup needed: {error}")
+    enriched_total = result.staged_enriched + result.watchlist_enriched + result.latest_scan_enriched
+    if result.errors and not enriched_total:
+        status = "Provider setup needed: configure the real-data provider before refreshing visible candidates."
+    else:
+        status = (
+            "Enrichment complete: "
+            f"staged {result.staged_enriched}, "
+            f"watchlist {result.watchlist_enriched}, "
+            f"latest scan {result.latest_scan_enriched}."
+        )
     if result.skipped:
-        status += f" Skipped: {', '.join(result.skipped)}."
+        status += f" Skipped {len(result.skipped)}: {', '.join(result.skipped)}."
     if result.errors:
         status += " Warnings: " + " ".join(result.errors)
     status += " No report, approval, PDF, email, publication, or external action was created."
@@ -4548,6 +4559,7 @@ def _staging_action_forms(row: dict[str, str]) -> str:
 
 
 def _staging_source_sections(output_dir: Path) -> str:
+    enrichment_cache = _staging_enrichment_index(output_dir)
     watchlist_rows = []
     for list_key, label in GREENROCK_PLACEMENT_LABELS.items():
         for ticker in _watchlist_tickers(output_dir, list_key):
@@ -4557,7 +4569,7 @@ def _staging_source_sections(output_dir: Path) -> str:
             ticker=ticker,
             source=label,
             source_list=list_key,
-            row={},
+            row=_staging_source_row({}, enrichment_cache.get(("watchlist", list_key, ticker), {})),
             card_class="watchlist-stage-card",
         )
         for ticker, label, list_key in watchlist_rows[:80]
@@ -4573,7 +4585,7 @@ def _staging_source_sections(output_dir: Path) -> str:
                 ticker=row.get("symbol", ""),
                 source=row.get("market_archetype", "") or "latest scan",
                 source_list="latest_scan",
-                row=row,
+                row=_staging_source_row(row, enrichment_cache.get(("latest_scan", scan.scan_id, row.get("symbol", "").upper()), {})),
                 card_class="scan-stage-card",
             )
             for row in scan.rows[:25]
@@ -4605,6 +4617,7 @@ def _staging_source_sections(output_dir: Path) -> str:
 def _stageable_source_card(ticker: str, source: str, source_list: str, row: dict[str, str], card_class: str) -> str:
     priority = row.get("research_priority", "")
     guardrail = row.get("fundamental_guardrail", "")
+    updated = _source_updated_line(row)
     return f"""
     <article class="stageable-card staging-source-card {card_class}">
       <div class="source-card-top">
@@ -4612,6 +4625,7 @@ def _stageable_source_card(ticker: str, source: str, source_list: str, row: dict
           <strong>{_safe(ticker)}</strong>
           <span>{_finviz_link(ticker)}</span>
           <span>{_safe(source)}</span>
+          {updated}
         </div>
         <div class="source-card-badges">
           <span class="badge">{_safe(priority or "Priority pending")}</span>
@@ -4627,6 +4641,51 @@ def _stageable_source_card(ticker: str, source: str, source_list: str, row: dict
       {_staging_source_stage_form(ticker, source_list)}
     </article>
     """
+
+
+def _staging_enrichment_index(output_dir: Path) -> dict[tuple[str, str, str], dict[str, str]]:
+    return {
+        (row.get("source_area", ""), row.get("source_id", ""), row.get("ticker", "").upper()): row
+        for row in load_staging_enrichment_cache(output_dir)
+    }
+
+
+def _staging_source_row(base: dict[str, str], cached: dict[str, str]) -> dict[str, str]:
+    row = dict(base)
+    if not cached:
+        return row
+    row.update(
+        {
+            "greenrock_score": cached.get("score", ""),
+            "greenrock_confidence": cached.get("confidence", ""),
+            "evidence_agreement": cached.get("evidence_agreement", ""),
+            "fundamental_guardrail": cached.get("guardrail", ""),
+            "research_priority": cached.get("research_priority", ""),
+            "top_bullish_signal": cached.get("top_bullish_signal", ""),
+            "top_caution_signal": cached.get("top_caution_signal", ""),
+            "updated_at": cached.get("updated_at", ""),
+            "provider": cached.get("provider", ""),
+            "warnings": cached.get("warnings", ""),
+        }
+    )
+    return row
+
+
+def _source_updated_line(row: dict[str, str]) -> str:
+    updated_at = row.get("updated_at", "").strip()
+    if not updated_at:
+        return ""
+    provider = row.get("provider", "").strip()
+    provider_copy = f" via {provider}" if provider else ""
+    return f"<span class='source-updated'>Updated {_safe(_short_datetime(updated_at))}{_safe(provider_copy)}</span>"
+
+
+def _short_datetime(value: str) -> str:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return value[:16]
+    return parsed.strftime("%Y-%m-%d %H:%M")
 
 
 def _stage_metric(label: str, value: str) -> str:
@@ -6451,6 +6510,7 @@ def _page(title: str, content: str, active: str = "/") -> str:
     .staging-source-card {{ grid-template-columns: 1fr; gap: 12px; padding: 14px; }}
     .source-card-top {{ display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; min-width: 0; }}
     .source-card-badges {{ display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }}
+    .source-updated {{ color: #9ff5bb !important; }}
     .source-metric-chips {{ display: flex; flex-wrap: wrap; gap: 8px; }}
     .source-metric-chips span {{ min-width: 92px; max-width: 150px; font-size: 12px; }}
     .source-metric-chips b {{ display: inline; margin: 0 4px 0 0; font-size: 11px; }}

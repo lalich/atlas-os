@@ -31,7 +31,9 @@ from atlas_os.greenrock.scanner import load_promotion_metadata, run_population_s
 from atlas_os.greenrock.screener import run_screen
 from atlas_os.greenrock.staging import (
     add_staged_candidate,
+    enrich_staging_page_candidates,
     enrich_staged_candidates,
+    load_staging_enrichment_cache,
     load_staged_candidates,
     move_staged_candidate,
     remove_staged_candidate,
@@ -40,7 +42,13 @@ from atlas_os.greenrock.staging import (
     staging_readiness,
 )
 from atlas_os.greenrock.staging_report import run_greenrock_staging_report_workflow
-from atlas_os.greenrock.universe import LARGE_CAP_TICKERS, MEGA_ROCK_TICKERS, SMALL_MID_CAP_TICKERS, save_ticker_universe
+from atlas_os.greenrock.universe import (
+    LARGE_CAP_TICKERS,
+    MEGA_ROCK_TICKERS,
+    SMALL_MID_CAP_TICKERS,
+    add_ticker_to_greenrock_list,
+    save_ticker_universe,
+)
 from atlas_os.greenrock.workflow import run_greenrock_screening_workflow
 from atlas_os.web_app import dispatch_request
 
@@ -631,7 +639,8 @@ class GreenRockMarketDataTests(unittest.TestCase):
         self.assertIn("Generate Draft From Staging", response.body)
         self.assertIn("/greenrock/staging/generate/confirm", response.body)
         self.assertIn("Analytics Completeness", response.body)
-        self.assertIn("Refresh / Enrich Staged Candidates", response.body)
+        self.assertIn("Refresh / Enrich Staging Page", response.body)
+        self.assertIn("Updates staged candidates, watchlist candidates, and latest scan candidates", response.body)
 
     def test_staging_stores_candidate_metadata_from_scan(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -699,6 +708,100 @@ class GreenRockMarketDataTests(unittest.TestCase):
         self.assertNotEqual(staged["research_priority"], "")
         self.assertNotEqual(staged["top_bullish_signal"], "")
         self.assertNotEqual(staged["top_caution_signal"], "")
+
+    def test_visible_staging_enrichment_updates_watchlist_and_latest_scan_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            add_staged_candidate(root / "output", "LC01", "research")
+            add_ticker_to_greenrock_list(root / "output", "LC01", "watchlist")
+            run_population_scan(root / "output", "all", provider=FakeSectionedMarketDataProvider())
+
+            result = enrich_staging_page_candidates(root / "output", scope="visible", provider=FakeMarketDataProvider())
+            staged = load_staged_candidates(root / "output")[0]
+            cache = load_staging_enrichment_cache(root / "output")
+
+        source_areas = {(row["source_area"], row["ticker"]) for row in cache}
+        self.assertEqual(result.staged_enriched, 1)
+        self.assertGreaterEqual(result.watchlist_enriched, 1)
+        self.assertGreaterEqual(result.latest_scan_enriched, 1)
+        self.assertNotEqual(staged["greenrock_score"], "")
+        self.assertIn(("watchlist", "LC01"), source_areas)
+        self.assertIn(("latest_scan", "LC01"), source_areas)
+        self.assertTrue(all(row["provider"] for row in cache))
+
+    def test_browser_staging_enrich_visible_updates_all_visible_candidate_pools_safely(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {
+                "ATLAS_DB_PATH": str(root / "atlas.db"),
+                "ATLAS_OUTPUT_DIR": str(root / "output"),
+                "ATLAS_MARKET_DATA_PROVIDER": "yfinance",
+            }
+            with patch.dict("os.environ", env, clear=False):
+                db_path = initialize_database(root / "atlas.db")
+                add_staged_candidate(root / "output", "LC01", "research")
+                add_ticker_to_greenrock_list(root / "output", "LC01", "watchlist")
+                run_population_scan(root / "output", "all", provider=FakeSectionedMarketDataProvider())
+                with patch("atlas_os.greenrock.market_data.YFinanceMarketDataProvider", return_value=FakeMarketDataProvider()), patch(
+                    "atlas_os.greenrock.score.YFinanceMarketDataProvider",
+                    return_value=FakeMarketDataProvider(),
+                ):
+                    response = dispatch_request("POST", "/greenrock/staging/enrich")
+                cache = load_staging_enrichment_cache(root / "output")
+                staged = load_staged_candidates(root / "output")[0]
+                with connect(db_path) as connection:
+                    approvals = list_approvals(connection)
+                    artifacts = list_artifacts(connection)
+                    runs = list_workflow_runs(connection)
+
+        self.assertEqual(response.status, 200)
+        self.assertIn("Enrichment complete: staged 1", response.body)
+        self.assertIn("Updated", response.body)
+        self.assertNotEqual(staged["greenrock_score"], "")
+        self.assertTrue(any(row["source_area"] == "watchlist" for row in cache))
+        self.assertTrue(any(row["source_area"] == "latest_scan" for row in cache))
+        self.assertEqual(approvals, ())
+        self.assertEqual(artifacts, ())
+        self.assertEqual(runs, ())
+
+    def test_browser_staging_enrich_visible_shows_friendly_provider_setup(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {
+                "ATLAS_DB_PATH": str(root / "atlas.db"),
+                "ATLAS_OUTPUT_DIR": str(root / "output"),
+                "ATLAS_MARKET_DATA_PROVIDER": "",
+            }
+            with patch.dict("os.environ", env, clear=False):
+                add_staged_candidate(root / "output", "LC01", "research")
+                response = dispatch_request("POST", "/greenrock/staging/enrich")
+
+        self.assertEqual(response.status, 200)
+        self.assertIn("Provider setup needed", response.body)
+
+    def test_cli_staging_enrich_visible_scope_updates_display_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {
+                "ATLAS_DB_PATH": str(root / "atlas.db"),
+                "ATLAS_OUTPUT_DIR": str(root / "output"),
+                "ATLAS_MARKET_DATA_PROVIDER": "yfinance",
+            }
+            with patch.dict("os.environ", env, clear=False):
+                add_staged_candidate(root / "output", "LC01", "research")
+                add_ticker_to_greenrock_list(root / "output", "LC01", "watchlist")
+                run_population_scan(root / "output", "all", provider=FakeSectionedMarketDataProvider())
+                with patch("atlas_os.greenrock.market_data.YFinanceMarketDataProvider", return_value=FakeMarketDataProvider()), patch(
+                    "atlas_os.greenrock.score.YFinanceMarketDataProvider",
+                    return_value=FakeMarketDataProvider(),
+                ):
+                    output = _run_cli(["greenrock", "staging", "enrich", "--scope", "visible"])
+                cache = load_staging_enrichment_cache(root / "output")
+
+        self.assertIn("scope: visible", output)
+        self.assertIn("watchlist_enriched:", output)
+        self.assertIn("latest_scan_enriched:", output)
+        self.assertTrue(cache)
 
     def test_cli_staging_enrich_fails_safely_without_provider(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

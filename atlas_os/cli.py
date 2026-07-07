@@ -73,6 +73,7 @@ from atlas_os.greenrock.screener import run_screen
 from atlas_os.greenrock.staging import (
     STAGING_BUCKET_LABELS,
     add_staged_candidate,
+    enrich_staging_page_candidates,
     enrich_staged_candidates,
     load_staged_candidates,
     move_staged_candidate,
@@ -542,9 +543,15 @@ def build_parser() -> argparse.ArgumentParser:
     staging_remove = staging_subparsers.add_parser("remove", help="Remove a ticker from staging.")
     staging_remove.add_argument("ticker")
     staging_subparsers.add_parser("ready", help="Show staging readiness versus report slot targets.")
-    staging_enrich = staging_subparsers.add_parser("enrich", help="Refresh staged candidates with current GreenRock analytics.")
+    staging_enrich = staging_subparsers.add_parser("enrich", help="Refresh GreenRock staging analytics.")
     staging_enrich.add_argument("--ticker", default=None, help="Only enrich one staged ticker.")
     staging_enrich.add_argument("--bucket", choices=("mega", "large", "small_mid", "research", "excluded"), default=None)
+    staging_enrich.add_argument(
+        "--scope",
+        choices=("staged", "visible", "watchlists", "latest-scan"),
+        default="staged",
+        help="Choose whether to enrich staged candidates only or the visible staging-page pools.",
+    )
 
     return parser
 
@@ -1787,7 +1794,13 @@ def run_greenrock_scan_promote(scan_id: str, ticker: str, list_key: str) -> int:
     return 0
 
 
-def run_greenrock_staging(command: str | None, ticker: str | None = None, bucket: str | None = None, notes: str = "") -> int:
+def run_greenrock_staging(
+    command: str | None,
+    ticker: str | None = None,
+    bucket: str | None = None,
+    notes: str = "",
+    scope: str = "staged",
+) -> int:
     settings = get_settings()
     try:
         if command == "list":
@@ -1835,10 +1848,19 @@ def run_greenrock_staging(command: str | None, ticker: str | None = None, bucket
             print(f"  missing_tickers: {', '.join(analytics.missing_tickers) if analytics.missing_tickers else 'none'}")
             return 0
         if command == "enrich":
-            result = enrich_staged_candidates(settings.output_dir, ticker=ticker, bucket=bucket)
+            if scope == "staged":
+                result = enrich_staged_candidates(settings.output_dir, ticker=ticker, bucket=bucket)
+            else:
+                if ticker or bucket:
+                    raise ValueError("--ticker and --bucket are only supported with --scope staged.")
+                result = enrich_staging_page_candidates(settings.output_dir, scope=scope)
             print("GreenRock staging enrichment")
+            print(f"scope: {scope}")
             print(f"enriched_count: {len(result.enriched)}")
             print(f"enriched_tickers: {', '.join(result.enriched) if result.enriched else 'none'}")
+            print(f"staged_enriched: {result.staged_enriched}")
+            print(f"watchlist_enriched: {result.watchlist_enriched}")
+            print(f"latest_scan_enriched: {result.latest_scan_enriched}")
             print(f"skipped_tickers: {', '.join(result.skipped) if result.skipped else 'none'}")
             print("reasons:")
             if result.errors:
@@ -3033,6 +3055,7 @@ def main(argv: list[str] | None = None) -> int:
                 getattr(args, "ticker", None),
                 getattr(args, "bucket", None),
                 getattr(args, "notes", ""),
+                getattr(args, "scope", "staged"),
             )
         if args.greenrock_command == "review":
             return run_greenrock_review()
