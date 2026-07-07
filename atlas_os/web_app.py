@@ -4603,25 +4603,28 @@ def _staging_source_sections(output_dir: Path) -> str:
 
 
 def _stageable_source_card(ticker: str, source: str, source_list: str, row: dict[str, str], card_class: str) -> str:
+    priority = row.get("research_priority", "")
+    guardrail = row.get("fundamental_guardrail", "")
     return f"""
-    <article class="stageable-card {card_class}">
-      <div class="stageable-main">
+    <article class="stageable-card staging-source-card {card_class}">
+      <div class="source-card-top">
         <div class="stageable-ticker">
           <strong>{_safe(ticker)}</strong>
           <span>{_finviz_link(ticker)}</span>
           <span>{_safe(source)}</span>
         </div>
-        <div class="stageable-metrics">
-          {_stage_metric("Score", row.get("greenrock_score", ""))}
-          {_stage_metric("Conf.", row.get("greenrock_confidence", ""))}
-          {_stage_metric("Evid.", row.get("evidence_agreement", ""))}
-          {_stage_metric("Prio.", row.get("research_priority", ""))}
-          {_stage_metric("Guard.", row.get("fundamental_guardrail", ""))}
+        <div class="source-card-badges">
+          <span class="badge">{_safe(priority or "Priority pending")}</span>
+          <span class="badge">{_safe(guardrail or "Guardrail pending")}</span>
         </div>
       </div>
-      <div class="stageable-action">
-        {_staging_add_form(ticker, source_list, compact=True)}
+      <div class="stageable-metrics source-metric-chips">
+        {_stage_metric("Score", row.get("greenrock_score", ""))}
+        {_stage_metric("Conf.", row.get("greenrock_confidence", ""))}
+        {_stage_metric("Evid.", row.get("evidence_agreement", ""))}
+        {_stage_metric("Rank", row.get("rank", ""))}
       </div>
+      {_staging_source_stage_form(ticker, source_list)}
     </article>
     """
 
@@ -4629,6 +4632,24 @@ def _stageable_source_card(ticker: str, source: str, source_list: str, row: dict
 def _stage_metric(label: str, value: str) -> str:
     display = str(value).strip() if value is not None else ""
     return f"<span><b>{_safe(label)}</b> {_safe(display or '-')}</span>"
+
+
+def _staging_source_stage_form(ticker: str, source_list: str) -> str:
+    bucket_options = _staging_bucket_options("research")
+    return f"""
+    <form method="post" action="/greenrock/staging/add" class="source-stage-form">
+      <input type="hidden" name="ticker" value="{_safe(ticker)}">
+      <input type="hidden" name="source_list" value="{_safe(source_list)}">
+      <label class="source-notes-row">
+        <span>Notes</span>
+        <textarea name="notes" placeholder="Operator notes"></textarea>
+      </label>
+      <div class="source-action-row">
+        <select name="bucket">{bucket_options}</select>
+        <button type="submit">Stage</button>
+      </div>
+    </form>
+    """
 
 
 def _scan_results_table(rows, scan_id: str = "", batch: bool = False) -> str:
@@ -6426,6 +6447,18 @@ def _page(title: str, content: str, active: str = "/") -> str:
     .stageable-action .staging-add-form.compact-add {{ grid-template-columns: minmax(52px, .48fr) minmax(88px, .72fr); gap: 6px; max-width: 100%; }}
     .stageable-action .staging-add-form.compact-add input[name="notes"] {{ grid-column: 1 / -1; }}
     .stageable-action .staging-add-form.compact-add button {{ width: 100%; }}
+    .staging-source-grid {{ grid-template-columns: 1fr; }}
+    .staging-source-card {{ grid-template-columns: 1fr; gap: 12px; padding: 14px; }}
+    .source-card-top {{ display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; min-width: 0; }}
+    .source-card-badges {{ display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }}
+    .source-metric-chips {{ display: flex; flex-wrap: wrap; gap: 8px; }}
+    .source-metric-chips span {{ min-width: 92px; max-width: 150px; font-size: 12px; }}
+    .source-metric-chips b {{ display: inline; margin: 0 4px 0 0; font-size: 11px; }}
+    .source-stage-form {{ display: grid; gap: 10px; max-width: 100%; }}
+    .source-notes-row {{ display: grid; gap: 5px; color: var(--muted); font-size: 12px; font-weight: 700; }}
+    .source-notes-row textarea {{ min-height: 58px; width: 100%; }}
+    .source-action-row {{ display: grid; grid-template-columns: minmax(180px, .45fr) auto; gap: 8px; align-items: center; max-width: 100%; }}
+    .source-action-row select, .source-action-row button {{ max-width: 100%; }}
     .calculator-card {{ display: flex; align-items: center; justify-content: space-between; gap: 16px; border-color: rgba(55,214,122,.38); }}
     .score-tool-hero {{ display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, .5fr); gap: 22px; align-items: end; }}
     .score-tool-hero .score-form {{ margin: 0; }}
@@ -6569,6 +6602,9 @@ def _page(title: str, content: str, active: str = "/") -> str:
       .compact-stage-grid {{ grid-template-columns: 1fr; }}
       .stageable-card {{ grid-template-columns: 1fr; }}
       .stageable-metrics {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+      .source-card-top {{ flex-direction: column; }}
+      .source-card-badges {{ justify-content: flex-start; }}
+      .source-action-row {{ grid-template-columns: 1fr; }}
       .compact-source-table, .market-pulse-table, .compact-candidate-table {{ min-width: 760px; }}
       .calculator-card, .score-hero-line {{ align-items: flex-start; flex-direction: column; }}
       main, header, footer {{ padding-left: 16px; padding-right: 16px; }}
