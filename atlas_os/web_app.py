@@ -4303,32 +4303,43 @@ def _as_float_or_none(value: str) -> float | None:
 
 
 def _market_pulse_section(archetype: str, rows: tuple[dict[str, str], ...], scan_id: str) -> str:
-    body = "".join(
-        "<tr>"
-        f"<td>{_safe(row.get('rank', ''))}</td>"
-        f"<td><strong>{_safe(row.get('symbol', ''))}</strong><br>{_finviz_link(row.get('symbol', ''))}</td>"
-        f"<td>{_safe(row.get('greenrock_score', ''))}{_pulse_prior_value(row, 'greenrock_score')}</td>"
-        f"<td>{_safe(row.get('greenrock_confidence', ''))}{_pulse_prior_value(row, 'confidence')}</td>"
-        f"<td>{_safe(row.get('evidence_agreement', ''))}</td>"
-        f"<td>{_safe(row.get('research_priority', ''))}</td>"
-        f"<td>{_pulse_movement_cell(row)}</td>"
-        f"<td>{_staging_add_form(row.get('symbol', ''), 'latest_scan', compact=True)}</td>"
-        "</tr>"
-        for row in rows
-    )
+    body = "".join(_market_pulse_candidate_card(row) for row in rows)
     if not body:
-        body = f"<tr><td colspan='8' class='empty'>No scored names in this archetype: {_safe(archetype)}.</td></tr>"
+        body = f"<p class='empty'>No scored names in this archetype: {_safe(archetype)}.</p>"
     return f"""
     <section class="panel market-pulse-section compact-source-panel">
       <div class="section-head">
         <h2>{_safe(archetype)}</h2>
         <span class="subtle">Latest scan: {_safe(scan_id)}</span>
       </div>
-      <table class="market-pulse-table compact-source-table">
-        <thead><tr><th class="metric-col">Rank</th><th class="ticker-col">Ticker</th><th class="metric-col">Score</th><th class="metric-col">Conf.</th><th class="metric-col">Evid.</th><th class="priority-col">Priority</th><th>Movement</th><th class="actions-col">Stage</th></tr></thead>
-        <tbody>{body}</tbody>
-      </table>
+      <div class="market-pulse-card-grid compact-stage-grid">{body}</div>
     </section>
+    """
+
+
+def _market_pulse_candidate_card(row: dict[str, str]) -> str:
+    ticker = row.get("symbol", "")
+    return f"""
+    <article class="stageable-card market-pulse-card">
+      <div class="stageable-main">
+        <div class="stageable-ticker">
+          <strong>{_safe(ticker)}</strong>
+          <span>Rank {_safe(row.get('rank', ''))}</span>
+          <span>{_finviz_link(ticker)} / <a href="/greenrock/score?ticker={quote(ticker)}">Score</a></span>
+        </div>
+        <div class="stageable-metrics">
+          {_stage_metric("Score", row.get("greenrock_score", ""))}
+          {_stage_metric("Conf.", row.get("greenrock_confidence", ""))}
+          {_stage_metric("Evid.", row.get("evidence_agreement", ""))}
+          {_stage_metric("Prio.", row.get("research_priority", ""))}
+          {_stage_metric("Guard.", row.get("fundamental_guardrail", ""))}
+        </div>
+        <p class="stageable-note">{_pulse_movement_cell(row)}</p>
+      </div>
+      <div class="stageable-action">
+        {_staging_add_form(ticker, "latest_scan", compact=True)}
+      </div>
+    </article>
     """
 
 
@@ -4542,32 +4553,33 @@ def _staging_source_sections(output_dir: Path) -> str:
         for ticker in _watchlist_tickers(output_dir, list_key):
             watchlist_rows.append((ticker, label, list_key))
     watchlist_body = "".join(
-        "<tr>"
-        f"<td><strong>{_safe(ticker)}</strong><br>{_finviz_link(ticker)}</td>"
-        f"<td>{_safe(label)}</td>"
-        f"<td>{_staging_add_form(ticker, list_key, compact=True)}</td>"
-        "</tr>"
+        _stageable_source_card(
+            ticker=ticker,
+            source=label,
+            source_list=list_key,
+            row={},
+            card_class="watchlist-stage-card",
+        )
         for ticker, label, list_key in watchlist_rows[:80]
     )
     if not watchlist_body:
-        watchlist_body = "<tr><td colspan='3' class='empty'>No watchlist tickers available yet.</td></tr>"
+        watchlist_body = "<p class='empty'>No watchlist tickers available yet.</p>"
 
     scan = latest_scan(output_dir)
     scan_body = ""
     if scan:
         scan_body = "".join(
-            "<tr>"
-            f"<td><strong>{_safe(row.get('symbol', ''))}</strong><br>{_finviz_link(row.get('symbol', ''))}</td>"
-            f"<td>{_safe(row.get('greenrock_score', ''))}</td>"
-            f"<td>{_safe(row.get('greenrock_confidence', ''))}</td>"
-            f"<td>{_safe(row.get('evidence_agreement', ''))}</td>"
-            f"<td>{_safe(row.get('fundamental_guardrail', ''))}</td>"
-            f"<td>{_staging_add_form(row.get('symbol', ''), 'latest_scan', compact=True)}</td>"
-            "</tr>"
+            _stageable_source_card(
+                ticker=row.get("symbol", ""),
+                source=row.get("market_archetype", "") or "latest scan",
+                source_list="latest_scan",
+                row=row,
+                card_class="scan-stage-card",
+            )
             for row in scan.rows[:25]
         )
     if not scan_body:
-        scan_body = "<tr><td colspan='6' class='empty'>No latest population scan available yet.</td></tr>"
+        scan_body = "<p class='empty'>No latest population scan available yet.</p>"
 
     scan_label = f"Latest Population Scan: {scan.scan_id}" if scan else "Latest Population Scan"
     return f"""
@@ -4577,17 +4589,46 @@ def _staging_source_sections(output_dir: Path) -> str:
           <h2>Stage From Watchlists</h2>
           <span class="subtle">Promoted and curated lists</span>
         </div>
-        <table class="compact-source-table watchlist-stage-table"><thead><tr><th class="ticker-col">Ticker</th><th>Source List</th><th class="actions-col">Stage</th></tr></thead><tbody>{watchlist_body}</tbody></table>
+        <div class="compact-stage-grid watchlist-stage-cards">{watchlist_body}</div>
       </div>
       <div class="panel compact-source-panel">
         <div class="section-head">
           <h2>{_safe(scan_label)}</h2>
           <span class="subtle">Top ranked scan rows</span>
         </div>
-        <table class="compact-source-table scan-stage-table"><thead><tr><th class="ticker-col">Ticker</th><th class="metric-col">Score</th><th class="metric-col">Conf.</th><th class="metric-col">Evid.</th><th class="guardrail-col">Guardrail</th><th class="actions-col">Stage</th></tr></thead><tbody>{scan_body}</tbody></table>
+        <div class="compact-stage-grid scan-stage-cards">{scan_body}</div>
       </div>
     </section>
     """
+
+
+def _stageable_source_card(ticker: str, source: str, source_list: str, row: dict[str, str], card_class: str) -> str:
+    return f"""
+    <article class="stageable-card {card_class}">
+      <div class="stageable-main">
+        <div class="stageable-ticker">
+          <strong>{_safe(ticker)}</strong>
+          <span>{_finviz_link(ticker)}</span>
+          <span>{_safe(source)}</span>
+        </div>
+        <div class="stageable-metrics">
+          {_stage_metric("Score", row.get("greenrock_score", ""))}
+          {_stage_metric("Conf.", row.get("greenrock_confidence", ""))}
+          {_stage_metric("Evid.", row.get("evidence_agreement", ""))}
+          {_stage_metric("Prio.", row.get("research_priority", ""))}
+          {_stage_metric("Guard.", row.get("fundamental_guardrail", ""))}
+        </div>
+      </div>
+      <div class="stageable-action">
+        {_staging_add_form(ticker, source_list, compact=True)}
+      </div>
+    </article>
+    """
+
+
+def _stage_metric(label: str, value: str) -> str:
+    display = str(value).strip() if value is not None else ""
+    return f"<span><b>{_safe(label)}</b> {_safe(display or '-')}</span>"
 
 
 def _scan_results_table(rows, scan_id: str = "", batch: bool = False) -> str:
@@ -6371,6 +6412,20 @@ def _page(title: str, content: str, active: str = "/") -> str:
     .compact-source-table td:last-child,
     .market-pulse-table td:last-child,
     .compact-candidate-table td:last-child {{ overflow: visible; }}
+    .compact-stage-grid {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }}
+    .stageable-card {{ display: grid; grid-template-columns: minmax(0, 1fr) minmax(210px, .45fr); gap: 10px; align-items: stretch; border: 1px solid rgba(255,255,255,.1); border-radius: 8px; padding: 10px; background: rgba(255,255,255,.04); overflow: hidden; }}
+    .stageable-main {{ min-width: 0; display: grid; gap: 8px; }}
+    .stageable-ticker {{ display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: baseline; min-width: 0; }}
+    .stageable-ticker strong {{ font-size: 18px; color: #d6ffe4; max-width: 92px; overflow-wrap: anywhere; }}
+    .stageable-ticker span {{ color: var(--muted); font-size: 12px; }}
+    .stageable-metrics {{ display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 5px; }}
+    .stageable-metrics span {{ border: 1px solid rgba(255,255,255,.08); border-radius: 8px; padding: 5px 6px; background: rgba(0,0,0,.14); color: #dfe9e3; font-size: 11px; overflow-wrap: anywhere; }}
+    .stageable-metrics b {{ display: block; color: var(--gold); font-size: 10px; margin-bottom: 2px; }}
+    .stageable-note {{ margin: 0; color: var(--muted); font-size: 12px; line-height: 1.35; overflow-wrap: anywhere; }}
+    .stageable-action {{ min-width: 0; display: grid; align-content: start; }}
+    .stageable-action .staging-add-form.compact-add {{ grid-template-columns: minmax(52px, .48fr) minmax(88px, .72fr); gap: 6px; max-width: 100%; }}
+    .stageable-action .staging-add-form.compact-add input[name="notes"] {{ grid-column: 1 / -1; }}
+    .stageable-action .staging-add-form.compact-add button {{ width: 100%; }}
     .calculator-card {{ display: flex; align-items: center; justify-content: space-between; gap: 16px; border-color: rgba(55,214,122,.38); }}
     .score-tool-hero {{ display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, .5fr); gap: 22px; align-items: end; }}
     .score-tool-hero .score-form {{ margin: 0; }}
@@ -6511,6 +6566,9 @@ def _page(title: str, content: str, active: str = "/") -> str:
     @media (max-width: 1000px) {{
       .attention-grid, .board-meta, .nav-grid, .project-grid, .candidate-grid, .detail-grid, .kanban, .agent-grid, .task-form, .mega-card, .universe-grid, .score-form, .save-list-form, .score-explainer, .score-tool-hero, .rank-grid, .score-breakdown-grid, .target-assumptions, .score-intel-grid, .evidence-grid, .confidence-explain-grid, .workflow-stepper, .workflow-grid, .watchlist-grid, .scanner-filter-form, .staging-add-form, .staging-add-form.compact-add, .priority-tile-grid {{ grid-template-columns: 1fr; }}
       .compact-source-panel, .staging-bucket {{ overflow-x: auto; }}
+      .compact-stage-grid {{ grid-template-columns: 1fr; }}
+      .stageable-card {{ grid-template-columns: 1fr; }}
+      .stageable-metrics {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
       .compact-source-table, .market-pulse-table, .compact-candidate-table {{ min-width: 760px; }}
       .calculator-card, .score-hero-line {{ align-items: flex-start; flex-direction: column; }}
       main, header, footer {{ padding-left: 16px; padding-right: 16px; }}
