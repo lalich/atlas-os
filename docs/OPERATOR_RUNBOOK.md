@@ -205,9 +205,11 @@ atlas greenrock report-workbench
 atlas greenrock report-ready
 atlas greenrock report-tasks
 atlas greenrock report-task <task_id>
+atlas greenrock candidate-decisions
+atlas greenrock candidate-decision AAPL --decision accepted --note "operator review note"
 ```
 
-The workbench is the one-page production surface for one approval-gated GreenRock report. It shows latest scan, Market Pulse status, Daily Intelligence status, staged Analyst Slate, readiness checks, pending approvals, PDF status, agent recommendations, and next operator action.
+The workbench is the primary production surface for one approval-gated GreenRock Monthly Opportunity Report. It shows the production timeline from Market Data through Final Report, latest scan, Market Pulse status, Daily Intelligence status, staged Analyst Slate, Candidate Review, readiness checks, pending approvals, PDF status, agent recommendations, and next operator action.
 
 Readiness states are deterministic:
 
@@ -222,12 +224,15 @@ Use the workbench controls in order:
 
 1. Run Daily Intelligence Cycle.
 2. Stage Analyst Slate.
-3. Enrich staged candidates if analytics are missing.
-4. Generate Draft From Staging when readiness allows it.
-5. Open Latest Review Center.
-6. Review Pending Approvals through the confirmation gate.
-7. Export Approved PDF only after approval.
-8. Open Final Reports.
+3. Review candidate decisions.
+4. Enrich staged candidates if analytics are missing.
+5. Generate Draft From Staging when readiness allows it.
+6. Open Latest Review Center.
+7. Review Pending Approvals through the confirmation gate.
+8. Export Approved PDF only after approval.
+9. Open Final Reports.
+
+Candidate decisions are the local Human Intelligence Layer. Valid decisions are `accepted`, `deferred`, `research`, and `excluded`. They preserve operator judgment and provenance for future analysis, but they do not change GreenRock Score, canonical rank, staging, report generation, approvals, or PDF gates.
 
 Agent task records live under `.atlas/output/agents/tasks/`. They are local workflow records only. The workbench does not approve, reject, publish, email, trade, place broker/API orders, touch client files, use credentials, call external LLM/API services, or bypass PDF gates.
 

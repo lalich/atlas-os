@@ -150,10 +150,12 @@ Agents may recommend and prepare local staging or approval-gated drafts through 
 
 `/greenrock/report-workbench` is the single local page for one GreenRock report production workflow. It shows:
 
+- production timeline from Market Data through Final Report
 - latest successful scan
 - Market Pulse status
 - Daily Intelligence status
 - staged Analyst Slate
+- Candidate Review with featured archetype leaders
 - readiness checks
 - pending approvals
 - PDF status
@@ -171,7 +173,9 @@ Deterministic readiness states:
 
 Reasons include stale scan, staging underfilled, analytics missing, QA warnings, pending approval, and approved-but-missing PDF.
 
-The workbench controls route to the existing safe local actions: Run Daily Intelligence Cycle, Stage Analyst Slate, Enrich Staged Candidates, Generate Draft From Staging, Open Latest Review Center, Review Pending Approvals, Export Approved PDF, and Open Final Reports.
+The workbench controls route to the existing safe local actions: Run Daily Intelligence Cycle, Stage Analyst Slate, Review Candidate Decisions, Enrich Staged Candidates, Generate Draft From Staging, Open Latest Review Center, Review Pending Approvals, Export Approved PDF, and Open Final Reports.
+
+Candidate decisions are the local Human Intelligence Layer. Operators may mark staged/report candidates as `accepted`, `deferred`, `research`, or `excluded`. Those records are local notes with scan/daily/report provenance. They do not alter GreenRock Score, canonical rank, staging, report generation, approvals, or PDF gates.
 
 Structured `AgentUpdate` records include `update_id`, `cycle_id`, `agent_name`, timestamps, status, severity, headline, summary, findings, supporting metrics, related tickers, scan/report/approval links, recommended operator action, target URL, and provenance. The update records are deterministic local JSON files.
 

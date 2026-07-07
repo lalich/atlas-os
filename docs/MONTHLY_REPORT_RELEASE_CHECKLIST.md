@@ -23,7 +23,8 @@ atlas greenrock report-draft
 ```
 
 - Confirm the command completed successfully.
-- Open `/greenrock/report-workbench` and confirm readiness state, next operator action, task records, latest scan, Daily Intelligence status, staged Analyst Slate, pending approvals, and PDF status.
+- Open `/greenrock/report-workbench` and confirm the production timeline, readiness state, next operator action, task records, latest scan, Daily Intelligence status, staged Analyst Slate, Candidate Review, pending approvals, and PDF status.
+- Record any local candidate decisions (`accepted`, `deferred`, `research`, `excluded`) needed for the Human Intelligence Layer. Confirm they do not alter GreenRock Score, canonical rank, staging, approval, or PDF gates.
 - Confirm staged analytics are complete before report generation. Underfilled sections and missing analytics are different warnings.
 - Record the `run_id` and `approval_id`.
 - Confirm the report path is run-specific.

@@ -52,8 +52,11 @@ from atlas_os.greenrock.population import (
 )
 from atlas_os.greenrock.report import build_sample_report
 from atlas_os.greenrock.report_workbench import (
+    CANDIDATE_DECISIONS,
     get_report_task,
+    list_candidate_decisions,
     list_report_tasks,
+    record_candidate_decision,
     report_readiness,
     report_workbench_summary,
 )
@@ -334,6 +337,17 @@ def build_parser() -> argparse.ArgumentParser:
         "report-ready",
         help="Show deterministic GreenRock report readiness state.",
     )
+    greenrock_subparsers.add_parser(
+        "candidate-decisions",
+        help="List local GreenRock report candidate decisions.",
+    )
+    candidate_decision = greenrock_subparsers.add_parser(
+        "candidate-decision",
+        help="Save a local operator decision for a GreenRock report candidate.",
+    )
+    candidate_decision.add_argument("ticker")
+    candidate_decision.add_argument("--decision", required=True, choices=CANDIDATE_DECISIONS)
+    candidate_decision.add_argument("--note", default="")
     greenrock_subparsers.add_parser(
         "open-latest",
         help="Open the latest GreenRock report file on macOS.",
@@ -1044,6 +1058,45 @@ def run_greenrock_report_ready() -> int:
     print("GreenRock Report Readiness")
     _print_report_readiness(readiness)
     print("No approval, PDF export, email, publishing, trading, client-file, credential, broker/API order, or external LLM/API action was created.")
+    return 0
+
+
+def run_greenrock_candidate_decisions() -> int:
+    settings = get_settings()
+    decisions = list_candidate_decisions(settings.output_dir)
+    print("GreenRock Candidate Decisions")
+    if not decisions:
+        print("No local candidate decisions found.")
+        return 0
+    print("ticker decision timestamp scan daily report note")
+    for item in decisions:
+        print(
+            f"{item.ticker} {item.decision} {item.timestamp} "
+            f"{item.related_scan_id or '-'} {item.related_daily_id or '-'} {item.related_report_run_id or '-'} "
+            f"{item.note or '-'}"
+        )
+    print("These decisions are local Human Intelligence Layer notes and do not mutate score, rank, staging, approvals, or PDF gates.")
+    return 0
+
+
+def run_greenrock_candidate_decision(ticker: str, decision: str, note: str) -> int:
+    settings = get_settings()
+    readiness = report_readiness(settings.output_dir, settings.db_path)
+    record = record_candidate_decision(
+        settings.output_dir,
+        ticker,
+        decision,
+        note=note,
+        related_scan_id="" if readiness["latest_scan_id"] == "none" else readiness["latest_scan_id"],
+        related_daily_id="" if readiness["daily_id"] == "none" else readiness["daily_id"],
+        related_report_run_id=readiness["latest_report_run_id"] or "",
+    )
+    print("GreenRock Candidate Decision Saved")
+    print(f"ticker: {record.ticker}")
+    print(f"decision: {record.decision}")
+    print(f"timestamp: {record.timestamp}")
+    print(f"note: {record.note or '-'}")
+    print("GreenRock Score, canonical rank, staging, approvals, PDF export, email, publishing, trading, client files, and external actions were unchanged.")
     return 0
 
 
@@ -2980,6 +3033,10 @@ def main(argv: list[str] | None = None) -> int:
             return run_greenrock_report_task(args.task_id)
         if args.greenrock_command == "report-ready":
             return run_greenrock_report_ready()
+        if args.greenrock_command == "candidate-decisions":
+            return run_greenrock_candidate_decisions()
+        if args.greenrock_command == "candidate-decision":
+            return run_greenrock_candidate_decision(args.ticker, args.decision, args.note)
         if args.greenrock_command == "open-latest":
             return run_greenrock_open_latest()
         if args.greenrock_command == "export-pdf":

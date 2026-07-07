@@ -49,7 +49,12 @@ from atlas_os.greenrock.market_pulse import (
 )
 from atlas_os.greenrock.memory import compare_ticker, load_memory_rows, memory_movers, movement_explanation, movement_symbol, ticker_history
 from atlas_os.greenrock.population import GREENROCK_POPULATION_LABELS
-from atlas_os.greenrock.report_workbench import report_readiness, report_workbench_summary
+from atlas_os.greenrock.report_workbench import (
+    CANDIDATE_DECISIONS,
+    record_candidate_decision,
+    report_readiness,
+    report_workbench_summary,
+)
 from atlas_os.greenrock.score import calculate_score_preview, score_signal
 from atlas_os.greenrock.scanner import (
     latest_scan,
@@ -224,6 +229,18 @@ def create_app():
     def greenrock_report_workbench_action(action: str = Form("")):
         message, target = run_greenrock_report_workbench_action(action)
         return RedirectResponse(_with_status(target, message), status_code=303)
+
+    @app.post("/greenrock/report-workbench/candidate-decision")
+    def greenrock_report_workbench_candidate_decision(
+        ticker: str = Form(""),
+        decision: str = Form(""),
+        note: str = Form(""),
+        related_scan_id: str = Form(""),
+        related_daily_id: str = Form(""),
+        related_report_run_id: str = Form(""),
+    ):
+        message = save_candidate_decision_from_browser(ticker, decision, note, related_scan_id, related_daily_id, related_report_run_id)
+        return RedirectResponse(_with_status("/greenrock/report-workbench#candidate-review", message), status_code=303)
 
     @app.get("/greenrock/picks", response_class=HTMLResponse)
     def greenrock_picks() -> str:
@@ -626,6 +643,16 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
     if method == "POST" and route == "/greenrock/report-workbench/action":
         message, target = run_greenrock_report_workbench_action(form.get("action", ""))
         return WebResponse(303, "", location=_with_status(target, message))
+    if method == "POST" and route == "/greenrock/report-workbench/candidate-decision":
+        message = save_candidate_decision_from_browser(
+            form.get("ticker", ""),
+            form.get("decision", ""),
+            form.get("note", ""),
+            form.get("related_scan_id", ""),
+            form.get("related_daily_id", ""),
+            form.get("related_report_run_id", ""),
+        )
+        return WebResponse(303, "", location=_with_status("/greenrock/report-workbench#candidate-review", message))
     if method == "POST" and route == "/greenrock/scanner/run":
         message = run_greenrock_scan_from_browser(form.get("population", "qqq"))
         return WebResponse(303, "", location=_with_status("/greenrock/scanner", message))
@@ -1228,10 +1255,13 @@ def render_greenrock_report_workbench(status_message: str | None = None) -> str:
     summary = report_workbench_summary(settings.output_dir, settings.db_path)
     readiness = summary["readiness"]
     tasks = summary["tasks"]
+    timeline = summary["timeline"]
+    candidate_review = summary["candidate_review"]
     latest_review = f"/greenrock/reports/{quote(readiness['latest_report_run_id'])}/review" if readiness.get("latest_report_run_id") else "/greenrock"
     pending_href = f"/approvals/{readiness['pending_approval_id']}" if readiness.get("pending_approval_id") else "/greenrock"
     task_rows = "".join(_report_task_row(task) for task in tasks) or "<tr><td colspan='6' class='empty'>No report tasks yet.</td></tr>"
     reasons = "".join(f"<li>{_safe(reason)}</li>" for reason in readiness["reasons"]) or "<li>none</li>"
+    timeline_cards = "".join(_production_stage_card(stage, tasks) for stage in timeline)
     content = f"""
     {_status_banner(status_message)}
     <section class="hero compact">
@@ -1255,6 +1285,21 @@ def render_greenrock_report_workbench(status_message: str | None = None) -> str:
         <ul>{reasons}</ul>
       </div>
     </section>
+    <section class="panel">
+      <div class="section-head"><h2>Report Production Timeline</h2><span class="subtle">Derived from local records</span></div>
+      <section class="workflow-stepper production-timeline">{timeline_cards}</section>
+    </section>
+    <section class="panel">
+      <div class="section-head"><h2>Readiness Clarity</h2><span class="subtle">Specific blockers beat generic status</span></div>
+      <section class="detail-grid">
+        {_detail_panel("Population Readiness", f"{'ready' if readiness['market_pulse_status'] == 'available' else 'blocked'}; {readiness['latest_scan_id']}")}
+        {_detail_panel("Candidate Readiness", f"{readiness['staged_count']} staged; {'underfilled' if 'staging underfilled' in readiness['reasons'] else 'slate available'}")}
+        {_detail_panel("Analytics Readiness", f"{'ready' if readiness['analytics_complete'] else 'blocked'}; missing {readiness['missing_analytics']}")}
+        {_detail_panel("QA Readiness", f"{'blocked' if readiness['reasons'] else 'ready'}; {', '.join(readiness['reasons']) or 'no blockers'}")}
+        {_detail_panel("Approval Readiness", f"{'awaiting review' if readiness['pending_approvals'] else 'waiting'}; {readiness.get('pending_approval_id') or 'none'}")}
+        {_detail_panel("PDF Readiness", f"{readiness['pdf_status']}; export blocked before approval")}
+      </section>
+    </section>
     <section class="panel command-actions">
       <div class="section-head"><h2>Workbench Controls</h2><span class="subtle">Existing gates preserved</span></div>
       <div class="action-row">
@@ -1269,6 +1314,10 @@ def render_greenrock_report_workbench(status_message: str | None = None) -> str:
       </div>
       <p class="subtle">Buttons may prepare local staging or drafts, but approvals and PDF export remain explicit gated actions.</p>
     </section>
+    <section class="panel" id="candidate-review">
+      <div class="section-head"><h2>Candidate Review</h2><span class="subtle">Human Intelligence Layer; scores and ranks unchanged</span></div>
+      {_candidate_review_panel(candidate_review, readiness)}
+    </section>
     <section class="panel">
       <div class="section-head"><h2>Agent Recommendations</h2><span class="subtle">Local task chain</span></div>
       <table>
@@ -1278,6 +1327,92 @@ def render_greenrock_report_workbench(status_message: str | None = None) -> str:
     </section>
     """
     return _page("GreenRock Report Workbench", content, active="/greenrock/report-workbench")
+
+
+def _production_stage_card(stage: dict, tasks: list[dict]) -> str:
+    task = next((item for item in tasks if item.get("agent_id") == _agent_id_for_label(stage.get("agent", ""))), None)
+    status = stage.get("status", "Waiting")
+    return f"""
+    <article class="workflow-card { _safe(status.lower().replace(' ', '-')) }">
+      <span class="badge { _safe(status.lower().replace(' ', '-')) }">{_safe(status)}</span>
+      <h3>{_safe(stage.get("name", ""))}</h3>
+      <p><strong>Agent:</strong> {_safe(stage.get("agent", ""))}</p>
+      <p><strong>Source:</strong> {_safe(stage.get("source", ""))}</p>
+      <p><strong>Timestamp:</strong> {_safe(stage.get("timestamp", "") or (task or {}).get("updated_at", ""))}</p>
+      <p><strong>Blocking reason:</strong> {_safe(stage.get("blocking_reason", "") or "none")}</p>
+      <p><strong>Next:</strong> <a href="{_safe(stage.get("target_url", "/greenrock/report-workbench"))}">{_safe(stage.get("next_action", ""))}</a></p>
+      <p class="subtle">Latest task: {_safe((task or {}).get("status", "none"))} {_safe((task or {}).get("output_summary", ""))}</p>
+    </article>
+    """
+
+
+def _agent_id_for_label(label: str) -> str:
+    return label.lower().replace(" agent", "").replace(" ", "_")
+
+
+def _candidate_review_panel(review: dict, readiness: dict) -> str:
+    featured = "".join(_featured_candidate_card(item, readiness) for item in review["featured"])
+    remaining = "".join(_remaining_candidate_row(item, readiness) for item in review["remaining"])
+    if not remaining:
+        remaining = "<tr><td colspan='9' class='empty'>No remaining staged candidates beyond featured archetype leaders.</td></tr>"
+    return f"""
+    <h3>Featured Archetype Leaders</h3>
+    <section class="candidate-grid featured-leaders">{featured}</section>
+    <h3>Remaining Report Slate</h3>
+    <table>
+      <thead><tr><th>Ticker</th><th>Archetype</th><th>Rank</th><th>Score</th><th>Confidence</th><th>Evidence</th><th>Priority</th><th>Guardrail</th><th>Decision</th></tr></thead>
+      <tbody>{remaining}</tbody>
+    </table>
+    <p class="subtle">Candidate decisions are local operator notes. They do not alter GreenRock Score, canonical rank, staging, or report generation.</p>
+    """
+
+
+def _featured_candidate_card(item: dict, readiness: dict) -> str:
+    if item.get("status") == "missing":
+        return f"<article class='candidate-card muted'><h3>{_safe(item.get('archetype', ''))}</h3><p>No staged leader available.</p></article>"
+    return f"""
+    <article class="candidate-card">
+      <div class="section-head"><h3>{_safe(item['archetype'])}: {_safe(item['ticker'])}</h3><span class="badge signal">{_safe(item.get('decision') or 'undecided')}</span></div>
+      <p><strong>Rank:</strong> {_safe(item['rank'])} / <strong>Score:</strong> {_safe(item['score'])} / <strong>Confidence:</strong> {_safe(item['confidence'])} / <strong>Evidence:</strong> {_safe(item['evidence_agreement'])}</p>
+      <p><strong>Movement:</strong> rank {_safe(item['rank_movement'])}; score {_safe(item['score_movement'])}; confidence {_safe(item['confidence_movement'])}</p>
+      <p><strong>Bullish:</strong> {_safe(item['primary_bullish_evidence'])}</p>
+      <p><strong>Caution:</strong> {_safe(item['primary_caution'])}</p>
+      <p><strong>Guardrail:</strong> {_safe(item['guardrail'])} / <strong>Priority:</strong> {_safe(item['research_priority'])} / <strong>Staging:</strong> {_safe(item['staging_status'])}</p>
+      {_candidate_decision_form(item['ticker'], readiness)}
+    </article>
+    """
+
+
+def _remaining_candidate_row(item: dict, readiness: dict) -> str:
+    return f"""
+    <tr>
+      <td>{_safe(item['ticker'])}</td>
+      <td>{_safe(item['archetype'])}</td>
+      <td>{_safe(item['rank'])}</td>
+      <td>{_safe(item['score'])}</td>
+      <td>{_safe(item['confidence'])}</td>
+      <td>{_safe(item['evidence_agreement'])}</td>
+      <td>{_safe(item['research_priority'])}</td>
+      <td>{_safe(item['guardrail'])}</td>
+      <td>{_safe(item.get('decision') or 'undecided')}{_candidate_decision_form(item['ticker'], readiness, compact=True)}</td>
+    </tr>
+    """
+
+
+def _candidate_decision_form(ticker: str, readiness: dict, compact: bool = False) -> str:
+    options = "".join(f"<option value='{decision}'>{decision.title()}</option>" for decision in CANDIDATE_DECISIONS)
+    note_input = "" if compact else "<input type='text' name='note' placeholder='optional note'>"
+    return f"""
+    <form method="post" action="/greenrock/report-workbench/candidate-decision" class="candidate-decision-form">
+      <input type="hidden" name="ticker" value="{_safe(ticker)}">
+      <input type="hidden" name="related_scan_id" value="{_safe(readiness.get('latest_scan_id') or '')}">
+      <input type="hidden" name="related_daily_id" value="{_safe(readiness.get('daily_id') or '')}">
+      <input type="hidden" name="related_report_run_id" value="{_safe(readiness.get('latest_report_run_id') or '')}">
+      <select name="decision">{options}</select>
+      {note_input}
+      <button type="submit">{'Save' if compact else 'Save Decision'}</button>
+    </form>
+    """
 
 
 def _report_task_row(task: dict) -> str:
@@ -3346,6 +3481,32 @@ def run_greenrock_report_workbench_action(action: str) -> tuple[str, str]:
             return f"PDF export blocked: {error}", "/greenrock/report-workbench"
         return f"Approved PDF exported for approval {approval_id}.", "/greenrock/final-reports"
     return "Unknown workbench action. No local changes were made.", "/greenrock/report-workbench"
+
+
+def save_candidate_decision_from_browser(
+    ticker: str,
+    decision: str,
+    note: str,
+    related_scan_id: str,
+    related_daily_id: str,
+    related_report_run_id: str,
+) -> str:
+    try:
+        record = record_candidate_decision(
+            get_settings().output_dir,
+            ticker,
+            decision,
+            note=note,
+            related_scan_id="" if related_scan_id == "none" else related_scan_id,
+            related_daily_id="" if related_daily_id == "none" else related_daily_id,
+            related_report_run_id="" if related_report_run_id == "none" else related_report_run_id,
+        )
+    except ValueError as error:
+        return f"Candidate decision blocked: {error}. No score, rank, staging, approval, PDF, email, publishing, trading, client-file, or external action was changed."
+    return (
+        f"Candidate decision saved for {record.ticker}: {record.decision}. "
+        "GreenRock Score, canonical rank, staging, approvals, and PDF gates were unchanged."
+    )
 
 
 def dismiss_atlas_inbox_item(item_id: str) -> None:

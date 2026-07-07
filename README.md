@@ -568,11 +568,15 @@ atlas greenrock report-workbench
 atlas greenrock report-ready
 atlas greenrock report-tasks
 atlas greenrock report-task <task_id>
+atlas greenrock candidate-decisions
+atlas greenrock candidate-decision AAPL --decision accepted --note "operator review note"
 ```
 
-Open `/greenrock/report-workbench` for the single report-production control page. It shows the latest scan, Market Pulse status, Daily Intelligence status, staged Analyst Slate, readiness checks, pending approvals, PDF status, agent recommendations, and the next operator action.
+Open `/greenrock/report-workbench` for the primary GreenRock Monthly Opportunity Report production control page. It shows the production sequence from Market Data through Final Report, the latest scan, Market Pulse status, Daily Intelligence status, staged Analyst Slate, candidate review, readiness checks, pending approvals, PDF status, agent ownership, and the next operator action.
 
 The workbench creates local agent task records under `.atlas/output/agents/tasks/` for Market, Evidence, Fundamental, Memory, Report, QA, and Inbox responsibilities. Readiness is deterministic: `Not Ready`, `Needs Review`, `Ready to Draft`, `Draft Awaiting Approval`, `Approved, PDF Ready`, or `Final PDF Complete`, with reasons such as stale scan, staging underfilled, analytics missing, QA warnings, pending approval, or approved PDF missing.
+
+Candidate decisions are the local Human Intelligence Layer: `accepted`, `deferred`, `research`, or `excluded`. They are stored as local notes under `.atlas/output/greenrock/candidate_decisions.json` and do not mutate GreenRock Score, canonical rank, staging, report generation, approvals, or PDF gates.
 
 Workbench controls run existing gated actions only: Daily Intelligence, Stage Analyst Slate, Enrich Staged Candidates, Generate Draft From Staging, Review Draft, Review Pending Approvals, Export Approved PDF, and Open Final Reports. Agents may recommend and prepare local staging/drafts, but they never approve, export without approval, email, publish, trade, touch client files, or bypass gates.
 

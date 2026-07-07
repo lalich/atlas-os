@@ -21,7 +21,7 @@ from atlas_os.core.approvals import list_approvals
 from atlas_os.core.artifacts import list_artifacts
 from atlas_os.daily import get_daily_brief, list_daily_briefs, run_daily_cycle
 from atlas_os.greenrock.market_pulse import stage_analyst_slate_candidates
-from atlas_os.greenrock.report_workbench import report_readiness
+from atlas_os.greenrock.report_workbench import list_candidate_decisions, record_candidate_decision, report_readiness, report_workbench_summary
 from atlas_os.core.workflow_runs import list_workflow_runs
 from atlas_os.db.database import connect, initialize_database
 from atlas_os.greenrock.market_data import MarketDataProvider
@@ -29,7 +29,7 @@ from atlas_os.greenrock.models import FundamentalSnapshot, PriceBar
 from atlas_os.greenrock.pdf_export import render_markdown_report_to_pdf
 from atlas_os.greenrock.report import build_sample_report
 from atlas_os.greenrock.sample_data import load_mock_stocks
-from atlas_os.greenrock.scanner import ScanResult, run_population_scan
+from atlas_os.greenrock.scanner import ScanResult, latest_scan, run_population_scan
 from atlas_os.greenrock.score import calculate_score_preview, confidence_band
 from atlas_os.greenrock.staging import add_staged_candidate, enrich_staged_candidates, load_staged_candidates
 from atlas_os.inbox import create_inbox_item, list_inbox_items
@@ -688,10 +688,58 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("Run Daily Intelligence Cycle", response.body)
         self.assertIn("Stage Analyst Slate", response.body)
         self.assertIn("Generate Draft From Staging", response.body)
+        self.assertIn("Report Production Timeline", response.body)
+        self.assertIn("Market Data", response.body)
+        self.assertIn("Candidate Review", response.body)
+        self.assertIn("Analytics Readiness", response.body)
+        self.assertIn("Human Approval", response.body)
+        self.assertIn("PDF Export", response.body)
+        self.assertIn("Readiness Clarity", response.body)
+        self.assertIn("Featured Archetype Leaders", response.body)
+        self.assertIn("Remaining Report Slate", response.body)
+        self.assertIn("Human Intelligence Layer", response.body)
+        self.assertIn("Market Agent", response.body)
         self.assertTrue(tasks_dir_exists)
         self.assertEqual({task.agent_id for task in tasks}, {"market", "evidence", "memory", "fundamental", "report", "qa", "inbox"})
         self.assertIn("GreenRock Report Readiness", morning.body)
         self.assertIn("Report Ready", wall.body)
+
+    def test_workbench_timeline_and_candidate_decisions_are_local_only(self) -> None:
+        with _isolated_env() as root:
+            scan = run_population_scan(root / "output", "all", provider=FullHistoryProvider())
+            stage_analyst_slate_candidates(root / "output", overwrite=True)
+            summary_before = report_workbench_summary(root / "output", root / "atlas.db", create_tasks=False)
+            first_ticker = load_staged_candidates(root / "output")[0]["ticker"]
+            scan_rank_before = next(row["rank"] for row in scan.rows if row["symbol"] == first_ticker)
+            score_before = next(row["greenrock_score"] for row in scan.rows if row["symbol"] == first_ticker)
+            decision = record_candidate_decision(
+                root / "output",
+                first_ticker,
+                "accepted",
+                note="operator likes evidence stack",
+                related_scan_id=scan.scan_id,
+            )
+            decisions = list_candidate_decisions(root / "output")
+            summary_after = report_workbench_summary(root / "output", root / "atlas.db", create_tasks=False)
+            scan_after = latest_scan(root / "output")
+            scan_row_after = next(row for row in scan_after.rows if row["symbol"] == first_ticker)
+            cli_list = main(["greenrock", "candidate-decisions"])
+            cli_save = main(["greenrock", "candidate-decision", first_ticker, "--decision", "deferred", "--note", "needs call transcript"])
+            final_decision = list_candidate_decisions(root / "output")[0]
+            response = dispatch_request("GET", "/greenrock/report-workbench")
+
+        self.assertEqual(decision.ticker, first_ticker)
+        self.assertEqual(decisions[0].decision, "accepted")
+        self.assertEqual(scan_row_after["rank"], scan_rank_before)
+        self.assertEqual(scan_row_after["greenrock_score"], score_before)
+        self.assertIn("Market Data", {stage["name"] for stage in summary_before["timeline"]})
+        self.assertIn("Candidate Review", {stage["name"] for stage in summary_after["timeline"]})
+        self.assertTrue(summary_after["candidate_review"]["featured"])
+        self.assertEqual(cli_list, 0)
+        self.assertEqual(cli_save, 0)
+        self.assertEqual(final_decision.decision, "deferred")
+        self.assertIn("candidate-decision-form", response.body)
+        self.assertIn("do not alter GreenRock Score", response.body)
 
     def test_report_readiness_states_progress_without_bypassing_gates(self) -> None:
         with _isolated_env() as root:

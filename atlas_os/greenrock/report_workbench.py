@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from dataclasses import dataclass
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -12,6 +14,8 @@ from atlas_os.core.artifacts import list_artifacts
 from atlas_os.core.reports import list_reports
 from atlas_os.daily import latest_daily_brief
 from atlas_os.db.database import connect, initialize_database
+from atlas_os.greenrock.analyst import analyst_candidates, archetype_leaders, remaining_candidates
+from atlas_os.greenrock.market_engine import MARKET_ARCHETYPES
 from atlas_os.greenrock.memory import memory_movers
 from atlas_os.greenrock.scanner import latest_scan
 from atlas_os.greenrock.staging import load_staged_candidates, staging_analytics_status, staging_readiness
@@ -28,6 +32,18 @@ READINESS_STATES = (
     "Final PDF Complete",
 )
 DEFAULT_STALE_HOURS = 24.0
+CANDIDATE_DECISIONS = ("accepted", "deferred", "research", "excluded")
+
+
+@dataclass(frozen=True)
+class CandidateDecision:
+    ticker: str
+    decision: str
+    timestamp: str
+    note: str = ""
+    related_scan_id: str = ""
+    related_daily_id: str = ""
+    related_report_run_id: str = ""
 
 
 def report_readiness(output_dir: Path, db_path: Path, stale_hours: float = DEFAULT_STALE_HOURS) -> dict:
@@ -118,11 +134,112 @@ def report_workbench_summary(output_dir: Path, db_path: Path, create_tasks: bool
     readiness = report_readiness(output_dir, db_path)
     tasks = create_report_task_chain(output_dir, db_path, readiness) if create_tasks else list_agent_tasks(output_dir)
     material_items = _create_material_inbox_items(output_dir, readiness, tasks) if create_tasks else ()
+    timeline = report_production_timeline(readiness)
+    candidate_review = report_candidate_review(output_dir, readiness)
     return {
         "readiness": readiness,
         "tasks": [asdict(task) for task in tasks],
         "material_inbox_items": [item.__dict__ for item in material_items],
+        "timeline": timeline,
+        "candidate_review": candidate_review,
+        "candidate_decisions": [asdict(item) for item in list_candidate_decisions(output_dir)],
     }
+
+
+def report_production_timeline(readiness: dict) -> list[dict[str, str]]:
+    scan_ready = readiness["market_pulse_status"] == "available"
+    slate_ready = readiness["staged_count"] > 0
+    analytics_ready = readiness["analytics_complete"] and slate_ready
+    qa_blocked = bool(_qa_blockers(readiness))
+    draft_ready = readiness["latest_report_run_id"] is not None
+    approval_ready = readiness["pending_approvals"] > 0 or readiness["approved_approval_id"] is not None
+    pdf_ready = readiness["final_pdf_complete"] or readiness["approved_pdf_ready"]
+    return [
+        _stage("Market Data", "Market Agent", _stage_status(scan_ready, blocked="no latest successful scan" in readiness["reasons"]), readiness["latest_scan_id"], _timestamp_or_age(readiness), _stage_blocker(readiness, ("no latest successful scan", "scan stale", "provider failures")), "Run Daily Intelligence Cycle" if not scan_ready else "Review Market Pulse", "/greenrock/market-pulse"),
+        _stage("Analyst Slate", "Evidence Agent", _stage_status(slate_ready, blocked=scan_ready and not slate_ready), readiness["latest_scan_id"], "", "staging underfilled" if "staging underfilled" in readiness["reasons"] else "", "Stage Analyst Slate", "/greenrock/market-pulse/stage/confirm?slate=analyst"),
+        _stage("Candidate Review", "Report Agent", "Needs Review" if slate_ready else "Waiting", str(readiness["staged_count"]), "", "Human candidate decisions are local editorial notes only.", "Review Candidate Decisions", "/greenrock/report-workbench#candidate-review"),
+        _stage("Analytics Readiness", "Fundamental Agent", "Ready" if analytics_ready else ("Blocked" if slate_ready else "Waiting"), str(readiness["missing_analytics"]), "", "analytics missing" if readiness["missing_analytics"] else "", "Enrich Missing Analytics", "/greenrock/staging"),
+        _stage("Draft Report", "Report Agent", "Complete" if draft_ready else ("Ready" if readiness["state"] == "Ready to Draft" else "Waiting"), readiness.get("latest_report_run_id") or "none", "", "", "Generate Draft", "/greenrock/staging/generate/confirm"),
+        _stage("QA Review", "QA Agent", "Blocked" if qa_blocked else ("Ready" if slate_ready else "Waiting"), "; ".join(readiness["reasons"]) or "clear", "", "; ".join(_qa_reason_list(readiness)), "Clear QA blockers" if qa_blocked else "Open Workbench", "/greenrock/report-workbench"),
+        _stage("Human Approval", "Inbox Agent", "Awaiting Approval" if readiness["pending_approvals"] else ("Approved" if readiness["approved_approval_id"] else "Waiting"), str(readiness.get("pending_approval_id") or readiness.get("approved_approval_id") or "none"), "", "approval gate intact", "Review Approval", _approval_target(readiness)),
+        _stage("PDF Export", "Report Agent", "Complete" if readiness["final_pdf_complete"] else ("Ready" if pdf_ready else "Waiting"), readiness["pdf_status"], "", "PDF export blocked before approval" if not pdf_ready else "", "Export Approved PDF", "/greenrock/final-reports"),
+        _stage("Final Report", "QA Agent", "Complete" if readiness["final_pdf_complete"] else "Waiting", readiness["pdf_status"], "", "", "Open Final Reports", "/greenrock/final-reports"),
+    ]
+
+
+def report_candidate_review(output_dir: Path, readiness: dict | None = None) -> dict:
+    readiness = readiness or report_readiness(output_dir, Path(""))
+    staged = load_staged_candidates(output_dir)
+    decisions = {item.ticker: item for item in list_candidate_decisions(output_dir)}
+    candidates = analyst_candidates(output_dir, staged)
+    leaders = archetype_leaders(candidates)
+    remaining = remaining_candidates(candidates, leaders)
+    by_archetype = {leader.archetype: leader for leader in leaders}
+    featured = []
+    for archetype in MARKET_ARCHETYPES:
+        candidate = by_archetype.get(archetype)
+        featured.append(_candidate_payload(candidate, archetype, decisions, staged) if candidate else {"archetype": archetype, "ticker": "", "status": "missing"})
+    return {
+        "featured": featured,
+        "remaining": [_candidate_payload(candidate, candidate.archetype, decisions, staged) for candidate in remaining],
+        "staged_count": len(staged),
+        "latest_scan_id": readiness.get("latest_scan_id", "none"),
+    }
+
+
+def record_candidate_decision(
+    output_dir: Path,
+    ticker: str,
+    decision: str,
+    note: str = "",
+    related_scan_id: str = "",
+    related_daily_id: str = "",
+    related_report_run_id: str = "",
+) -> CandidateDecision:
+    normalized = ticker.strip().upper()
+    normalized_decision = decision.strip().lower()
+    if not normalized:
+        raise ValueError("ticker is required")
+    if normalized_decision not in CANDIDATE_DECISIONS:
+        raise ValueError(f"decision must be one of: {', '.join(CANDIDATE_DECISIONS)}")
+    record = CandidateDecision(
+        ticker=normalized,
+        decision=normalized_decision,
+        timestamp=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        note=note.strip(),
+        related_scan_id=related_scan_id,
+        related_daily_id=related_daily_id,
+        related_report_run_id=related_report_run_id,
+    )
+    rows = [asdict(item) for item in list_candidate_decisions(output_dir) if item.ticker != normalized]
+    rows.insert(0, asdict(record))
+    _candidate_decisions_path(output_dir).parent.mkdir(parents=True, exist_ok=True)
+    _candidate_decisions_path(output_dir).write_text(json.dumps(rows, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return record
+
+
+def list_candidate_decisions(output_dir: Path) -> tuple[CandidateDecision, ...]:
+    path = _candidate_decisions_path(output_dir)
+    if not path.exists():
+        return ()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return ()
+    rows = []
+    for item in payload:
+        rows.append(
+            CandidateDecision(
+                ticker=str(item.get("ticker", "")).upper(),
+                decision=str(item.get("decision", "")),
+                timestamp=str(item.get("timestamp", "")),
+                note=str(item.get("note", "")),
+                related_scan_id=str(item.get("related_scan_id", "")),
+                related_daily_id=str(item.get("related_daily_id", "")),
+                related_report_run_id=str(item.get("related_report_run_id", "")),
+            )
+        )
+    return tuple(rows)
 
 
 def create_report_task_chain(output_dir: Path, db_path: Path, readiness: dict | None = None) -> tuple[AgentTask, ...]:
@@ -295,6 +412,93 @@ def _target_for_action(action: str, readiness: dict) -> str:
     if action == "Stage analyst slate":
         return "/greenrock/market-pulse/stage/confirm?slate=analyst"
     return "/greenrock/report-workbench"
+
+
+def _stage(name: str, agent: str, status: str, source: str, timestamp: str, blocker: str, action: str, target_url: str) -> dict[str, str]:
+    return {
+        "name": name,
+        "agent": agent,
+        "status": status,
+        "source": source or "local records",
+        "timestamp": timestamp or "",
+        "blocking_reason": blocker or "",
+        "next_action": action,
+        "target_url": target_url,
+    }
+
+
+def _stage_status(ready: bool, blocked: bool = False) -> str:
+    if ready:
+        return "Complete"
+    if blocked:
+        return "Blocked"
+    return "Waiting"
+
+
+def _timestamp_or_age(readiness: dict) -> str:
+    age = readiness.get("scan_age_hours")
+    if age is None:
+        return ""
+    return f"age {age}h"
+
+
+def _stage_blocker(readiness: dict, keys: tuple[str, ...]) -> str:
+    return "; ".join(reason for reason in readiness["reasons"] if reason in keys)
+
+
+def _qa_reason_list(readiness: dict) -> list[str]:
+    blockers = {"scan stale", "analytics missing", "provider failures", "duplicate tickers", "missing logos"}
+    return [reason for reason in readiness["reasons"] if reason in blockers]
+
+
+def _approval_target(readiness: dict) -> str:
+    if readiness.get("pending_approval_id"):
+        return f"/approvals/{readiness['pending_approval_id']}"
+    return "/greenrock"
+
+
+def _candidate_payload(candidate, archetype: str, decisions: dict[str, CandidateDecision], staged: tuple[dict[str, str], ...]) -> dict[str, str]:
+    decision = decisions.get(candidate.ticker)
+    staged_row = next((row for row in staged if row.get("ticker", "").upper() == candidate.ticker), {})
+    prior = candidate.prior
+    return {
+        "archetype": archetype,
+        "ticker": candidate.ticker,
+        "rank": candidate.rank,
+        "score": candidate.greenrock_score,
+        "confidence": candidate.confidence,
+        "evidence_agreement": candidate.evidence_agreement,
+        "research_priority": candidate.research_priority,
+        "rank_movement": _movement_value(prior.rank_change if prior else None),
+        "score_movement": _movement_value(prior.score_change if prior else None),
+        "confidence_movement": _movement_value(prior.confidence_change if prior else None),
+        "primary_bullish_evidence": candidate.top_bullish_signal or candidate.bullish_evidence,
+        "primary_caution": candidate.top_caution_signal or candidate.bearish_evidence,
+        "guardrail": candidate.guardrail,
+        "staging_status": staged_row.get("staged_bucket", candidate.staged_bucket or "staged"),
+        "decision": decision.decision if decision else "",
+        "decision_timestamp": decision.timestamp if decision else "",
+        "decision_note": decision.note if decision else "",
+        "source_scan_id": candidate.source_scan_id,
+        "status": "available",
+    }
+
+
+def _movement_value(value) -> str:
+    if value is None:
+        return "n/a"
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if numeric == 0:
+        return "0"
+    prefix = "+" if numeric > 0 else ""
+    return f"{prefix}{numeric:g}"
+
+
+def _candidate_decisions_path(output_dir: Path) -> Path:
+    return output_dir / "greenrock" / "candidate_decisions.json"
 
 
 def _scan_age_hours(scan) -> float | None:
