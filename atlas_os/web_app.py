@@ -1645,14 +1645,22 @@ def render_greenrock_discovery(status_message: str | None = None) -> str:
     <section class="hero compact greenrock-hero discovery-hero">
       {_greenrock_brand_block()}
       <p class="eyebrow">GreenRock Discovery Migration</p>
-      <h1>Discovery moved into Scanner</h1>
-      <p>The mature flow now lives in Scanner: Universe -> Scan -> Rank -> Market Pulse -> Human Review -> Staging -> Report Workbench -> Approval -> Final Report.</p>
+      <h1>GreenRock Discovery Workflow</h1>
+      <p>Discovery moved into Scanner. The mature flow now operates inside Scanner, then continues through Market Pulse, Staging, Report Workbench, human approval, and final PDF controls.</p>
     </section>
     <section class="panel">
       <div class="section-head">
-        <h2>Use Scanner</h2>
+        <h2>GreenRock Discovery Flow</h2>
         <span class="subtle">Route preserved for compatibility</span>
       </div>
+      <section class="workflow-stepper">
+        <span>Discovery Scan</span>
+        <span>Review Results</span>
+        <span>Stage Candidates</span>
+        <span>Generate Draft Report</span>
+        <span>Human Approval</span>
+        <span>Export PDF</span>
+      </section>
       <div class="action-row">
         <a class="button" href="/greenrock/scanner">Open Scanner</a>
         <a class="button secondary" href="/greenrock/watchlists">View Watchlists</a>
@@ -5249,6 +5257,7 @@ def _report_metadata_index(context) -> list[dict[str, str]]:
         approval = approvals_by_id.get(report.approval_id) if report.approval_id else None
         markdown = _read_report_markdown(report.content_path)
         metadata = _basic_report_metadata(markdown)
+        tickers = _report_tickers(markdown, artifacts_by_run.get(report.run_id or "", []))
         pdf_status = "exported" if any(item.artifact_type == "report_final_pdf" for item in artifacts_by_run.get(report.run_id, [])) else "not_exported"
         rows.append(
             {
@@ -5263,16 +5272,19 @@ def _report_metadata_index(context) -> list[dict[str, str]]:
                 "status": report.status,
                 "approval_status": approval.status.value if approval else "none",
                 "pdf_status": pdf_status,
-                "tickers": ",".join(_report_tickers(markdown)),
+                "tickers": ",".join(tickers),
                 "featured": ",".join(_report_featured_tickers(markdown)),
                 "source_scan_ids": metadata.get("scan_ids", ""),
                 "path": report.content_path or "",
+                "lifecycle_key": _report_lifecycle_key(report.report_type or "greenrock", metadata, tickers),
             }
         )
     return rows
 
 
 def _filter_report_index(rows: list[dict[str, str]], filters: dict[str, str]) -> list[dict[str, str]]:
+    if filters.get("show_all", "").strip() != "1":
+        rows = _collapse_default_report_lifecycle_rows(rows)
     ticker = filters.get("ticker", "").strip().upper()
     status = filters.get("status", "").strip()
     approval = filters.get("approval", "").strip()
@@ -5289,6 +5301,30 @@ def _filter_report_index(rows: list[dict[str, str]], filters: dict[str, str]) ->
             continue
         visible.append(row)
     return visible
+
+
+def _collapse_default_report_lifecycle_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    visible = []
+    seen_draft_keys = set()
+    for row in rows:
+        if not _is_draft_lifecycle_row(row):
+            visible.append(row)
+            continue
+        key = row.get("lifecycle_key", "") or row.get("run_id", "")
+        if key in seen_draft_keys:
+            continue
+        seen_draft_keys.add(key)
+        visible.append(row)
+    return visible
+
+
+def _is_draft_lifecycle_row(row: dict[str, str]) -> bool:
+    if row.get("pdf_status") == "exported":
+        return False
+    if row.get("approval_status") in {"approved", "rejected"}:
+        return False
+    status = row.get("status", "")
+    return status in {"blocked_for_approval", "awaiting_approval", "draft", "pending"} or row.get("approval_status") in {"pending", "none"}
 
 
 def _reports_index_table(rows: list[dict[str, str]]) -> str:
@@ -5326,13 +5362,81 @@ def _basic_report_metadata(markdown: str) -> dict[str, str]:
     return metadata
 
 
-def _report_tickers(markdown: str) -> tuple[str, ...]:
+def _report_lifecycle_key(report_type: str, metadata: dict[str, str], tickers: tuple[str, ...]) -> str:
+    return "|".join(
+        (
+            report_type,
+            metadata.get("data_mode", "").lower(),
+            metadata.get("candidate_source", "").lower(),
+            metadata.get("scan_ids", ""),
+            ",".join(tickers),
+        )
+    )
+
+
+def _report_tickers(markdown: str, artifacts: list | tuple = ()) -> tuple[str, ...]:
     tickers = set()
-    for token in markdown.replace("|", " ").replace(":", " ").replace(",", " ").replace("(", " ").replace(")", " ").split():
-        clean = token.strip("*#`[]").upper()
-        if 1 <= len(clean) <= 5 and clean.isalnum() and any(char.isalpha() for char in clean) and clean not in {"REAL", "MOCK", "DATA", "RANK", "SCORE"}:
-            tickers.add(clean)
+    tickers.update(_report_table_tickers(markdown))
+    tickers.update(_report_featured_tickers(markdown))
+    tickers.update(_artifact_candidate_tickers(artifacts))
     return tuple(sorted(tickers))
+
+
+def _artifact_candidate_tickers(artifacts: list | tuple) -> set[str]:
+    tickers = set()
+    for artifact in artifacts:
+        if not str(getattr(artifact, "artifact_type", "")).endswith("_csv"):
+            continue
+        path = Path(getattr(artifact, "path", ""))
+        if not path.exists():
+            continue
+        try:
+            with path.open(newline="", encoding="utf-8") as handle:
+                reader = csv.DictReader(handle)
+                for row in reader:
+                    for field in ("symbol", "ticker", "Symbol", "Ticker"):
+                        value = row.get(field)
+                        if value and _is_candidate_symbol(value):
+                            tickers.add(value.strip().upper())
+        except (OSError, csv.Error):
+            continue
+    return tickers
+
+
+def _report_table_tickers(markdown: str) -> set[str]:
+    tickers = set()
+    table_header: list[str] | None = None
+    for line in markdown.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            table_header = None
+            continue
+        cells = [_clean_table_cell(cell) for cell in stripped.strip("|").split("|")]
+        if not cells:
+            continue
+        lowered = [cell.lower() for cell in cells]
+        if "symbol" in lowered or "ticker" in lowered:
+            table_header = lowered
+            continue
+        if table_header and set(cells) <= {"", "---", ":---", "---:"}:
+            continue
+        if not table_header:
+            continue
+        for field in ("symbol", "ticker"):
+            if field in table_header:
+                index = table_header.index(field)
+                if index < len(cells) and _is_candidate_symbol(cells[index]):
+                    tickers.add(cells[index].upper())
+    return tickers
+
+
+def _clean_table_cell(value: str) -> str:
+    return value.strip().strip("*`[]")
+
+
+def _is_candidate_symbol(value: str) -> bool:
+    clean = value.strip().upper()
+    return 1 <= len(clean) <= 8 and clean.isalnum() and any(char.isalpha() for char in clean)
 
 
 def _report_featured_tickers(markdown: str) -> tuple[str, ...]:

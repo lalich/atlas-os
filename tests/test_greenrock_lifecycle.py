@@ -13,11 +13,25 @@ from atlas_os.cli import main
 from atlas_os.core.approvals import approve_approval, list_approvals
 from atlas_os.core.artifacts import list_artifacts
 from atlas_os.core.audit_log import list_audit_logs
-from atlas_os.core.workflow_runs import list_workflow_runs
+from atlas_os.core.reports import create_report_record
+from atlas_os.core.workflow_runs import create_workflow_run, list_workflow_runs
 from atlas_os.db.database import connect, initialize_database
 from atlas_os.greenrock.lifecycle import cleanup_greenrock_drafts
 from atlas_os.greenrock.workflow import run_greenrock_screening_workflow
 from atlas_os.web_app import dispatch_request, export_greenrock_pdf
+
+
+def _report_markdown(symbol: str) -> str:
+    return f"""# GreenRock Local Report
+
+**Date:** 2026-07-06
+**Data Mode:** mock
+**Candidate Source:** local test
+
+| Symbol | Company | Score |
+| --- | --- | --- |
+| {symbol} | Test Company | 80 |
+"""
 
 
 class GreenRockLifecycleTests(unittest.TestCase):
@@ -139,6 +153,34 @@ class GreenRockLifecycleTests(unittest.TestCase):
         self.assertEqual(response.status, 200)
         self.assertIn(second_run, response.body)
         self.assertNotIn(first_run, response.body)
+
+    def test_reports_index_preserves_distinct_lifecycles_and_filters(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {
+                "ATLAS_DB_PATH": str(root / "atlas.db"),
+                "ATLAS_OUTPUT_DIR": str(root / "output"),
+            }
+            first_report = root / "lc01_report.md"
+            second_report = root / "sofi_report.md"
+            first_report.write_text(_report_markdown("LC01"), encoding="utf-8")
+            second_report.write_text(_report_markdown("SOFI"), encoding="utf-8")
+            with patch.dict("os.environ", env, clear=False):
+                db_path = initialize_database(root / "atlas.db")
+                with connect(db_path) as connection:
+                    first_run = create_workflow_run(connection, "greenrock", "report_fixture")
+                    second_run = create_workflow_run(connection, "greenrock", "report_fixture")
+                    create_report_record(connection, "LC01 Local Report", "greenrock_monthly_draft", str(first_report), run_id=first_run.run_id)
+                    create_report_record(connection, "SOFI Local Report", "greenrock_monthly_draft", str(second_report), run_id=second_run.run_id)
+                default_response = dispatch_request("GET", "/reports")
+                filtered_response = dispatch_request("GET", "/reports?ticker=SOFI")
+
+        self.assertEqual(default_response.status, 200)
+        self.assertIn(first_run.run_id, default_response.body)
+        self.assertIn(second_run.run_id, default_response.body)
+        self.assertEqual(filtered_response.status, 200)
+        self.assertIn(second_run.run_id, filtered_response.body)
+        self.assertNotIn(first_run.run_id, filtered_response.body)
 
     def test_final_reports_archive_route_lists_exported_pdf(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

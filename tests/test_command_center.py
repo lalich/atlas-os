@@ -34,7 +34,7 @@ from atlas_os.greenrock.scanner import ScanResult, latest_scan, run_population_s
 from atlas_os.greenrock.score import calculate_score_preview, confidence_band
 from atlas_os.greenrock.staging import add_staged_candidate, enrich_staged_candidates, load_staged_candidates
 from atlas_os.inbox import create_inbox_item, list_inbox_items
-from atlas_os.web_app import dispatch_request
+from atlas_os.web_app import _report_tickers, dispatch_request
 
 
 class CommandCenterTests(unittest.TestCase):
@@ -323,6 +323,21 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("Report History", score.body)
         self.assertIn("indexed report", score.body)
         self.assertIn("Open Report", score.body)
+
+    def test_report_ticker_index_ignores_uppercase_prose(self) -> None:
+        markdown = """# Atlas Report
+
+ABOVE AND ATLAS ANY AIDS ALL are ordinary prose words in this disclosure.
+
+| Symbol | Company | Score |
+| --- | --- | --- |
+| LC01 | Large Cap Mock 01 | 83 |
+"""
+        tickers = _report_tickers(markdown)
+
+        self.assertIn("LC01", tickers)
+        for prose_word in ("ABOVE", "AND", "ATLAS", "ANY", "AIDS", "ALL"):
+            self.assertNotIn(prose_word, tickers)
 
     def test_score_intelligence_fields_are_calculated(self) -> None:
         preview = calculate_score_preview("LC01", provider=FullHistoryProvider())
