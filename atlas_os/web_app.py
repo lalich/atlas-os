@@ -1010,7 +1010,7 @@ def _daily_intelligence_panel(brief: dict | None) -> str:
       </section>
       <section class="panel inner-panel">
         <div class="section-head"><h2>Today's Research Priorities</h2><span class="subtle">Max 5</span></div>
-        <div class="inbox-list">{''.join(_daily_priority_card(priority) for priority in priorities) or "<p class='empty'>No current research priorities.</p>"}</div>
+        <div class="priority-tile-grid">{''.join(_daily_priority_card(priority) for priority in priorities) or "<p class='empty'>No current research priorities.</p>"}</div>
       </section>
       <section class="panel inner-panel">
         <div class="section-head"><h2>Agent Updates</h2><span class="subtle">Why the brief exists</span></div>
@@ -1021,14 +1021,25 @@ def _daily_intelligence_panel(brief: dict | None) -> str:
 
 
 def _daily_priority_card(priority: dict) -> str:
+    ticker = str(priority.get("ticker", "")).upper()
+    href = f"/greenrock/score?ticker={quote(ticker)}" if ticker else "/greenrock/score"
+    rank_change = priority.get("rank_change", 0)
+    thesis = priority.get("thesis", "") or priority.get("risk", "")
     return f"""
-    <article class="inbox-card">
-      <div><strong>{_safe(priority.get("ticker", ""))}</strong><span>{_safe(priority.get("priority", ""))}</span></div>
-      <p>Rank {_safe(priority.get("rank", ""))} / change {_safe(str(priority.get("rank_change", 0)))} / score {_safe(priority.get("score", ""))} / confidence {_safe(priority.get("confidence", ""))} / evidence {_safe(priority.get("evidence", ""))}</p>
-      <p>{_safe(priority.get("thesis", ""))}</p>
-      <p class="subtle">Risk: {_safe(priority.get("risk", ""))}</p>
-      <a class="button secondary" href="{_safe(priority.get("link", "/greenrock/market-pulse"))}">Open</a>
-    </article>
+    <a class="priority-tile" href="{_safe(href)}" aria-label="Open GreenRock Score for {_safe(ticker)}">
+      <div class="priority-tile-head">
+        <strong>{_safe(ticker)}</strong>
+        <span class="badge">{_safe(priority.get("priority", ""))}</span>
+      </div>
+      <div class="priority-tile-metrics">
+        <span>Rank {_safe(priority.get("rank", ""))}</span>
+        <span>Move {_safe(str(rank_change))}</span>
+        <span>Score {_safe(priority.get("score", ""))}</span>
+        <span>Conf. {_safe(priority.get("confidence", ""))}</span>
+        <span>Evid. {_safe(priority.get("evidence", ""))}</span>
+      </div>
+      <p>{_safe(thesis)}</p>
+    </a>
     """
 
 
@@ -4308,13 +4319,13 @@ def _market_pulse_section(archetype: str, rows: tuple[dict[str, str], ...], scan
     if not body:
         body = f"<tr><td colspan='8' class='empty'>No scored names in this archetype: {_safe(archetype)}.</td></tr>"
     return f"""
-    <section class="panel picks-panel">
+    <section class="panel market-pulse-section compact-source-panel">
       <div class="section-head">
         <h2>{_safe(archetype)}</h2>
         <span class="subtle">Latest scan: {_safe(scan_id)}</span>
       </div>
-      <table>
-        <thead><tr><th>Rank</th><th>Ticker</th><th>Score</th><th>Confidence</th><th>Evidence</th><th>Priority</th><th>Movement</th><th>Stage</th></tr></thead>
+      <table class="market-pulse-table compact-source-table">
+        <thead><tr><th class="metric-col">Rank</th><th class="ticker-col">Ticker</th><th class="metric-col">Score</th><th class="metric-col">Conf.</th><th class="metric-col">Evid.</th><th class="priority-col">Priority</th><th>Movement</th><th class="actions-col">Stage</th></tr></thead>
         <tbody>{body}</tbody>
       </table>
     </section>
@@ -4466,8 +4477,8 @@ def _staging_bucket_section(bucket: str, label: str, rows: tuple[dict[str, str],
         <h2>{_safe(label)}</h2>
         <span class="badge">{len(bucket_rows)} staged | {_safe(target_copy)}</span>
       </div>
-      <table class="staging-table">
-        <thead><tr><th>Ticker</th><th>Score</th><th>Confidence</th><th>Evidence</th><th>Guardrail</th><th>Priority</th><th>Top Bullish</th><th>Top Caution</th><th>Source</th><th>Notes</th><th>Actions</th></tr></thead>
+      <table class="staging-table compact-candidate-table">
+        <thead><tr><th class="ticker-col">Ticker</th><th class="metric-col">Score</th><th class="metric-col">Conf.</th><th class="metric-col">Evid.</th><th class="guardrail-col">Guardrail</th><th class="priority-col">Priority</th><th>Top Bullish</th><th>Top Caution</th><th class="source-col">Source</th><th class="notes-col">Notes</th><th class="actions-col">Actions</th></tr></thead>
         <tbody>{body}</tbody>
       </table>
     </section>
@@ -4560,20 +4571,20 @@ def _staging_source_sections(output_dir: Path) -> str:
 
     scan_label = f"Latest Population Scan: {scan.scan_id}" if scan else "Latest Population Scan"
     return f"""
-    <section class="candidate-grid">
-      <div class="panel picks-panel">
+    <section class="candidate-grid staging-source-grid">
+      <div class="panel compact-source-panel">
         <div class="section-head">
           <h2>Stage From Watchlists</h2>
           <span class="subtle">Promoted and curated lists</span>
         </div>
-        <table><thead><tr><th>Ticker</th><th>Source List</th><th>Stage</th></tr></thead><tbody>{watchlist_body}</tbody></table>
+        <table class="compact-source-table watchlist-stage-table"><thead><tr><th class="ticker-col">Ticker</th><th>Source List</th><th class="actions-col">Stage</th></tr></thead><tbody>{watchlist_body}</tbody></table>
       </div>
-      <div class="panel picks-panel">
+      <div class="panel compact-source-panel">
         <div class="section-head">
           <h2>{_safe(scan_label)}</h2>
           <span class="subtle">Top ranked scan rows</span>
         </div>
-        <table><thead><tr><th>Ticker</th><th>Score</th><th>Confidence</th><th>Evidence</th><th>Guardrail</th><th>Stage</th></tr></thead><tbody>{scan_body}</tbody></table>
+        <table class="compact-source-table scan-stage-table"><thead><tr><th class="ticker-col">Ticker</th><th class="metric-col">Score</th><th class="metric-col">Conf.</th><th class="metric-col">Evid.</th><th class="guardrail-col">Guardrail</th><th class="actions-col">Stage</th></tr></thead><tbody>{scan_body}</tbody></table>
       </div>
     </section>
     """
@@ -6343,6 +6354,23 @@ def _page(title: str, content: str, active: str = "/") -> str:
     .picks-panel {{ overflow-x: auto; }}
     .picks-table {{ min-width: 1780px; }}
     .picks-table th:nth-child(11), .picks-table td:nth-child(11) {{ min-width: 220px; }}
+    .compact-source-panel {{ overflow-x: visible; }}
+    .compact-source-table, .market-pulse-table, .compact-candidate-table {{ width: 100%; table-layout: fixed; font-size: 12px; }}
+    .compact-source-table th, .compact-source-table td,
+    .market-pulse-table th, .market-pulse-table td,
+    .compact-candidate-table th, .compact-candidate-table td {{ padding: 7px 6px; overflow-wrap: anywhere; vertical-align: top; }}
+    .ticker-col {{ width: 76px; }}
+    .metric-col {{ width: 62px; }}
+    .guardrail-col {{ width: 86px; }}
+    .priority-col {{ width: 86px; }}
+    .source-col {{ width: 96px; }}
+    .notes-col {{ width: 160px; }}
+    .actions-col {{ width: 150px; }}
+    .compact-source-table .actions-col {{ width: 190px; }}
+    .market-pulse-table .actions-col {{ width: 190px; }}
+    .compact-source-table td:last-child,
+    .market-pulse-table td:last-child,
+    .compact-candidate-table td:last-child {{ overflow: visible; }}
     .calculator-card {{ display: flex; align-items: center; justify-content: space-between; gap: 16px; border-color: rgba(55,214,122,.38); }}
     .score-tool-hero {{ display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, .5fr); gap: 22px; align-items: end; }}
     .score-tool-hero .score-form {{ margin: 0; }}
@@ -6352,7 +6380,7 @@ def _page(title: str, content: str, active: str = "/") -> str:
     .score-button-logo {{ width: 32px; height: 32px; object-fit: contain; }}
     .save-list-panel {{ border-color: rgba(55,214,122,.28); }}
     .save-list-form {{ display: grid; grid-template-columns: minmax(150px, .6fr) minmax(220px, 1fr) auto; gap: 10px; }}
-    .inline-promote-form {{ display: grid; grid-template-columns: minmax(170px, 1fr) auto; gap: 8px; min-width: 300px; }}
+    .inline-promote-form {{ display: grid; grid-template-columns: minmax(130px, 1fr) auto; gap: 6px; min-width: 0; }}
     .inline-promote-form select, .inline-promote-form button {{ padding: 8px; }}
     .workflow-stepper {{ display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; background: rgba(55,214,122,.08); border-color: rgba(55,214,122,.28); }}
     .workflow-stepper span {{ display: block; text-align: center; border: 1px solid rgba(55,214,122,.24); border-radius: 8px; padding: 12px; color: #d7ffe4; font-weight: 800; background: rgba(0,0,0,.16); }}
@@ -6364,21 +6392,31 @@ def _page(title: str, content: str, active: str = "/") -> str:
     .discovery-hero h1 {{ max-width: 980px; }}
     .scanner-filter-form {{ display: grid; grid-template-columns: repeat(5, minmax(145px, 1fr)) auto auto; gap: 10px; align-items: end; }}
     .scanner-filter-form label {{ display: grid; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 700; }}
-    .scan-review-form {{ min-width: 1780px; }}
+    .scan-review-form {{ min-width: 0; max-width: 100%; }}
     .promotion-bar {{ position: sticky; left: 0; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; padding: 10px; margin-bottom: 12px; border: 1px solid rgba(55,214,122,.25); border-radius: 8px; background: rgba(55,214,122,.08); }}
-    .promotion-bar select {{ min-width: 240px; }}
+    .promotion-bar select {{ min-width: 180px; }}
     .inline-trim-form {{ display: inline-flex; margin-left: 6px; vertical-align: middle; }}
     .inline-trim-form button {{ padding: 7px 10px; font-size: 12px; }}
     .watchlist-card {{ overflow-x: auto; }}
     .watchlist-card table {{ min-width: 560px; }}
     .staging-grid {{ display: grid; gap: 14px; }}
-    .staging-bucket {{ overflow-x: auto; }}
+    .staging-bucket {{ overflow-x: visible; }}
     .staging-table {{ min-width: 0; width: 100%; }}
     .staging-add-form {{ display: grid; grid-template-columns: minmax(90px, .55fr) minmax(140px, .75fr) minmax(160px, 1fr) auto; gap: 8px; }}
     .staging-add-form.compact-add {{ grid-template-columns: minmax(80px, .55fr) minmax(120px, .75fr) minmax(130px, 1fr) auto; min-width: 0; }}
     .staging-actions, .staging-actions form {{ display: grid; gap: 8px; }}
-    .staging-notes-form {{ display: grid; gap: 8px; min-width: 220px; }}
-    .staging-notes-form textarea {{ min-height: 76px; }}
+    .staging-notes-form {{ display: grid; gap: 6px; min-width: 0; }}
+    .staging-notes-form textarea {{ min-height: 68px; width: 100%; }}
+    .staging-actions button, .staging-notes-form button, .staging-add-form button {{ padding: 7px 8px; font-size: 12px; }}
+    .staging-add-form.compact-add input, .staging-add-form.compact-add select {{ min-width: 0; }}
+    .priority-tile-grid {{ display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }}
+    .priority-tile {{ display: block; min-height: 150px; border: 1px solid rgba(55,214,122,.34); border-radius: 8px; padding: 12px; text-decoration: none; color: var(--ink); background: linear-gradient(135deg, rgba(55,214,122,.13), rgba(18,34,27,.82)); box-shadow: inset 0 0 0 1px rgba(55,214,122,.05); }}
+    .priority-tile:hover, .priority-tile:focus {{ border-color: rgba(55,214,122,.7); box-shadow: 0 0 0 3px rgba(55,214,122,.16); outline: none; }}
+    .priority-tile-head {{ display: flex; justify-content: space-between; gap: 8px; align-items: start; margin-bottom: 8px; }}
+    .priority-tile-head strong {{ font-size: 22px; line-height: 1; color: #d6ffe4; }}
+    .priority-tile-metrics {{ display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; }}
+    .priority-tile-metrics span {{ border: 1px solid rgba(255,255,255,.1); border-radius: 999px; padding: 3px 6px; color: #cfe9da; background: rgba(0,0,0,.16); font-size: 11px; }}
+    .priority-tile p {{ margin: 0; color: var(--muted); font-size: 12px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }}
     .report-review-meta .detail-panel p {{ overflow-wrap: anywhere; }}
     .report-review-section {{ overflow-x: auto; }}
     .review-table-wrap {{ overflow-x: auto; margin: 10px 0 16px; }}
@@ -6471,7 +6509,9 @@ def _page(title: str, content: str, active: str = "/") -> str:
     footer {{ border-top: 1px solid var(--line); padding: 18px 30px 28px; color: var(--muted); background: rgba(8,10,16,.7); }}
     footer div {{ display: flex; gap: 12px; flex-wrap: wrap; max-width: 1500px; margin: 0 auto; }}
     @media (max-width: 1000px) {{
-      .attention-grid, .board-meta, .nav-grid, .project-grid, .candidate-grid, .detail-grid, .kanban, .agent-grid, .task-form, .mega-card, .universe-grid, .score-form, .save-list-form, .score-explainer, .score-tool-hero, .rank-grid, .score-breakdown-grid, .target-assumptions, .score-intel-grid, .evidence-grid, .confidence-explain-grid, .workflow-stepper, .workflow-grid, .watchlist-grid, .scanner-filter-form, .staging-add-form, .staging-add-form.compact-add {{ grid-template-columns: 1fr; }}
+      .attention-grid, .board-meta, .nav-grid, .project-grid, .candidate-grid, .detail-grid, .kanban, .agent-grid, .task-form, .mega-card, .universe-grid, .score-form, .save-list-form, .score-explainer, .score-tool-hero, .rank-grid, .score-breakdown-grid, .target-assumptions, .score-intel-grid, .evidence-grid, .confidence-explain-grid, .workflow-stepper, .workflow-grid, .watchlist-grid, .scanner-filter-form, .staging-add-form, .staging-add-form.compact-add, .priority-tile-grid {{ grid-template-columns: 1fr; }}
+      .compact-source-panel, .staging-bucket {{ overflow-x: auto; }}
+      .compact-source-table, .market-pulse-table, .compact-candidate-table {{ min-width: 760px; }}
       .calculator-card, .score-hero-line {{ align-items: flex-start; flex-direction: column; }}
       main, header, footer {{ padding-left: 16px; padding-right: 16px; }}
       .hero {{ min-height: auto; }}

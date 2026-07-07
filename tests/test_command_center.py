@@ -165,13 +165,19 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("Universe Providers -> Universe Builder", response.body)
 
     def test_greenrock_market_pulse_route_returns_200(self) -> None:
-        with _isolated_env():
+        with _isolated_env() as root:
+            run_population_scan(root / "output", "all", provider=FullHistoryProvider())
             response = dispatch_request("GET", "/greenrock/market-pulse")
 
         self.assertEqual(response.status, 200)
         self.assertIn("GreenRock Market Pulse", response.body)
         self.assertIn("Top Opportunities by Archetype", response.body)
         self.assertIn("Reports still generate only from staging", response.body)
+        self.assertIn("market-pulse-table compact-source-table", response.body)
+        self.assertIn("<th class=\"metric-col\">Score</th>", response.body)
+        self.assertIn("<th class=\"metric-col\">Conf.</th>", response.body)
+        self.assertIn("<th class=\"metric-col\">Evid.</th>", response.body)
+        self.assertNotIn("market-pulse-table picks-table", response.body)
 
     def test_greenrock_staging_uses_bounded_table_layout(self) -> None:
         with _isolated_env():
@@ -181,6 +187,12 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn(".staging-table { min-width: 0; width: 100%; }", response.body)
         self.assertIn("overflow-wrap: anywhere", response.body)
         self.assertNotIn(".staging-table { min-width: 1680px; }", response.body)
+        self.assertIn("staging-source-grid", response.body)
+        self.assertIn("watchlist-stage-table", response.body)
+        self.assertIn("scan-stage-table", response.body)
+        self.assertIn("compact-candidate-table", response.body)
+        self.assertIn("<th class=\"metric-col\">Conf.</th>", response.body)
+        self.assertIn("<th class=\"actions-col\">Actions</th>", response.body)
 
     def test_discovery_route_preserved_and_scanner_owns_flow(self) -> None:
         with _isolated_env():
@@ -905,6 +917,11 @@ ABOVE AND ATLAS ANY AIDS ALL are ordinary prose words in this disclosure.
         self.assertIn("Daily Intelligence Brief", morning.body)
         self.assertIn("Executive Summary", morning.body)
         self.assertIn("Today's Research Priorities", morning.body)
+        self.assertIn("priority-tile-grid", morning.body)
+        self.assertIn("priority-tile", morning.body)
+        self.assertIn("/greenrock/score?ticker=", morning.body)
+        priority_section = morning.body.split("Today's Research Priorities", maxsplit=1)[1].split("Agent Updates", maxsplit=1)[0]
+        self.assertNotIn(">Open</a>", priority_section)
         self.assertIn("Daily Intelligence", wall.body)
         self.assertIn("Top Priorities", wall.body)
         self.assertIn("Agent Update History", agent_detail.body)
