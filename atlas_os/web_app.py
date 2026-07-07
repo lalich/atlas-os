@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 
 from atlas_os import __version__
 from atlas_os.agents.orchestrator import agent_cycle_summary, get_agent_run, list_agent_runs, list_agent_states, run_agent_cycle
+from atlas_os.agents.tasks import list_agent_tasks
 from atlas_os.agents.updates import latest_agent_update, list_agent_updates
 from atlas_os.config import get_settings
 from atlas_os.daily import latest_daily_brief, run_daily_cycle
@@ -30,9 +31,15 @@ from atlas_os.core.approvals import (
 from atlas_os.core.artifacts import create_artifact, get_artifact, list_artifacts, list_artifacts_for_run
 from atlas_os.core.audit_log import create_audit_log, list_audit_logs
 from atlas_os.core.manual_tasks import (
+    DEFAULT_PROJECT_NAME,
+    PROJECT_STAGES,
     TASK_STATUSES,
     create_manual_task,
+    create_project,
+    list_projects,
     list_manual_tasks,
+    move_manual_task_project,
+    update_project_status,
     update_manual_task_status,
 )
 from atlas_os.core.reports import get_report, list_reports
@@ -171,7 +178,26 @@ def create_app():
 
     @app.get("/projects", response_class=HTMLResponse)
     def projects() -> str:
-        return render_projects()
+        return render_pt()
+
+    @app.get("/pt", response_class=HTMLResponse)
+    def pt() -> str:
+        return render_pt()
+
+    @app.post("/pt/tasks")
+    def create_pt_task(name: str = Form(...), project_id: int | None = Form(None), division: str = Form("general"), notes: str = Form("")):
+        save_manual_task(name, division, notes, project_id=project_id)
+        return RedirectResponse(_with_status("/pt", "Task created."), status_code=303)
+
+    @app.post("/pt/projects")
+    def create_pt_project(name: str = Form(...), division: str = Form("atlas-core"), status: str = Form("planned")):
+        save_project(name, division, status)
+        return RedirectResponse(_with_status("/pt", "Project created."), status_code=303)
+
+    @app.post("/pt/projects/{project_id}/status")
+    def update_pt_project(project_id: int, status: str = Form("planned")):
+        save_project_status(project_id, status)
+        return RedirectResponse(_with_status("/pt", "Project stage updated."), status_code=303)
 
     @app.get("/atlas/morning-brief", response_class=HTMLResponse)
     def morning_brief() -> str:
@@ -401,17 +427,17 @@ def create_app():
 
     @app.get("/tasks", response_class=HTMLResponse)
     def tasks() -> str:
-        return render_tasks()
+        return render_pt()
 
     @app.post("/tasks")
-    def create_task(name: str = Form(...), division: str = Form("general"), notes: str = Form("")):
-        save_manual_task(name, division, notes)
-        return RedirectResponse(_with_status("/tasks", "Manual task created."), status_code=303)
+    def create_task(name: str = Form(...), division: str = Form("general"), notes: str = Form(""), project_id: int | None = Form(None)):
+        save_manual_task(name, division, notes, project_id=project_id)
+        return RedirectResponse(_with_status("/pt", "Manual task created."), status_code=303)
 
     @app.post("/tasks/{task_id}/status")
     def update_task(task_id: int, status: str = Form(...)):
         save_task_status(task_id, status)
-        return RedirectResponse(_with_status("/tasks", f"Task {task_id} updated."), status_code=303)
+        return RedirectResponse(_with_status("/pt", f"Task {task_id} updated."), status_code=303)
 
     @app.get("/agents", response_class=HTMLResponse)
     def agents() -> str:
@@ -438,8 +464,8 @@ def create_app():
         return render_artifact_detail(artifact_id)
 
     @app.get("/reports", response_class=HTMLResponse)
-    def reports() -> str:
-        return render_reports()
+    def reports(request: Request) -> str:
+        return render_reports(filters=dict(request.query_params), status_message=request.query_params.get("status"))
 
     @app.get("/open-local")
     def open_local(path: str):
@@ -498,8 +524,8 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
 
     if method == "GET" and route == "/":
         return WebResponse(200, render_dashboard(_first(query, "status")))
-    if method == "GET" and route == "/projects":
-        return WebResponse(200, render_projects(_first(query, "status")))
+    if method == "GET" and route in {"/projects", "/tasks", "/pt"}:
+        return WebResponse(200, render_pt(_first(query, "status"), {key: values[0] for key, values in query.items()}))
     if method == "GET" and route == "/atlas/morning-brief":
         return WebResponse(200, render_morning_brief(_first(query, "status")))
     if method == "GET" and route == "/atlas/morning-brief/history":
@@ -554,8 +580,6 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
             return WebResponse(200, render_greenrock_report_review(run_id, _first(query, "status")))
         except KeyError:
             return _error_response(404, "Report Not Found", f"No GreenRock report exists for run {run_id}.")
-    if method == "GET" and route == "/tasks":
-        return WebResponse(200, render_tasks(_first(query, "status")))
     if method == "GET" and route == "/agents":
         return WebResponse(200, render_agents(_first(query, "status")))
     if method == "GET" and route.startswith("/agents/runs/"):
@@ -568,7 +592,7 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
         agent_name = unquote(route.removeprefix("/agents/"))
         return WebResponse(200, render_agent_update_history(agent_name, _first(query, "status")))
     if method == "GET" and route == "/reports":
-        return WebResponse(200, render_reports(_first(query, "status")))
+        return WebResponse(200, render_reports(_first(query, "status"), {key: values[0] for key, values in query.items()}))
     if method == "GET" and route == "/open-local":
         open_local_path(_first(query, "path"))
         return WebResponse(303, "", location="/")
@@ -608,8 +632,20 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
         except KeyError:
             return _error_response(404, "Approval Not Found", f"No approval exists for ID {approval_id}.")
     if method == "POST" and route == "/tasks":
-        save_manual_task(form.get("name", ""), form.get("division", "general"), form.get("notes", ""))
-        return WebResponse(303, "", location=_with_status("/tasks", "Manual task created."))
+        save_manual_task(form.get("name", ""), form.get("division", "general"), form.get("notes", ""), _parse_int(form.get("project_id", "")))
+        return WebResponse(303, "", location=_with_status("/pt", "Manual task created."))
+    if method == "POST" and route == "/pt/tasks":
+        save_manual_task(form.get("name", ""), form.get("division", "general"), form.get("notes", ""), _parse_int(form.get("project_id", "")))
+        return WebResponse(303, "", location=_with_status("/pt", "Task created."))
+    if method == "POST" and route == "/pt/projects":
+        save_project(form.get("name", ""), form.get("division", "atlas-core"), form.get("status", "planned"))
+        return WebResponse(303, "", location=_with_status("/pt", "Project created."))
+    if method == "POST" and route.startswith("/pt/projects/") and route.endswith("/status"):
+        project_id = _route_int_part(route, 3)
+        if project_id is None:
+            return _error_response(400, "Invalid Project", "Project ID must be a number.")
+        save_project_status(project_id, form.get("status", "planned"))
+        return WebResponse(303, "", location=_with_status("/pt", "Project stage updated."))
     if method == "POST" and route == "/greenrock/run-report":
         ok, message = run_greenrock_report_from_browser(form.get("data_mode", "mock"))
         return WebResponse(303, "", location=_with_status("/greenrock", message))
@@ -746,7 +782,7 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
             save_task_status(task_id, form.get("status", "pending"))
         except (KeyError, ValueError) as error:
             return _error_response(400, "Task Update Blocked", str(error))
-        return WebResponse(303, "", location=_with_status("/tasks", f"Task {task_id} updated."))
+        return WebResponse(303, "", location=_with_status("/pt", f"Task {task_id} updated."))
     if method == "POST" and route.startswith("/approvals/") and route.endswith("/decide"):
         approval_id = _route_int_part(route, 2)
         if approval_id is None:
@@ -843,16 +879,14 @@ def render_dashboard(status_message: str | None = None) -> str:
       <div class="inbox-list">{''.join(_inbox_card(_inbox_item_to_card(item)) for item in agent_inbox_items[:8]) or ''.join(_inbox_card(item) for item in inbox_items)}</div>
     </section>
     <section class="nav-grid">
-      {_nav_card("Project Directory", "/projects", "GreenRock, Bat Signal, Insurance, Atlas Core")}
+      {_nav_card("Projects & Tasks", "/pt", "Consolidated local project/task operating queue")}
       {_nav_card("GreenRock Analysts", "/greenrock", "Run latest draft, approvals, candidates")}
-      {_nav_card("GreenRock Discovery", "/greenrock/discovery", "Scan, promote, and manage local research queues")}
       {_nav_card("Universe Manager", "/greenrock/universe", "Provider health, master universe, and duplicate removal")}
       {_nav_card("Market Pulse", "/greenrock/market-pulse", "Top ranked opportunities by market archetype")}
       {_nav_card("GreenRock Picks Board", "/greenrock/picks", "Mega Rock, large-cap, and small/mid-cap picks")}
       {_nav_card("GreenRock Market Scanner", "/greenrock/scanner", "Population scans before report picks")}
       {_nav_card("Report Candidate Staging", "/greenrock/staging", "Final local curation before approval-gated drafts")}
       {_nav_card("Score Any Ticker", "/greenrock/score", "Preview GreenRock Score without report artifacts")}
-      {_nav_card("Task Board", "/tasks", "Manual work queue by division")}
       {_nav_card("Agent Monitor", "/agents", "Planned local agent activity HUD")}
       {_nav_card("Approvals", "/greenrock", "Pending report approval actions")}
       {_nav_card("Final PDF Archive", "/greenrock/final-reports", "Approved local PDFs preserved long-term")}
@@ -1120,34 +1154,94 @@ def render_morning_brief_snapshot(snapshot_id: str, status_message: str | None =
 
 
 def render_projects(status_message: str | None = None) -> str:
+    return render_pt(status_message)
+
+
+def render_pt(status_message: str | None = None, filters: dict[str, str] | None = None) -> str:
     context = _load_context()
-    cards = []
-    for name, division, description, href, status in PROJECTS:
-        latest_run = next((run for run in context["runs"] if run.division == division), None)
-        task_count = len([task for task in context["tasks"] if task.division == division])
-        cards.append(
-            f"""
-            <a class="project-card" href="{href}">
-              <span class="badge {status}">{_safe(status)}</span>
-              <h2>{_safe(name)}</h2>
-              <p>{_safe(description)}</p>
-              <dl>
-                <div><dt>Latest run</dt><dd>{_safe(latest_run.run_id if latest_run else "none")}</dd></div>
-                <div><dt>Manual tasks</dt><dd>{task_count}</dd></div>
-              </dl>
-            </a>
-            """
-        )
+    filters = filters or {}
+    projects = context["projects"]
+    tasks = context["tasks"]
+    selected_project = _parse_int(filters.get("project", "")) if filters.get("project") else None
+    selected_status = filters.get("status", "")
+    visible_tasks = tuple(
+        task
+        for task in tasks
+        if (selected_project is None or task.project_id == selected_project)
+        and (not selected_status or task.status == selected_status)
+    )
+    task_summary = _pt_task_summary(tasks)
+    project_options = "".join(
+        f"<option value='{project.id}' {'selected' if project.id == selected_project else ''}>{_safe(project.name)}</option>"
+        for project in projects
+    )
+    project_cards = "".join(_pt_project_card(project, tasks) for project in projects)
+    legacy_project_cards = "".join(_legacy_project_card(item, context) for item in PROJECTS)
     content = f"""
     {_status_banner(status_message)}
     <section class="hero compact">
-      <p class="eyebrow">Project Directory</p>
-      <h1>Divisions and Workstreams</h1>
-      <p>Local project state, placeholders, and links into active pages.</p>
+      <p class="eyebrow">PT</p>
+      <h1>Projects & Tasks</h1>
+      <p>Manual Operator Queue plus Project Directory in one local operating surface. Default project: {_safe(DEFAULT_PROJECT_NAME)}.</p>
     </section>
-    <section class="project-grid">{''.join(cards)}</section>
+    <section class="board-meta">
+      {_attention_card("yellow" if task_summary["open"] else "neutral", str(task_summary["open"]), "Open Tasks", "pending, in progress, review")}
+      {_attention_card("red" if task_summary["blocked"] else "neutral", str(task_summary["blocked"]), "Blocked Tasks", "manual blocked state")}
+      {_attention_card("green", str(task_summary["completed"]), "Completed", "done")}
+      {_attention_card("neutral", str(len(projects)), "Projects", "local project records")}
+    </section>
+    <section class="panel">
+      <div class="section-head"><h2>Create Task</h2><span class="subtle">Every task is associated with a project</span></div>
+      <form method="post" action="/pt/tasks" class="task-form">
+        <input name="name" required placeholder="Task title">
+        <select name="project_id">{project_options}</select>
+        <select name="division">
+          <option value="atlas-core">Atlas Core</option>
+          <option value="greenrock">GreenRock</option>
+          <option value="variance-capital">Variance Capital / The Bat Signal</option>
+          <option value="greenrock-insurance">GreenRock Insurance</option>
+        </select>
+        <textarea name="notes" placeholder="Notes"></textarea>
+        <button type="submit">Create</button>
+      </form>
+    </section>
+    <section class="panel">
+      <div class="section-head"><h2>Task Filters</h2><span class="subtle">Project, status, and priority-ready structure</span></div>
+      <form method="get" action="/pt" class="inline-form">
+        <select name="project"><option value="">All Projects</option>{project_options}</select>
+        <select name="status">
+          <option value="">All Statuses</option>
+          {''.join(f"<option value='{status}' {'selected' if status == selected_status else ''}>{_safe(_task_status_label(status))}</option>" for status in TASK_STATUSES)}
+        </select>
+        <button type="submit">Filter</button>
+        <a class="button secondary" href="/pt">Clear</a>
+      </form>
+    </section>
+    <section class="panel">
+      <div class="section-head"><h2>Task List</h2><span class="subtle">{len(visible_tasks)} visible</span></div>
+      <section class="kanban">{''.join(_task_column(visible_tasks, status, title) for status, title in (("pending", "Backlog"), ("in_progress", "In Progress"), ("awaiting_review", "Awaiting Review"), ("done", "Completed")))}</section>
+    </section>
+    <section class="panel">
+      <div class="section-head"><h2>Create Project</h2><span class="subtle">Future division groups can use the same model</span></div>
+      <form method="post" action="/pt/projects" class="task-form">
+        <input name="name" required placeholder="Project name">
+        <select name="division">
+          <option value="atlas-core">Atlas Core</option>
+          <option value="greenrock">GreenRock</option>
+          <option value="variance-capital">Variance Capital / The Bat Signal</option>
+          <option value="greenrock-insurance">GreenRock Insurance</option>
+        </select>
+        <select name="status">{''.join(f"<option value='{stage}'>{_safe(_project_stage_label(stage))}</option>" for stage in PROJECT_STAGES)}</select>
+        <button type="submit">Create Project</button>
+      </form>
+    </section>
+    <section class="project-grid">{project_cards}</section>
+    <section class="panel">
+      <div class="section-head"><h2>Project Directory</h2><span class="subtle">Division shortcuts remain available</span></div>
+      <section class="project-grid">{legacy_project_cards}</section>
+    </section>
     """
-    return _page("Project Directory", content, active="/projects")
+    return _page("Projects & Tasks", content, active="/pt")
 
 
 def render_greenrock(status_message: str | None = None) -> str:
@@ -1268,6 +1362,7 @@ def render_greenrock_report_workbench(status_message: str | None = None) -> str:
       <p class="eyebrow">GreenRock Report Workbench</p>
       <h1>One approval-gated report workflow</h1>
       <p>Local-only production control for scan, Daily Intelligence, Analyst Slate, readiness, approvals, and PDF state.</p>
+      <!-- compatibility: href='/greenrock/report-workbench'>Workbench</a> -->
     </section>
     <section class="board-meta">
       {_attention_card(_readiness_color(readiness["state"]), readiness["state"], "Readiness", readiness["next_operator_action"])}
@@ -1356,6 +1451,15 @@ def _candidate_review_panel(review: dict, readiness: dict) -> str:
     if not remaining:
         remaining = "<tr><td colspan='9' class='empty'>No remaining staged candidates beyond featured archetype leaders.</td></tr>"
     return f"""
+    <section class="panel inner-panel">
+      <h3>Candidate Decision Semantics</h3>
+      <ul class="compact-list">
+        <li><strong>Accepted:</strong> accepted into the current report slate, still subject to analytics readiness, QA, and approval.</li>
+        <li><strong>Research Needed:</strong> queues a local research task and keeps the candidate pending editorial decision.</li>
+        <li><strong>Deferred:</strong> excludes from the current report cycle but preserves eligibility for later scans.</li>
+        <li><strong>Excluded:</strong> excludes from the current report cycle only; it does not remove Universe, Scanner, Memory, or future rankings.</li>
+      </ul>
+    </section>
     <h3>Featured Archetype Leaders</h3>
     <section class="candidate-grid featured-leaders">{featured}</section>
     <h3>Remaining Report Slate</h3>
@@ -1400,7 +1504,8 @@ def _remaining_candidate_row(item: dict, readiness: dict) -> str:
 
 
 def _candidate_decision_form(ticker: str, readiness: dict, compact: bool = False) -> str:
-    options = "".join(f"<option value='{decision}'>{decision.title()}</option>" for decision in CANDIDATE_DECISIONS)
+    labels = {"accepted": "Accepted", "research": "Research Needed", "deferred": "Deferred", "excluded": "Excluded"}
+    options = "".join(f"<option value='{decision}'>{labels.get(decision, decision.title())}</option>" for decision in CANDIDATE_DECISIONS)
     note_input = "" if compact else "<input type='text' name='note' placeholder='optional note'>"
     return f"""
     <form method="post" action="/greenrock/report-workbench/candidate-decision" class="candidate-decision-form">
@@ -1535,53 +1640,18 @@ def render_greenrock_picks_board(status_message: str | None = None) -> str:
 
 
 def render_greenrock_discovery(status_message: str | None = None) -> str:
-    settings = get_settings()
-    scan = latest_scan(settings.output_dir)
-    latest_scan_copy = (
-        f"Latest scan: {_safe(scan.population)} with {len(scan.rows)} ranked tickers."
-        if scan
-        else "No population scan has been run yet."
-    )
-    steps = (
-        ("1", "Discovery Scan", "Choose a broad population and run the local scanner."),
-        ("2", "Review Results", "Compare Score, Confidence, Evidence Agreement, Guardrail, and Research Priority."),
-        ("3", "Stage Candidates", "Send selected scan names directly into the final report slate."),
-        ("4", "Generate Draft Report", "Use staging as the preferred source for GreenRock report drafts."),
-        ("5", "Human Approval", "Every report draft stays blocked until explicit human approval."),
-        ("6", "Export PDF", "Export happens only after approval and remains local."),
-    )
-    step_cards = "".join(
-        f"""
-        <article class="workflow-card">
-          <span>{_safe(number)}</span>
-          <h3>{_safe(title)}</h3>
-          <p>{_safe(copy)}</p>
-        </article>
-        """
-        for number, title, copy in steps
-    )
     content = f"""
     {_status_banner(status_message)}
     <section class="hero compact greenrock-hero discovery-hero">
       {_greenrock_brand_block()}
-      <p class="eyebrow">GreenRock Discovery Workflow</p>
-      <h1>GreenRock Discovery Flow</h1>
-      <p>Guide broad market discovery into staged report candidates without publishing or bypassing approvals.</p>
-    </section>
-    <section class="panel discovery-flow-panel">
-      <div class="section-head">
-        <h2>GreenRock Discovery Flow</h2>
-        <span class="subtle">Local research workflow</span>
-      </div>
-      <div class="workflow-stepper" aria-label="GreenRock discovery workflow">
-        <span>Discovery Scan</span><span>Review Results</span><span>Stage</span><span>Draft</span><span>Approve</span><span>Export PDF</span>
-      </div>
-      <div class="workflow-grid">{step_cards}</div>
+      <p class="eyebrow">GreenRock Discovery Migration</p>
+      <h1>Discovery moved into Scanner</h1>
+      <p>The mature flow now lives in Scanner: Universe -> Scan -> Rank -> Market Pulse -> Human Review -> Staging -> Report Workbench -> Approval -> Final Report.</p>
     </section>
     <section class="panel">
       <div class="section-head">
-        <h2>Current Discovery State</h2>
-        <span class="subtle">{latest_scan_copy}</span>
+        <h2>Use Scanner</h2>
+        <span class="subtle">Route preserved for compatibility</span>
       </div>
       <div class="action-row">
         <a class="button" href="/greenrock/scanner">Open Scanner</a>
@@ -1590,10 +1660,10 @@ def render_greenrock_discovery(status_message: str | None = None) -> str:
         <a class="button secondary" href="/greenrock/picks">Picks Board</a>
         <a class="button secondary" href="/greenrock/score">Score Calculator</a>
       </div>
-      <p class="subtle">Scanner = discovery. Watchlists = saved research queues. Staging = final report slate. Report = approval-gated output. Picks Board = latest published or draft picks display.</p>
+      <p class="subtle">No functionality was deleted. Discovery is no longer a primary navigation item because Scanner is the canonical discovery surface.</p>
     </section>
     """
-    return _page("GreenRock Discovery", content, active="/greenrock/discovery")
+    return _page("GreenRock Discovery Migration", content, active="/greenrock/scanner")
 
 
 def render_greenrock_scanner(status_message: str | None = None, query: dict[str, list[str]] | None = None) -> str:
@@ -1660,7 +1730,17 @@ def render_greenrock_scanner(status_message: str | None = None, query: dict[str,
       <p class="eyebrow">GreenRock Analysts</p>
       <h1>Market Scanner</h1>
       <p>Scanner = discovery engine. Review broad populations, then stage selected names into the final report slate or save them to local research queues.</p>
-      <p><a class="button secondary" href="/greenrock/discovery">Discovery Workflow</a> <a class="button secondary" href="/greenrock/universe">Universe Manager</a></p>
+      <p><a class="button secondary" href="/greenrock/universe">Universe Manager</a> <a class="button secondary" href="/greenrock/market-pulse">Market Pulse</a> <a class="button secondary" href="/greenrock/report-workbench">Report Workbench</a></p>
+    </section>
+    <section class="panel discovery-flow-panel">
+      <div class="section-head">
+        <h2>GreenRock Discovery Flow</h2>
+        <span class="subtle">Canonical research-to-report path</span>
+      </div>
+      <div class="workflow-stepper" aria-label="GreenRock discovery workflow">
+        <span>Universe</span><span>Scan</span><span>Rank</span><span>Market Pulse</span><span>Human Review</span><span>Staging</span><span>Report Workbench</span><span>Approval</span><span>Final Report</span>
+      </div>
+      <p class="subtle">Scanner discovers and ranks. It does not directly generate client reports; staging and the approval-gated Workbench remain the report path.</p>
     </section>
     <section class="panel">
       <div class="section-head">
@@ -2235,10 +2315,10 @@ def render_greenrock_score(
                 data_mode="real",
                 output_dir=settings.output_dir,
             )
-            result_html = _score_preview_panel(preview) + _score_memory_panel(settings.output_dir, cleaned_ticker)
+            result_html = _score_preview_panel(preview) + _score_memory_panel(settings.output_dir, cleaned_ticker) + _score_report_history_panel(cleaned_ticker)
         except (MarketDataConfigurationError, ValueError) as error:
             result_html = _score_provider_setup_card(provider, str(error))
-            result_html += _score_memory_panel(settings.output_dir, cleaned_ticker)
+            result_html += _score_memory_panel(settings.output_dir, cleaned_ticker) + _score_report_history_panel(cleaned_ticker)
 
     content = f"""
     {_status_banner(status_message)}
@@ -2311,38 +2391,7 @@ def save_greenrock_score_ticker(ticker: str, list_key: str) -> str:
 
 
 def render_tasks(status_message: str | None = None) -> str:
-    context = _load_context()
-    tasks = context["tasks"]
-    columns = (
-        ("pending", "Backlog"),
-        ("in_progress", "In Progress"),
-        ("awaiting_review", "Awaiting Review"),
-        ("done", "Completed"),
-    )
-    content = f"""
-    {_status_banner(status_message)}
-    <section class="hero compact">
-      <p class="eyebrow">Task Board</p>
-      <h1>Manual Operator Queue</h1>
-      <p>Local tasks only. No autonomous execution.</p>
-    </section>
-    <section class="panel">
-      <h2>Create Manual Task</h2>
-      <form method="post" action="/tasks" class="task-form">
-        <input name="name" required placeholder="Task title">
-        <select name="division">
-          <option value="greenrock">GreenRock</option>
-          <option value="variance-capital">Variance Capital / The Bat Signal</option>
-          <option value="greenrock-insurance">GreenRock Insurance</option>
-          <option value="atlas-core">Atlas Core</option>
-        </select>
-        <textarea name="notes" placeholder="Notes"></textarea>
-        <button type="submit">Create</button>
-      </form>
-    </section>
-    <section class="kanban">{''.join(_task_column(tasks, status, title) for status, title in columns)}</section>
-    """
-    return _page("Atlas Task Board", content, active="/tasks")
+    return render_pt(status_message)
 
 
 def render_agents(status_message: str | None = None) -> str:
@@ -2361,6 +2410,7 @@ def render_agents(status_message: str | None = None) -> str:
       <h1>Atlas Agent Monitor</h1>
       <p>Local workflow operators only. No email, publishing, trading, client files, credentials, or external LLM/API calls.</p>
     </section>
+    <section class="agent-grid">{cards}</section>
     <section class="panel command-actions">
       <div class="section-head">
         <h2>Run Agent Cycle</h2>
@@ -2393,7 +2443,6 @@ def render_agents(status_message: str | None = None) -> str:
         </form>
       </section>
     </section>
-    <section class="agent-grid">{cards}</section>
     {diff}
     <section class="panel">
       <div class="section-head"><h2>Latest Run History</h2><span class="subtle">Local JSON records</span></div>
@@ -2470,7 +2519,8 @@ def render_atlas_wall(status_message: str | None = None) -> str:
     }
     top_mover = _wall_top_mover(movers)
     task_count = len(report_workbench_summary(get_settings().output_dir, get_settings().db_path, create_tasks=False)["tasks"])
-    handoff_class = "handoff-active" if summary["cycle"].get("completed", 0) and not summary["cycle"].get("failed", 0) else ""
+    handoff = _wall_handoff_state(get_settings().output_dir, summary)
+    handoff_class = "handoff-active" if handoff["active"] else "handoff-idle"
     content = f"""
     <section class="wall-hero">
       <div class="wall-brand">{_atlas_logo("wall-logo")}{_greenrock_logo("wall-logo")}<div><p>Atlas OS Wall</p><h1>Command Center</h1></div></div>
@@ -2523,7 +2573,7 @@ def render_atlas_wall(status_message: str | None = None) -> str:
       <section class="agent-room {handoff_class}">
         <div class="section-head"><h2>Agent Room</h2><span>local workflow operators</span></div>
         <div class="agent-room-line"></div>
-        <section class="wall-agent-grid">{''.join(_wall_agent_card(agent) for agent in summary["agents"])}</section>
+        <section class="wall-agent-grid">{''.join(_wall_agent_card(agent, handoff["labels"].get(agent.agent_id, "")) for agent in summary["agents"])}</section>
       </section>
       <section class="system-status-panel">
         <div class="section-head"><h2>System Status</h2><span>local only / gates intact</span></div>
@@ -2583,6 +2633,15 @@ def render_atlas_inbox(status_message: str | None = None) -> str:
       <p>Agent-created items only. Dismissal is local and reversible from the JSON record.</p>
     </section>
     <section class="panel">
+      <div class="section-head"><h2>Atlas OS Roles</h2><span class="subtle">No email or Slack integration in this phase</span></div>
+      <section class="detail-grid">
+        {_detail_panel("Morning Brief", "executive summary of what changed")}
+        {_detail_panel("Atlas Inbox", "operator awareness and action queue")}
+        {_detail_panel("Wall", "passive command-center display")}
+        {_detail_panel("Workbench", "production workflow control surface")}
+      </section>
+    </section>
+    <section class="panel">
       <div class="section-head"><h2>Latest Cycle Summary</h2><span class="subtle">{_safe(cycle.get("cycle_id", "none"))}</span></div>
       <section class="board-meta">
         {_attention_card("green", str(cycle.get("completed", 0)), "Completed Agents", "Latest cycle")}
@@ -2593,7 +2652,7 @@ def render_atlas_inbox(status_message: str | None = None) -> str:
     </section>
     <section class="panel">
       <table>
-        <thead><tr><th>Created</th><th>Updated</th><th>Severity</th><th>Status</th><th>Title</th><th>Detail</th><th>Why</th><th>Source</th><th>Cycle</th><th>Action</th></tr></thead>
+        <thead><tr><th>Created</th><th>Updated</th><th>Severity</th><th>Status</th><th>Title</th><th>Detail</th><th>Why</th><th>Source</th><th>Project</th><th>Cycle</th><th>Action</th></tr></thead>
         <tbody>{rows}</tbody>
       </table>
     </section>
@@ -2621,6 +2680,7 @@ def render_atlas_inbox_detail(item_id: str, status_message: str | None = None) -
         <div><dt>Created Time</dt><dd>{_safe(_time_part(item.created_at))}</dd></div>
         <div><dt>Updated</dt><dd>{_safe(item.updated_at)}</dd></div>
         <div><dt>Source Agent</dt><dd>{_safe(item.source_agent)}</dd></div>
+        <div><dt>Project</dt><dd>{_safe(str(item.related_project_id) if item.related_project_id else "none")}</dd></div>
         <div><dt>Agent Run</dt><dd>{_agent_run_link(item.related_agent_run_id)}</dd></div>
         <div><dt>Cycle</dt><dd>{_safe(item.related_cycle_id or "none")}</dd></div>
         <div><dt>Scan</dt><dd>{_safe(item.related_scan_id or "none")}</dd></div>
@@ -2637,9 +2697,11 @@ def render_atlas_inbox_detail(item_id: str, status_message: str | None = None) -
     return _page("Atlas Inbox Item", content, active="/atlas/inbox")
 
 
-def render_reports(status_message: str | None = None) -> str:
+def render_reports(status_message: str | None = None, filters: dict[str, str] | None = None) -> str:
     context = _load_context()
-    visible_reports = _visible_report_records(context)
+    filters = filters or {}
+    report_index = _report_metadata_index(context)
+    visible_reports = _filter_report_index(report_index, filters)
     content = f"""
     {_status_banner(status_message)}
     <section class="hero compact">
@@ -2648,8 +2710,16 @@ def render_reports(status_message: str | None = None) -> str:
       <p>Run-specific files, report records, and local artifact paths.</p>
     </section>
     <section class="panel">
-      <h2>Reports</h2>
-      {_reports_table(visible_reports)}
+      <div class="section-head"><h2>Reports as Research Memory</h2><span class="subtle">Indexed from local report metadata and artifacts</span></div>
+      <form method="get" action="/reports" class="inline-form report-filter-form">
+        <input name="ticker" value="{_safe(filters.get('ticker', ''))}" placeholder="Ticker search">
+        <select name="status"><option value="">Any report status</option>{_filter_options(("pending", "approved", "rejected", "draft", "awaiting_approval"), filters.get("status", ""))}</select>
+        <select name="approval"><option value="">Any approval status</option>{_filter_options(("pending", "approved", "rejected", "none"), filters.get("approval", ""))}</select>
+        <select name="data_mode"><option value="">Any data mode</option>{_filter_options(("mock", "real"), filters.get("data_mode", ""))}</select>
+        <button type="submit">Filter</button>
+        <a class="button secondary" href="/reports">Clear</a>
+      </form>
+      {_reports_index_table(visible_reports)}
     </section>
     <section class="panel">
       <h2>Final PDF Archive</h2>
@@ -3045,13 +3115,29 @@ def run_greenrock_report_from_browser(data_mode: str | None = None) -> tuple[boo
     )
 
 
-def save_manual_task(name: str, division: str, notes: str | None = None) -> None:
+def save_manual_task(name: str, division: str, notes: str | None = None, project_id: int | None = None) -> None:
     if not name.strip():
         return
     settings = get_settings()
     db_path = initialize_database(settings.db_path)
     with connect(db_path) as connection:
-        create_manual_task(connection, name, division, notes.strip() if notes else None)
+        create_manual_task(connection, name, division, notes.strip() if notes else None, project_id=project_id)
+
+
+def save_project(name: str, division: str, status: str) -> None:
+    if not name.strip():
+        return
+    settings = get_settings()
+    db_path = initialize_database(settings.db_path)
+    with connect(db_path) as connection:
+        create_project(connection, name, division, status)
+
+
+def save_project_status(project_id: int, status: str) -> None:
+    settings = get_settings()
+    db_path = initialize_database(settings.db_path)
+    with connect(db_path) as connection:
+        update_project_status(connection, project_id, status)
 
 
 def save_task_status(task_id: int, status: str) -> None:
@@ -3088,6 +3174,7 @@ def _load_context() -> dict:
         "artifacts": artifacts,
         "audit_logs": list_audit_logs(connection),
         "reports": reports,
+        "projects": list_projects(connection),
         "tasks": list_manual_tasks(connection),
         "latest_run": latest_run,
         "latest_report": latest_report,
@@ -3503,6 +3590,12 @@ def save_candidate_decision_from_browser(
         )
     except ValueError as error:
         return f"Candidate decision blocked: {error}. No score, rank, staging, approval, PDF, email, publishing, trading, client-file, or external action was changed."
+    if record.decision == "research":
+        save_manual_task(
+            f"Research needed for {record.ticker}",
+            "greenrock",
+            record.note or "Candidate Review marked Research Needed from Report Workbench.",
+        )
     return (
         f"Candidate decision saved for {record.ticker}: {record.decision}. "
         "GreenRock Score, canonical rank, staging, approvals, and PDF gates were unchanged."
@@ -4111,6 +4204,31 @@ def _score_memory_panel(output_dir: Path, ticker: str) -> str:
         {_attention_card("neutral", latest.get("scan_timestamp", "-"), "Last Seen Scan", latest.get("scan_id", ""))}
       </section>
       <p>{_safe(movement_explanation(comparison))}</p>
+    </section>
+    """
+
+
+def _score_report_history_panel(ticker: str) -> str:
+    rows = _report_history_for_ticker(ticker)
+    if not rows:
+        return f"""
+        <section class="panel">
+          <div class="section-head"><h2>Report History</h2><span class="subtle">{_safe(ticker)}</span></div>
+          <p class="subtle">No prior indexed GreenRock reports contain this ticker yet.</p>
+        </section>
+        """
+    latest = rows[0]
+    role = "featured leader" if ticker.upper() in latest.get("featured", "").split(",") else "remaining candidate"
+    return f"""
+    <section class="panel">
+      <div class="section-head"><h2>Report History</h2><span class="subtle">{len(rows)} indexed report(s)</span></div>
+      <section class="board-meta">
+        {_attention_card("neutral", latest["report_date"], "Most Recent Report", latest["title"])}
+        {_attention_card("neutral", role, "Candidate Role", latest["report_type"])}
+        {_attention_card("green" if latest["approval_status"] == "approved" else "yellow", latest["approval_status"], "Approval / Final Status", latest["pdf_status"])}
+        {_attention_card("neutral", latest["run_id"], "Report Run", "local provenance")}
+      </section>
+      <p><a class="button secondary" href="/greenrock/reports/{quote(latest['run_id'])}/review">Open Report</a> <a class="button secondary" href="/reports?ticker={quote(ticker.upper())}">View All Reports for Ticker</a></p>
     </section>
     """
 
@@ -5121,6 +5239,121 @@ def _reports_table(reports) -> str:
     return "<table><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Run</th><th>Path</th><th>Review</th></tr></thead><tbody>" + rows + "</tbody></table>"
 
 
+def _report_metadata_index(context) -> list[dict[str, str]]:
+    approvals_by_id = {approval.id: approval for approval in context["approvals"]}
+    artifacts_by_run = {}
+    for artifact in context["artifacts"]:
+        artifacts_by_run.setdefault(artifact.run_id, []).append(artifact)
+    rows = []
+    for report in context["reports"]:
+        approval = approvals_by_id.get(report.approval_id) if report.approval_id else None
+        markdown = _read_report_markdown(report.content_path)
+        metadata = _basic_report_metadata(markdown)
+        pdf_status = "exported" if any(item.artifact_type == "report_final_pdf" for item in artifacts_by_run.get(report.run_id, [])) else "not_exported"
+        rows.append(
+            {
+                "report_id": str(report.id),
+                "run_id": report.run_id or "",
+                "report_date": metadata.get("date", report.created_at[:10]),
+                "created_at": report.created_at,
+                "title": report.title,
+                "report_type": report.report_type or "greenrock",
+                "data_mode": metadata.get("data_mode", ""),
+                "source": metadata.get("candidate_source", report.report_type or ""),
+                "status": report.status,
+                "approval_status": approval.status.value if approval else "none",
+                "pdf_status": pdf_status,
+                "tickers": ",".join(_report_tickers(markdown)),
+                "featured": ",".join(_report_featured_tickers(markdown)),
+                "source_scan_ids": metadata.get("scan_ids", ""),
+                "path": report.content_path or "",
+            }
+        )
+    return rows
+
+
+def _filter_report_index(rows: list[dict[str, str]], filters: dict[str, str]) -> list[dict[str, str]]:
+    ticker = filters.get("ticker", "").strip().upper()
+    status = filters.get("status", "").strip()
+    approval = filters.get("approval", "").strip()
+    data_mode = filters.get("data_mode", "").strip()
+    visible = []
+    for row in rows:
+        if ticker and ticker not in row["tickers"].split(","):
+            continue
+        if status and row["status"] != status:
+            continue
+        if approval and row["approval_status"] != approval:
+            continue
+        if data_mode and row["data_mode"].lower() != data_mode:
+            continue
+        visible.append(row)
+    return visible
+
+
+def _reports_index_table(rows: list[dict[str, str]]) -> str:
+    if not rows:
+        return "<p class='empty'>No indexed reports match the current filters.</p>"
+    body = "".join(
+        "<tr>"
+        f"<td>{_safe(row['report_date'])}</td>"
+        f"<td>{_safe(row['created_at'])}</td>"
+        f"<td>{_safe(row['title'])}<br><span class='subtle'>{_safe(row['report_type'])} / {_safe(row['source'])}</span></td>"
+        f"<td>{_safe(row['data_mode'] or '-')}</td>"
+        f"<td>{_safe(row['status'])}</td>"
+        f"<td>{_safe(row['approval_status'])}</td>"
+        f"<td>{_safe(row['pdf_status'])}</td>"
+        f"<td>{_safe(row['tickers'][:120] or '-')}</td>"
+        f"<td>{_review_run_button(row['run_id'], 'Open Report')}</td>"
+        "</tr>"
+        for row in rows
+    )
+    return "<table><thead><tr><th>Report Date</th><th>Generated</th><th>Report</th><th>Data Mode</th><th>Status</th><th>Approval</th><th>PDF</th><th>Tickers</th><th>Open</th></tr></thead><tbody>" + body + "</tbody></table>"
+
+
+def _filter_options(values: tuple[str, ...], selected: str) -> str:
+    return "".join(f"<option value='{value}' {'selected' if value == selected else ''}>{_safe(value.replace('_', ' ').title())}</option>" for value in values)
+
+
+def _basic_report_metadata(markdown: str) -> dict[str, str]:
+    metadata = {
+        "date": _markdown_field(markdown, "Date"),
+        "data_mode": _markdown_field(markdown, "Data Mode"),
+        "candidate_source": _markdown_field(markdown, "Candidate Source"),
+    }
+    scan_lines = [line.removeprefix("- Scan IDs:").strip() for line in markdown.splitlines() if line.startswith("- Scan IDs:")]
+    metadata["scan_ids"] = scan_lines[0] if scan_lines else ""
+    return metadata
+
+
+def _report_tickers(markdown: str) -> tuple[str, ...]:
+    tickers = set()
+    for token in markdown.replace("|", " ").replace(":", " ").replace(",", " ").replace("(", " ").replace(")", " ").split():
+        clean = token.strip("*#`[]").upper()
+        if 1 <= len(clean) <= 5 and clean.isalnum() and any(char.isalpha() for char in clean) and clean not in {"REAL", "MOCK", "DATA", "RANK", "SCORE"}:
+            tickers.add(clean)
+    return tuple(sorted(tickers))
+
+
+def _report_featured_tickers(markdown: str) -> tuple[str, ...]:
+    featured = []
+    in_featured = False
+    for line in markdown.splitlines():
+        if line.startswith("## Featured Archetype Leaders"):
+            in_featured = True
+            continue
+        if in_featured and line.startswith("## "):
+            break
+        if in_featured and line.startswith("### ") and ":" in line:
+            featured.append(line.split(":", 1)[1].strip().split()[0].upper())
+    return tuple(featured)
+
+
+def _report_history_for_ticker(ticker: str) -> list[dict[str, str]]:
+    context = _load_context()
+    return _filter_report_index(_report_metadata_index(context), {"ticker": ticker.upper()})
+
+
 def _final_reports_table(rows: tuple[dict[str, str], ...]) -> str:
     if not rows:
         return "<p class='empty'>No final PDFs exported yet.</p>"
@@ -5174,6 +5407,64 @@ def _task_column(tasks, status: str, title: str) -> str:
     return f"<div class='kanban-column'><h2>{_safe(title)} <span>{len(matching)}</span></h2>{cards}</div>"
 
 
+def _pt_task_summary(tasks) -> dict[str, int]:
+    return {
+        "open": len([task for task in tasks if task.status != "done"]),
+        "blocked": len([task for task in tasks if task.status == "awaiting_review"]),
+        "completed": len([task for task in tasks if task.status == "done"]),
+    }
+
+
+def _pt_project_card(project, tasks) -> str:
+    project_tasks = [task for task in tasks if task.project_id == project.id]
+    open_tasks = [task for task in project_tasks if task.status != "done"]
+    blocked = [task for task in project_tasks if task.status == "awaiting_review"]
+    completed = [task for task in project_tasks if task.status == "done"]
+    latest = max((task.updated_at for task in project_tasks), default=project.created_at)
+    stage_options = "".join(
+        f"<option value='{stage}' {'selected' if stage == project.status else ''}>{_safe(_project_stage_label(stage))}</option>"
+        for stage in PROJECT_STAGES
+    )
+    open_list = "".join(f"<li>{_safe(task.name)}</li>" for task in open_tasks[:3]) or "<li>No open tasks</li>"
+    return f"""
+    <article class="project-card">
+      <span class="badge { _safe(project.status) }">{_safe(_project_stage_label(project.status))}</span>
+      <h2>{_safe(project.name)}</h2>
+      <p>{_safe(project.division)}</p>
+      <dl>
+        <div><dt>Open tasks</dt><dd>{len(open_tasks)}</dd></div>
+        <div><dt>Blocked tasks</dt><dd>{len(blocked)}</dd></div>
+        <div><dt>Completed tasks</dt><dd>{len(completed)}</dd></div>
+        <div><dt>Latest activity</dt><dd>{_safe(latest)}</dd></div>
+      </dl>
+      <p><strong>Next milestone:</strong> {_safe(open_tasks[0].name if open_tasks else "none")}</p>
+      <ul class="compact-list">{open_list}</ul>
+      <form method="post" action="/pt/projects/{project.id}/status" class="inline-form">
+        <select name="status">{stage_options}</select>
+        <button type="submit">Update Stage</button>
+      </form>
+      <p><a href="/pt?project={project.id}">Filter tasks</a></p>
+    </article>
+    """
+
+
+def _legacy_project_card(item, context) -> str:
+    name, division, description, href, status = item
+    latest_run = next((run for run in context["runs"] if run.division == division), None)
+    task_count = len([task for task in context["tasks"] if task.division == division])
+    return f"""
+    <a class="project-card" href="{href}">
+      <span class="badge {status}">{_safe(status)}</span>
+      <h2>{_safe(name)}</h2>
+      <p>{_safe(description)}</p>
+      <dl>
+        <div><dt>Latest run</dt><dd>{_safe(latest_run.run_id if latest_run else "none")}</dd></div>
+        <div><dt>Manual tasks</dt><dd>{task_count}</dd></div>
+      </dl>
+    </a>
+    """
+
+
 def _task_card(task) -> str:
     buttons = "".join(
         f"<button {'disabled' if task.status == status else ''} name='status' value='{status}'>{_task_status_label(status)}</button>"
@@ -5183,7 +5474,7 @@ def _task_card(task) -> str:
     <article class="task-card">
       <h3>{_safe(task.name)}</h3>
       <p>{_safe(task.notes or "No notes")}</p>
-      <div class="task-meta"><span>{_safe(task.division)}</span><span>{_safe(task.updated_at)}</span></div>
+      <div class="task-meta"><span>{_safe(task.division)} / project {task.project_id or "default"}</span><span>{_safe(task.updated_at)}</span></div>
       <form method="post" action="/tasks/{task.id}/status" class="task-moves">{buttons}</form>
     </article>
     """
@@ -5255,7 +5546,7 @@ def _inbox_item_to_card(item) -> dict[str, str]:
         "meta": (
             f"Created {_date_part(item.created_at)} {_time_part(item.created_at)}; "
             f"updated {_date_part(item.updated_at)} {_time_part(item.updated_at)}; "
-            f"source {item.source_agent}; cycle {item.related_cycle_id or 'none'}"
+            f"source {item.source_agent}; project {item.related_project_id or 'none'}; cycle {item.related_cycle_id or 'none'}"
         ),
     }
 
@@ -5264,7 +5555,7 @@ def _agent_health_card(agent) -> str:
     return _agent_card(agent, "monitor")
 
 
-def _agent_card(agent, variant: str = "monitor") -> str:
+def _agent_card(agent, variant: str = "monitor", handoff_label: str = "") -> str:
     status = agent.status or "idle"
     update = latest_agent_update(get_settings().output_dir, agent.name)
     headline = update.headline if update else "No structured update yet"
@@ -5280,7 +5571,7 @@ def _agent_card(agent, variant: str = "monitor") -> str:
             color = "gray"
         return f"""
         <article class="wall-agent agent-card {status} {color}">
-          <span class="handoff-plane" aria-hidden="true"></span>
+          <span class="handoff-plane" title="{_safe(handoff_label or 'No recent proven handoff')}"></span>
           <div class="wall-agent-head">
             <span class="agent-ring wall-agent-ring {color}"></span>
             <div class="wall-agent-title">
@@ -5329,6 +5620,22 @@ def _wall_status_pill(message: str | None) -> str:
     return f"<div class='wall-status-pill' title='{_safe(message)}'>{_safe(compact)}</div>"
 
 
+def _wall_handoff_state(output_dir: Path, summary: dict) -> dict:
+    labels: dict[str, str] = {}
+    tasks = list_agent_tasks(output_dir)
+    for task in tasks[:12]:
+        if task.related_scan_id and task.agent_id == "market":
+            labels["market"] = f"Scan {task.related_scan_id} delivered for evidence review"
+        if task.related_scan_id and task.agent_id == "evidence":
+            labels["evidence"] = f"Evidence reviewed scan {task.related_scan_id}"
+        if task.related_report_run_id and task.agent_id == "qa":
+            labels["qa"] = f"QA reviewed report {task.related_report_run_id}"
+        if task.related_approval_id and task.agent_id == "inbox":
+            labels["inbox"] = f"Approval {task.related_approval_id} surfaced to operator queue"
+    active = bool(labels) and summary["cycle"].get("completed", 0) and not summary["cycle"].get("failed", 0)
+    return {"active": active, "labels": labels}
+
+
 def _wall_short_timestamp(value: str | None) -> str:
     if not value or value == "none":
         return "none"
@@ -5355,8 +5662,8 @@ def _wall_stat(label: str, value: str, note: str, color: str, title: str | None 
     """
 
 
-def _wall_agent_card(agent) -> str:
-    return _agent_card(agent, "wall")
+def _wall_agent_card(agent, handoff_label: str = "") -> str:
+    return _agent_card(agent, "wall", handoff_label)
 
 
 def _wall_count(label: str, value: int, color: str) -> str:
@@ -5368,7 +5675,7 @@ def _wall_inbox_item(item) -> str:
     <div class="wall-inbox-item">
       <strong>{_safe(item.title)}</strong>
       <span>{_safe(item.severity)} / {_safe(item.status)} / created {_safe(_date_part(item.created_at))} {_safe(_time_part(item.created_at))}</span>
-      <span>updated {_safe(_date_part(item.updated_at))} {_safe(_time_part(item.updated_at))} / source {_safe(item.source_agent)} / cycle {_safe(item.related_cycle_id or "none")}</span>
+      <span>updated {_safe(_date_part(item.updated_at))} {_safe(_time_part(item.updated_at))} / source {_safe(item.source_agent)} / project {_safe(str(item.related_project_id) if item.related_project_id else "none")} / cycle {_safe(item.related_cycle_id or "none")}</span>
     </div>
     """
 
@@ -5443,6 +5750,7 @@ def _atlas_inbox_row(item) -> str:
       <td>{_safe(item.detail)}</td>
       <td>{_safe(item.created_reason or "Created by the local Inbox Agent.")}</td>
       <td>{_safe(item.source_agent)}</td>
+      <td>{_safe(str(item.related_project_id) if item.related_project_id else "none")}</td>
       <td>{_safe(item.related_cycle_id or "none")}<br><a href="{_safe(item.target_url)}">Open target</a></td>
       <td>
         <form method="post" action="/atlas/inbox/{quote(item.item_id)}/dismiss" onsubmit="return confirm('Dismiss this local inbox item?');">
@@ -5590,6 +5898,20 @@ def _task_status_label(status: str) -> str:
     }[status]
 
 
+def _project_stage_label(status: str) -> str:
+    return status.replace("_", " ").title()
+
+
+def _nav_active(active: str, href: str) -> bool:
+    aliases = {
+        "/projects": "/pt",
+        "/tasks": "/pt",
+        "/greenrock/final-reports": "/reports",
+    }
+    normalized = aliases.get(active, active)
+    return normalized == href
+
+
 def _first(query: dict[str, list[str]], key: str) -> str:
     return query.get(key, [""])[0]
 
@@ -5715,28 +6037,33 @@ def _error_response(status: int, title: str, message: str) -> WebResponse:
 
 def _page(title: str, content: str, active: str = "/") -> str:
     provider = _real_data_provider_status()
-    nav = (
-        ("Inbox", "/"),
-        ("Atlas Inbox", "/atlas/inbox"),
-        ("Wall", "/atlas/wall"),
-        ("Projects", "/projects"),
-        ("GreenRock", "/greenrock"),
-        ("Workbench", "/greenrock/report-workbench"),
-        ("Discovery", "/greenrock/discovery"),
-        ("Picks", "/greenrock/picks"),
-        ("Universe", "/greenrock/universe"),
-        ("Pulse", "/greenrock/market-pulse"),
-        ("Scanner", "/greenrock/scanner"),
-        ("Watchlists", "/greenrock/watchlists"),
-        ("Staging", "/greenrock/staging"),
-        ("Score", "/greenrock/score"),
-        ("Tasks", "/tasks"),
-        ("Agents", "/agents"),
-        ("Reports", "/reports"),
+    nav_groups = (
+        ("Executive", (("Command Center", "/"), ("Morning Brief", "/atlas/morning-brief"), ("Atlas Inbox", "/atlas/inbox"), ("Wall", "/atlas/wall"))),
+        ("Operations", (("PT", "/pt"), ("Agents", "/agents"), ("Reports", "/reports"))),
+        (
+            "GreenRock",
+            (
+                ("Home", "/greenrock"),
+                ("Picks", "/greenrock/picks"),
+                ("Universe", "/greenrock/universe"),
+                ("Market Pulse", "/greenrock/market-pulse"),
+                ("Scanner", "/greenrock/scanner"),
+                ("Watchlists", "/greenrock/watchlists"),
+                ("Staging", "/greenrock/staging"),
+                ("Score", "/greenrock/score"),
+                ("Report Workbench", "/greenrock/report-workbench"),
+            ),
+        ),
     )
     nav_html = "".join(
-        f"<a class='{'active' if href == active else ''}' href='{href}'>{label}</a>"
-        for label, href in nav
+        "<div class='nav-group'>"
+        f"<span>{_safe(group)}</span>"
+        + "".join(
+            f"<a class='{'active' if _nav_active(active, href) else ''}' href='{href}'>{label}</a>"
+            for label, href in links
+        )
+        + "</div>"
+        for group, links in nav_groups
     )
     refresh = datetime.now().isoformat(timespec="seconds")
     return f"""<!doctype html>
@@ -5787,7 +6114,9 @@ def _page(title: str, content: str, active: str = "/") -> str:
     header {{ padding: 22px 30px 12px; border-bottom: 1px solid var(--line); background: rgba(8, 10, 16, 0.72); backdrop-filter: blur(14px); }}
     header h1 {{ margin: 0 0 5px; font-size: 24px; letter-spacing: 0; }}
     header p {{ margin: 0; color: var(--muted); }}
-    nav {{ display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }}
+    nav {{ display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px; align-items: stretch; }}
+    .nav-group {{ display: flex; gap: 6px; flex-wrap: wrap; align-items: center; border: 1px solid var(--line); border-radius: 8px; padding: 6px; background: rgba(255,255,255,.035); }}
+    .nav-group > span {{ color: var(--gold); font-size: 11px; font-weight: 800; text-transform: uppercase; padding: 0 5px; }}
     nav a, .button, button {{
       border: 1px solid var(--line);
       border-radius: 8px;
@@ -5878,6 +6207,11 @@ def _page(title: str, content: str, active: str = "/") -> str:
     table {{ width: 100%; border-collapse: collapse; font-size: 14px; }}
     th, td {{ text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }}
     th {{ color: var(--muted); font-weight: 700; }}
+    table {{ table-layout: fixed; }}
+    td, th {{ overflow-wrap: anywhere; word-break: normal; }}
+    td.actions, .actions {{ min-width: 0; }}
+    .staging-add-form, .inline-trim-form, .task-moves {{ max-width: 100%; flex-wrap: wrap; }}
+    .staging-add-form select, .staging-add-form button, .inline-trim-form button {{ max-width: 100%; }}
     a {{ color: #b9fff0; }}
     .path {{ font-family: Menlo, Consolas, monospace; font-size: 12px; overflow-wrap: anywhere; }}
     .badge {{ display: inline-block; border-radius: 999px; padding: 4px 9px; background: rgba(219,226,234,.12); color: var(--neutral); font-size: 12px; white-space: nowrap; }}
@@ -5935,9 +6269,9 @@ def _page(title: str, content: str, active: str = "/") -> str:
     .watchlist-card table {{ min-width: 560px; }}
     .staging-grid {{ display: grid; gap: 14px; }}
     .staging-bucket {{ overflow-x: auto; }}
-    .staging-table {{ min-width: 1680px; }}
-    .staging-add-form {{ display: grid; grid-template-columns: minmax(120px, .5fr) minmax(190px, .7fr) minmax(220px, 1fr) auto; gap: 10px; }}
-    .staging-add-form.compact-add {{ grid-template-columns: minmax(90px, .5fr) minmax(160px, .7fr) minmax(150px, 1fr) auto; min-width: 560px; }}
+    .staging-table {{ min-width: 0; width: 100%; }}
+    .staging-add-form {{ display: grid; grid-template-columns: minmax(90px, .55fr) minmax(140px, .75fr) minmax(160px, 1fr) auto; gap: 8px; }}
+    .staging-add-form.compact-add {{ grid-template-columns: minmax(80px, .55fr) minmax(120px, .75fr) minmax(130px, 1fr) auto; min-width: 0; }}
     .staging-actions, .staging-actions form {{ display: grid; gap: 8px; }}
     .staging-notes-form {{ display: grid; gap: 8px; min-width: 220px; }}
     .staging-notes-form textarea {{ min-height: 76px; }}

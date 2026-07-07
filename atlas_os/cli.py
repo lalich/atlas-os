@@ -31,6 +31,7 @@ from atlas_os.core.approvals import (
 )
 from atlas_os.core.artifacts import create_artifact, get_artifact, list_artifacts, list_artifacts_for_run
 from atlas_os.core.audit_log import create_audit_log, get_audit_log, list_audit_logs
+from atlas_os.core.manual_tasks import create_manual_task
 from atlas_os.core.reports import ReportRecord, list_reports, list_reports_for_run
 from atlas_os.core.workflow_runs import WorkflowRun, get_workflow_run, list_workflow_runs
 from atlas_os.core.workflow_steps import list_workflow_steps
@@ -1096,6 +1097,15 @@ def run_greenrock_candidate_decision(ticker: str, decision: str, note: str) -> i
     print(f"decision: {record.decision}")
     print(f"timestamp: {record.timestamp}")
     print(f"note: {record.note or '-'}")
+    if record.decision == "research":
+        with connect(initialize_database(settings.db_path)) as connection:
+            create_manual_task(
+                connection,
+                f"Research needed for {record.ticker}",
+                "greenrock",
+                record.note or "Candidate Review marked Research Needed from CLI.",
+            )
+        print("local_research_task: created")
     print("GreenRock Score, canonical rank, staging, approvals, PDF export, email, publishing, trading, client files, and external actions were unchanged.")
     return 0
 
@@ -2634,12 +2644,12 @@ def run_inbox_list() -> int:
     if not items:
         print("No open inbox items.")
         return 0
-    print("item_id created_date created_time updated_date updated_time severity source_agent related_cycle_id status title target_url")
+    print("item_id created_date created_time updated_date updated_time severity source_agent related_project_id related_cycle_id status title target_url")
     for item in items:
         print(
             f"{item.item_id} {_cli_date_part(item.created_at)} {_cli_time_part(item.created_at)} "
             f"{_cli_date_part(item.updated_at)} {_cli_time_part(item.updated_at)} {item.severity} {item.source_agent} "
-            f"{item.related_cycle_id or 'none'} {item.status} {item.title} {item.target_url}"
+            f"{item.related_project_id or 'none'} {item.related_cycle_id or 'none'} {item.status} {item.title} {item.target_url}"
         )
     return 0
 
@@ -2665,6 +2675,7 @@ def run_inbox_show(item_id: str) -> int:
     print(f"detail: {item.detail}")
     print(f"target_url: {item.target_url}")
     print(f"related_agent_run_id: {item.related_agent_run_id or 'none'}")
+    print(f"related_project_id: {item.related_project_id or 'none'}")
     print(f"related_cycle_id: {item.related_cycle_id or 'none'}")
     print(f"related_scan_id: {item.related_scan_id or 'none'}")
     print(f"related_report_run_id: {item.related_report_run_id or 'none'}")

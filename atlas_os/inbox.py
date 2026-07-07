@@ -31,6 +31,7 @@ class InboxItem:
     related_scan_id: str | None = None
     related_report_run_id: str | None = None
     related_approval_id: int | None = None
+    related_project_id: int | None = None
     created_reason: str = ""
 
 
@@ -76,6 +77,7 @@ def create_inbox_item(
     related_scan_id: str | None = None,
     related_report_run_id: str | None = None,
     related_approval_id: int | None = None,
+    related_project_id: int | None = None,
     created_reason: str = "",
 ) -> InboxItem:
     normalized_severity = severity if severity in INBOX_SEVERITIES else "info"
@@ -94,6 +96,7 @@ def create_inbox_item(
         related_scan_id=related_scan_id,
         related_report_run_id=related_report_run_id,
         related_approval_id=related_approval_id,
+        related_project_id=related_project_id,
         created_reason=created_reason,
     )
     existing = list(list_inbox_items(output_dir, include_closed=True))
@@ -157,6 +160,7 @@ def _item_from_dict(item: dict) -> InboxItem:
         related_scan_id=item.get("related_scan_id"),
         related_report_run_id=item.get("related_report_run_id"),
         related_approval_id=item.get("related_approval_id"),
+        related_project_id=item.get("related_project_id"),
         created_reason=str(item.get("created_reason", "")),
     )
 

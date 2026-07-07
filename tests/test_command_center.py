@@ -19,6 +19,7 @@ from atlas_os.cli import build_parser, main
 from atlas_os.config import get_settings
 from atlas_os.core.approvals import list_approvals
 from atlas_os.core.artifacts import list_artifacts
+from atlas_os.core.manual_tasks import list_manual_tasks
 from atlas_os.daily import get_daily_brief, list_daily_briefs, run_daily_cycle
 from atlas_os.greenrock.market_pulse import stage_analyst_slate_candidates
 from atlas_os.greenrock.report_workbench import list_candidate_decisions, record_candidate_decision, report_readiness, report_workbench_summary
@@ -76,6 +77,37 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("Project Directory", response.body)
         self.assertIn("GreenRock Analysts", response.body)
         self.assertIn("Variance Capital / The Bat Signal", response.body)
+
+    def test_product_navigation_and_pt_consolidation_render(self) -> None:
+        with _isolated_env() as root:
+            response = dispatch_request("GET", "/pt")
+            create_response = dispatch_request(
+                "POST",
+                "/pt/tasks",
+                "name=PT+task&division=atlas-core&notes=local+only",
+            )
+            filtered = dispatch_request("GET", "/pt?status=pending")
+            project_response = dispatch_request(
+                "POST",
+                "/pt/projects",
+                "name=Launch+Room&division=atlas-core&status=planned",
+            )
+            with connect(initialize_database(root / "atlas.db")) as connection:
+                tasks = list_manual_tasks(connection)
+
+        self.assertEqual(response.status, 200)
+        self.assertIn("Executive", response.body)
+        self.assertIn("Operations", response.body)
+        self.assertIn("GreenRock", response.body)
+        self.assertIn("Projects &amp; Tasks", response.body)
+        self.assertIn("Atlas OS / General Operations", response.body)
+        self.assertIn("Project Directory", response.body)
+        self.assertNotIn("GreenRock Discovery</a>", response.body)
+        self.assertEqual(create_response.status, 303)
+        self.assertEqual(project_response.status, 303)
+        self.assertEqual(filtered.status, 200)
+        self.assertIn("PT task", filtered.body)
+        self.assertTrue(tasks[0].project_id)
 
     def test_greenrock_page_route_returns_200_and_renders_approvals(self) -> None:
         with _isolated_env():
@@ -140,6 +172,30 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("GreenRock Market Pulse", response.body)
         self.assertIn("Top Opportunities by Archetype", response.body)
         self.assertIn("Reports still generate only from staging", response.body)
+
+    def test_greenrock_staging_uses_bounded_table_layout(self) -> None:
+        with _isolated_env():
+            response = dispatch_request("GET", "/greenrock/staging")
+
+        self.assertEqual(response.status, 200)
+        self.assertIn(".staging-table { min-width: 0; width: 100%; }", response.body)
+        self.assertIn("overflow-wrap: anywhere", response.body)
+        self.assertNotIn(".staging-table { min-width: 1680px; }", response.body)
+
+    def test_discovery_route_preserved_and_scanner_owns_flow(self) -> None:
+        with _isolated_env():
+            discovery = dispatch_request("GET", "/greenrock/discovery")
+            scanner = dispatch_request("GET", "/greenrock/scanner")
+
+        self.assertEqual(discovery.status, 200)
+        self.assertIn("Discovery moved into Scanner", discovery.body)
+        self.assertIn("Open Scanner", discovery.body)
+        self.assertEqual(scanner.status, 200)
+        self.assertIn("Universe", scanner.body)
+        self.assertIn("Scan", scanner.body)
+        self.assertIn("Rank", scanner.body)
+        self.assertIn("Report Workbench", scanner.body)
+        self.assertIn("Scanner discovers and ranks", scanner.body)
 
     def test_picks_route_shows_incomplete_section_warnings(self) -> None:
         with _isolated_env():
@@ -248,6 +304,25 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("+7 SD", result.body)
         self.assertIn("target-below-ath", result.body)
         self.assertIn("target-above-ath", result.body)
+
+    def test_reports_index_and_score_report_history_use_report_metadata(self) -> None:
+        preview = calculate_score_preview("LC01", provider=FullHistoryProvider())
+        with _isolated_env():
+            main(["greenrock", "report-draft"])
+            reports = dispatch_request("GET", "/reports?ticker=LC01")
+            with patch("atlas_os.web_app.calculate_score_preview", return_value=preview):
+                score = dispatch_request("POST", "/greenrock/score", "ticker=LC01")
+
+        self.assertEqual(reports.status, 200)
+        self.assertIn("Reports as Research Memory", reports.body)
+        self.assertIn("Report Date", reports.body)
+        self.assertIn("Data Mode", reports.body)
+        self.assertIn("Approval", reports.body)
+        self.assertIn("LC01", reports.body)
+        self.assertEqual(score.status, 200)
+        self.assertIn("Report History", score.body)
+        self.assertIn("indexed report", score.body)
+        self.assertIn("Open Report", score.body)
 
     def test_score_intelligence_fields_are_calculated(self) -> None:
         preview = calculate_score_preview("LC01", provider=FullHistoryProvider())
@@ -621,6 +696,8 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("system-status-panel", response.body)
         self.assertIn("System Status", response.body)
         self.assertIn("wall-status-grid", response.body)
+        self.assertIn("handoff-idle", response.body)
+        self.assertIn("No recent proven handoff", response.body)
         self.assertIn("wall-agent-ring", response.body)
         self.assertIn("wall-loadbar", response.body)
         self.assertIn('class="badge idle"', response.body)
@@ -725,6 +802,13 @@ class CommandCenterTests(unittest.TestCase):
             scan_row_after = next(row for row in scan_after.rows if row["symbol"] == first_ticker)
             cli_list = main(["greenrock", "candidate-decisions"])
             cli_save = main(["greenrock", "candidate-decision", first_ticker, "--decision", "deferred", "--note", "needs call transcript"])
+            research_response = dispatch_request(
+                "POST",
+                "/greenrock/report-workbench/candidate-decision",
+                f"ticker={first_ticker}&decision=research&note=deeper+evidence+review",
+            )
+            with connect(initialize_database(root / "atlas.db")) as connection:
+                research_tasks = [task for task in list_manual_tasks(connection) if first_ticker in task.name]
             final_decision = list_candidate_decisions(root / "output")[0]
             response = dispatch_request("GET", "/greenrock/report-workbench")
 
@@ -737,9 +821,12 @@ class CommandCenterTests(unittest.TestCase):
         self.assertTrue(summary_after["candidate_review"]["featured"])
         self.assertEqual(cli_list, 0)
         self.assertEqual(cli_save, 0)
-        self.assertEqual(final_decision.decision, "deferred")
+        self.assertEqual(research_response.status, 303)
+        self.assertTrue(research_tasks)
+        self.assertEqual(final_decision.decision, "research")
         self.assertIn("candidate-decision-form", response.body)
         self.assertIn("do not alter GreenRock Score", response.body)
+        self.assertIn("Research Needed", response.body)
 
     def test_report_readiness_states_progress_without_bypassing_gates(self) -> None:
         with _isolated_env() as root:
@@ -931,6 +1018,7 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("Agent Run", detail.body)
         self.assertIn("Created Date", detail.body)
         self.assertIn("Created Time", detail.body)
+        self.assertIn("Project", detail.body)
         self.assertIn("Cycle", detail.body)
         self.assertIn("Report Run", detail.body)
         self.assertEqual(complete.status, 303)
@@ -938,7 +1026,7 @@ class CommandCenterTests(unittest.TestCase):
     def test_inbox_items_sort_newest_open_first_and_show_timestamps(self) -> None:
         with _isolated_env() as root:
             create_inbox_item(root / "output", "qa", "warning", "Older", "old detail", "/old", related_cycle_id="cycle-old")
-            create_inbox_item(root / "output", "market", "info", "Newer", "new detail", "/new", related_cycle_id="cycle-new")
+            create_inbox_item(root / "output", "market", "info", "Newer", "new detail", "/new", related_cycle_id="cycle-new", related_project_id=42)
             path = root / "output" / "atlas" / "inbox" / "items.json"
             rows = json.loads(path.read_text(encoding="utf-8"))
             for row in rows:
@@ -955,17 +1043,22 @@ class CommandCenterTests(unittest.TestCase):
             dashboard = dispatch_request("GET", "/")
             morning = dispatch_request("GET", "/atlas/morning-brief")
             wall = dispatch_request("GET", "/atlas/wall")
+            detail = dispatch_request("GET", f"/atlas/inbox/{items[0].item_id}")
 
         self.assertEqual(items[0].title, "Newer")
         self.assertEqual(items[0].related_cycle_id, "cycle-new")
         self.assertIn("2026-01-02", page.body)
         self.assertIn("00:00:00", page.body)
         self.assertIn("cycle-new", page.body)
+        self.assertIn("<th>Project</th>", page.body)
+        self.assertIn(">42</td>", page.body)
         self.assertIn("created 2026-01-02", wall.body)
         self.assertIn("source market", wall.body)
+        self.assertIn("project 42", wall.body)
         self.assertIn("cycle cycle-new", wall.body)
         self.assertIn("Created 2026-01-02", dashboard.body)
         self.assertIn("updated 2026-01-02", morning.body)
+        self.assertIn("<dt>Project</dt><dd>42</dd>", detail.body)
 
     def test_env_provider_loading_works(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

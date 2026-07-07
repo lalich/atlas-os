@@ -164,6 +164,20 @@ After clicking **Run Agent Cycle** from the wall, the success state appears as a
 
 Future integrations are placeholders only: Slack is planned/not configured, while email, publishing, and trading are disabled. Do not add Slack tokens or configure external actions for this phase.
 
+## Navigate Atlas OS
+
+Atlas OS is organized into three operator layers:
+
+- Executive: Command Center, Morning Brief, Atlas Inbox, and Wall.
+- Operations: PT Projects & Tasks, Agents, and Reports.
+- Divisions: GreenRock Home, Picks, Universe, Market Pulse, Scanner, Watchlists, Staging, Score, and Report Workbench.
+
+Use Morning Brief when you want the executive summary of what changed. Use Atlas Inbox for operator awareness and action items. Use Wall for the passive command-center display. Use Workbench when you are actively moving a GreenRock report through local, approval-gated production.
+
+Projects and manual tasks now share `/pt`. New quick tasks default to `Atlas OS / General Operations` so Inbox- or agent-created work can be captured without inventing a project first. Project stages are local operating labels: Pitched, Evaluating, Planned, In Progress, Testing, Active, Funding, Launch, Operating, Paused, and Archived.
+
+Discovery is consolidated into Scanner. `/greenrock/discovery` still works as a compatibility notice, but the working path is Universe -> Scanner -> Ranking Engine -> Market Pulse -> Staging -> Report Workbench -> Approval -> Final Report.
+
 ## Run Daily Intelligence Cycle
 
 Use Daily Intelligence when you want Atlas to turn the agent cycle into an operator brief:
@@ -233,6 +247,8 @@ Use the workbench controls in order:
 9. Open Final Reports.
 
 Candidate decisions are the local Human Intelligence Layer. Valid decisions are `accepted`, `deferred`, `research`, and `excluded`. They preserve operator judgment and provenance for future analysis, but they do not change GreenRock Score, canonical rank, staging, report generation, approvals, or PDF gates.
+
+`research` decisions create a local manual research task in `/pt`; they do not move the candidate, create a report, approve anything, or export a PDF.
 
 Agent task records live under `.atlas/output/agents/tasks/`. They are local workflow records only. The workbench does not approve, reject, publish, email, trade, place broker/API orders, touch client files, use credentials, call external LLM/API services, or bypass PDF gates.
 
@@ -569,11 +585,13 @@ PDF export from the browser is available only after approval. It creates or reus
 
 On the GreenRock, Reports, and run-specific review pages, use the local open links for Markdown reports, CSV artifacts, and approved PDFs. On macOS, Atlas attempts to open the file locally. On unsupported systems, keep using the displayed path.
 
+The Reports page is also a local research-memory index. Filter by ticker, approval status, and data mode when you want to see where a name has appeared before. The GreenRock Score page links back to prior indexed reports for the ticker after a real score preview.
+
 ## Manage Manual Tasks
 
-Open `http://127.0.0.1:8000/tasks`.
+Open `http://127.0.0.1:8000/pt`.
 
-Manual tasks can be created with a title, division, notes, and a local state. The kanban columns are backlog, in progress, awaiting review, and completed. This board is an operator placeholder only and does not trigger autonomous execution.
+Manual tasks can be created with a title, division, project, notes, and a local state. Project cards live below the task board, and every normal task is associated with a project. The old `/tasks` and `/projects` routes remain compatible entry points into `/pt`. This board is an operator placeholder only and does not trigger autonomous execution.
 
 ## Review Planned Agents
 

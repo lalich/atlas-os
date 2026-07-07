@@ -34,6 +34,7 @@ def _migrate_existing_database(connection: sqlite3.Connection) -> None:
         connection,
         "tasks",
         {
+            "project_id": "ALTER TABLE tasks ADD COLUMN project_id INTEGER",
             "division": "ALTER TABLE tasks ADD COLUMN division TEXT NOT NULL DEFAULT 'general'",
             "notes": "ALTER TABLE tasks ADD COLUMN notes TEXT",
         },

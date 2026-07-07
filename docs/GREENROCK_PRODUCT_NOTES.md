@@ -65,6 +65,11 @@
 - Keep Daily Intelligence as the top operator synthesis layer: it may create structured local AgentUpdate records, Daily Intelligence Brief JSON, material deduplicated Inbox items, and Morning Brief snapshots, but it must consume canonical scoring/ranking outputs rather than creating a separate scoring path.
 - Treat `/greenrock/report-workbench` as the single report-production workbench. It may refresh local agent task records, show the production timeline, recommend next operator actions, stage an Analyst Slate when explicitly invoked, enrich staged candidates, and point to existing draft/approval/PDF controls. It must not approve, export without approval, email, publish, trade, touch client files, call external LLM/API services, or bypass approval/PDF gates.
 - Keep candidate decisions as the Human Intelligence Layer only. Accepted, deferred, research-needed, or excluded decisions preserve operator judgment and provenance, but must not mutate GreenRock Score, canonical rank, staging, report generation, approval state, or PDF export eligibility.
+- Keep `research` candidate decisions as local follow-up work. They may create `/pt` manual research tasks, but must not alter candidate rank, report eligibility, approvals, or PDF state.
+- Keep Atlas OS navigation grouped by operator intent: Executive surfaces, Operations surfaces, and GreenRock division surfaces. Report Workbench belongs inside GreenRock, while Reports belongs in Operations as cross-workflow research memory.
+- Keep `/pt` as the consolidated Projects & Tasks surface. Quick tasks should safely attach to `Atlas OS / General Operations` when no explicit project is chosen.
+- Keep `/greenrock/discovery` as a compatibility/deprecation path only. Scanner owns discovery and ranking; Market Pulse and Staging bridge reviewed candidates into Report Workbench.
+- Treat Reports as local research memory. Index report metadata for ticker/status/data-mode filtering and let GreenRock Score quietly surface prior indexed report history for the previewed ticker.
 - Keep `/agents` as an operational monitor: cards, status, current task, last message, health, latest output summary, and run history.
 - Keep the dashboard Agent Cycle card focused on last run, completed agents, failed agents, blocked agents, inbox items generated, and a confirmed Run Agent Cycle button.
 

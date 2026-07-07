@@ -586,7 +586,19 @@ Workbench controls run existing gated actions only: Daily Intelligence, Stage An
 atlas serve
 ```
 
-Open `http://127.0.0.1:8000`, review the Atlas Inbox, then use the GreenRock Report Review Center at `/greenrock/reports/<run_id>/review` to inspect draft metadata, source disclosure, candidates, approval state, and PDF controls. Use `http://127.0.0.1:8000/greenrock/discovery` for the preferred Scan, Stage, Generate Draft, Approve, Export PDF workflow, `http://127.0.0.1:8000/greenrock/scanner` for population discovery, `http://127.0.0.1:8000/greenrock/watchlists` for local research queues, `http://127.0.0.1:8000/greenrock/staging` for report candidate staging and approval-gated draft generation, and `http://127.0.0.1:8000/greenrock/picks` for the GreenRock Picks Board. Use the task board for manual operator tasks only; it does not trigger autonomous execution.
+Open `http://127.0.0.1:8000`, review the Atlas Inbox, then use the GreenRock Report Workbench at `/greenrock/report-workbench` for the preferred Scan, Stage, Generate Draft, Approve, Export PDF workflow. Use `/greenrock/scanner` for population discovery, `/greenrock/market-pulse` for latest scan review, `/greenrock/staging` for report candidate staging and approval-gated draft generation, `/greenrock/reports/<run_id>/review` for run-specific approvals/PDF controls, and `/pt` for manual operator projects and tasks. The old `/greenrock/discovery` route remains as a compatibility notice that points to Scanner.
+
+## Information Architecture
+
+Atlas OS is organized into three operator layers:
+
+- Executive: Command Center, Morning Brief, Atlas Inbox, and Wall. Morning Brief explains what changed, Atlas Inbox is the operator action queue, and Wall is the passive command-center display.
+- Operations: PT Projects & Tasks, Agents, and Reports. PT consolidates project lifecycle and manual task work under `/pt` with a default `Atlas OS / General Operations` project.
+- Divisions: GreenRock tools are nested under the GreenRock division: Home, Picks, Universe, Market Pulse, Scanner, Watchlists, Staging, Score, and Report Workbench.
+
+Discovery has moved into Scanner. The old `/greenrock/discovery` route remains as a compatibility notice that points operators to `/greenrock/scanner`.
+
+Reports now act as local research memory with date/status/data-mode filters and ticker search. The GreenRock Score page shows a quiet Report History panel after scoring a ticker when indexed reports contain that ticker.
 
 ## Operator Docs
 

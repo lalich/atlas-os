@@ -25,6 +25,16 @@ Agents may not:
 
 Report Agent can say `Report draft can be generated` when staging and analytics are ready. It does not generate a report automatically. The operator must still invoke the existing report workflow, approve the draft, and export any PDF explicitly.
 
+## Product Navigation
+
+Atlas OS presents agents inside a grouped operator hierarchy:
+
+- Executive: Command Center, Morning Brief, Atlas Inbox, and Wall.
+- Operations: PT Projects & Tasks, Agents, and Reports.
+- Divisions: GreenRock Home, Picks, Universe, Market Pulse, Scanner, Watchlists, Staging, Score, and Report Workbench.
+
+Atlas Inbox remains the local awareness/action queue. Morning Brief summarizes what changed, Wall is the passive command-center display, and Workbench is the active production control surface. `/pt` consolidates manual tasks and project lifecycle records with a safe default project named `Atlas OS / General Operations`.
+
 ## Agent Model
 
 Each configured agent has:
@@ -175,7 +185,7 @@ Reasons include stale scan, staging underfilled, analytics missing, QA warnings,
 
 The workbench controls route to the existing safe local actions: Run Daily Intelligence Cycle, Stage Analyst Slate, Review Candidate Decisions, Enrich Staged Candidates, Generate Draft From Staging, Open Latest Review Center, Review Pending Approvals, Export Approved PDF, and Open Final Reports.
 
-Candidate decisions are the local Human Intelligence Layer. Operators may mark staged/report candidates as `accepted`, `deferred`, `research`, or `excluded`. Those records are local notes with scan/daily/report provenance. They do not alter GreenRock Score, canonical rank, staging, report generation, approvals, or PDF gates.
+Candidate decisions are the local Human Intelligence Layer. Operators may mark staged/report candidates as `accepted`, `deferred`, `research`, or `excluded`. Those records are local notes with scan/daily/report provenance. They do not alter GreenRock Score, canonical rank, staging, report generation, approvals, or PDF gates. `research` decisions create local `/pt` follow-up tasks only.
 
 Structured `AgentUpdate` records include `update_id`, `cycle_id`, `agent_name`, timestamps, status, severity, headline, summary, findings, supporting metrics, related tickers, scan/report/approval links, recommended operator action, target URL, and provenance. The update records are deterministic local JSON files.
 
@@ -305,6 +315,8 @@ Browser:
 - System Status cards for provider, latest cycle, Market Pulse summary, approvals, report readiness, report tasks, pending approval, PDF status, and future integrations
 
 The wall limits lists to the newest/top items and shows `+N more` when needed. Morning Brief and Market Pulse are linked in the action row and summarized above, not repeated as separate bottom panels. Each Agent Room card has an `Update` link to that agent's local detail/history page; it does not run external actions. Long text is clipped to keep the screen readable. Future integrations are displayed as local placeholders only: Slack is planned/not configured, and email, publishing, and trading remain disabled.
+
+Paper-airplane handoff visuals are truthful by design. The wall stays idle/static unless recent agent task or cycle provenance supports a handoff label such as scan delivery, evidence review, QA report review, or approval surfacing. Atlas does not create fake handoff events just to animate the room.
 
 After a wall-launched Agent Cycle, `/atlas/wall` redirects back to the same TV layout with a compact status pill in the header. The status does not use the full Command Center banner, so it does not push the Agent Room or bottom status grid down the screen. Wall timestamps are shortened to `YYYY-MM-DD HH:MM` where possible, with deeper details available on `/agents`, `/atlas/inbox`, and Morning Brief.
 
