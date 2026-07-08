@@ -466,9 +466,12 @@ def rank_contracts(
     underlying: float,
     dte: int,
     timing: TimingScore,
+    otm_only: bool = True,
 ) -> tuple[ContractResearch, ...]:
     ranked: list[ContractResearch] = []
     for contract in contracts:
+        if otm_only and not _is_otm_contract(contract, option_type, underlying):
+            continue
         premium = contract.premium
         iv = contract.implied_volatility
         warnings: list[str] = []
@@ -499,12 +502,19 @@ def contract_score_factors(
     iv_score = 55.0 if contract.implied_volatility is None else max(0.0, 100.0 - abs(contract.implied_volatility - 0.45) * 110)
     breakeven = contract.strike + premium if option_type == "call" else contract.strike - premium
     distance = abs(breakeven - underlying) / underlying if underlying else 1
+    otm_distance = abs(contract.strike - underlying) / underlying if underlying else 1
+    proximity_score = _otm_proximity_score(otm_distance)
+    premium_pct = premium / underlying if underlying else 0
+    premium_quality = 25.0 if premium <= 0 else _clamp(100.0 - abs(premium_pct - 0.025) * 1200)
     return {
         "liquidity": round(liquidity, 2),
         "spread": round(spread_score, 2),
+        "otm_proximity": round(proximity_score, 2),
         "delta_range": round(delta_score, 2),
         "theta_burden": round(theta_score, 2),
         "iv_condition": round(iv_score, 2),
+        "model_availability": 100.0 if model.model_status == "available" else 0.0,
+        "premium_quality": round(premium_quality, 2),
         "breakeven_distance": round(max(0.0, 100.0 - distance * 220), 2),
         "timing_alignment": timing.score,
         "scenario_behavior": round(max(0.0, min(100.0, model.extrinsic_value * 8 + timing.score * 0.35)), 2),
@@ -777,6 +787,26 @@ def _spread_pct(contract: OptionContract) -> float:
         return 100.0
     mid = (contract.bid + contract.ask) / 2
     return (contract.ask - contract.bid) / mid * 100 if mid else 100.0
+
+
+def _is_otm_contract(contract: OptionContract, option_type: str, underlying: float) -> bool:
+    if option_type == "call":
+        return contract.strike > underlying
+    if option_type == "put":
+        return contract.strike < underlying
+    return False
+
+
+def _otm_proximity_score(distance: float) -> float:
+    if distance <= 0:
+        return 0.0
+    if distance <= 0.03:
+        return _clamp(86 + distance * 220)
+    if distance <= 0.12:
+        return _clamp(100 - (distance - 0.03) * 420)
+    if distance <= 0.25:
+        return _clamp(62 - (distance - 0.12) * 260)
+    return 10.0
 
 
 def _contracts_from_frame(frame, option_type: str, expiration: str) -> tuple[OptionContract, ...]:

@@ -421,6 +421,8 @@ atlas greenrock derivatives analyze-staged
 
 Derivative analysis is not a recommendation and does not mutate GreenRock Score, Confidence, Evidence Agreement, ranking, staging, reports, approvals, PDFs, universes, watchlists, email, Slack, publishing, trading, broker/API orders, client files, credentials, or external LLM/API services. Atlas Wall shows only the compact **Options Manifesto** summary; detailed chain work stays inside the Workbench.
 
+Top Research Calls/Puts are OTM-only in Phase 10A. Calls require strikes above the underlying price; puts require strikes below it. ITM contracts remain in raw snapshot CSVs for inspection but are not ranked as Top Research contracts yet.
+
 The GreenRock Report Review Center shows run metadata, data mode, selection mode, candidate source, source lists, scan IDs, candidate tables, evidence notes, approval status, and PDF status in one browser page. Approve/reject controls still open a confirmation page, and PDF export remains blocked until approval.
 
 ## Score Any Ticker

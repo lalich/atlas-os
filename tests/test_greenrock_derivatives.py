@@ -5,6 +5,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 import io
+import csv
 from contextlib import redirect_stdout
 from datetime import date, timedelta
 from pathlib import Path
@@ -152,6 +153,28 @@ class GreenRockDerivativesTests(unittest.TestCase):
         self.assertEqual(len(call_grid), 32)
         self.assertEqual(len(put_grid), 32)
 
+    def test_top_research_rankings_are_otm_only(self) -> None:
+        snapshot = FakeOptionsProvider().fetch_snapshot("LC01")
+        timing = derivative_timing_score(snapshot.price_history, snapshot.volume_history)
+        calls = rank_contracts(snapshot.calls, "call", 100, 30, timing)
+        puts = rank_contracts(snapshot.puts, "put", 100, 30, timing)
+
+        self.assertTrue(calls)
+        self.assertTrue(puts)
+        self.assertTrue(all(item.contract.strike > 100 for item in calls))
+        self.assertTrue(all(item.contract.strike < 100 for item in puts))
+
+    def test_far_otm_contracts_are_penalized_against_reasonable_otm(self) -> None:
+        timing = derivative_timing_score(_prices(), _volumes())
+        expiration = (date.today() + timedelta(days=30)).isoformat()
+        reasonable = OptionContract("REASONABLE", "call", expiration, 105, 2.0, 2.2, 2.1, 200, 1000, 0.35)
+        far = OptionContract("FAR", "call", expiration, 160, 0.10, 0.12, 0.11, 200, 1000, 0.35)
+
+        ranked = rank_contracts((far, reasonable), "call", 100, 30, timing)
+
+        self.assertEqual(ranked[0].contract.contract_symbol, "REASONABLE")
+        self.assertGreater(ranked[0].factors["otm_proximity"], ranked[1].factors["otm_proximity"])
+
     def test_snapshot_persistence_and_manifesto(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -162,6 +185,18 @@ class GreenRockDerivativesTests(unittest.TestCase):
             self.assertTrue((Path(analysis.snapshot_path) / "calls.csv").exists())
             self.assertEqual(loaded["ticker"], "LC01")
             self.assertEqual(manifesto["status"], "available")
+
+    def test_itm_contracts_remain_in_raw_snapshot_data(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            analysis = create_options_snapshot(root / "output", "LC01", provider=FakeOptionsProvider())
+            with (Path(analysis.snapshot_path) / "calls.csv").open(newline="", encoding="utf-8") as csv_file:
+                calls = tuple(csv.DictReader(csv_file))
+            with (Path(analysis.snapshot_path) / "puts.csv").open(newline="", encoding="utf-8") as csv_file:
+                puts = tuple(csv.DictReader(csv_file))
+
+        self.assertTrue(any(float(row["strike"]) <= 100 for row in calls))
+        self.assertTrue(any(float(row["strike"]) >= 100 for row in puts))
 
     def test_manual_ticker_does_not_mutate_staging(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -204,6 +239,9 @@ class GreenRockDerivativesTests(unittest.TestCase):
         self.assertEqual(wall.status, 200)
         self.assertIn("Options Manifesto", wall.body)
         self.assertIn("Derivative Workbench", wall.body)
+        self.assertIn("wall-daily-intelligence", wall.body)
+        self.assertIn("wall-options-manifesto", wall.body)
+        self.assertNotIn("wall-split-intel", wall.body)
 
     def test_cli_derivatives_doctor_and_analyze_commands(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

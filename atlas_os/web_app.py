@@ -2652,18 +2652,14 @@ def render_atlas_wall(status_message: str | None = None) -> str:
       <a href="/greenrock/derivatives">Derivative Workbench</a>
     </section>
     <section class="wall-intel-row">
-      <article class="wall-panel">
-        <div class="wall-split-intel">
-          <div>
-            <h2>Daily Intelligence</h2>
-            <p><strong>Latest daily cycle:</strong> {_safe(daily.get("daily_id", "none") if daily else "none")}</p>
-            <p>{_safe(daily.get("executive_summary", "Run atlas daily to create the first Daily Intelligence Brief.") if daily else "Run atlas daily to create the first Daily Intelligence Brief.")}</p>
-          </div>
-          <div class="wall-options-manifesto">
-            <h2>Options Manifesto</h2>
-            {_wall_options_manifesto(manifesto)}
-          </div>
-        </div>
+      <article class="wall-panel wall-daily-intelligence">
+        <h2>Daily Intelligence</h2>
+        <p><strong>Latest daily cycle:</strong> {_safe(daily.get("daily_id", "none") if daily else "none")}</p>
+        <p>{_safe(daily.get("executive_summary", "Run atlas daily to create the first Daily Intelligence Brief.") if daily else "Run atlas daily to create the first Daily Intelligence Brief.")}</p>
+      </article>
+      <article class="wall-panel wall-options-manifesto">
+        <h2>Options Manifesto</h2>
+        {_wall_options_manifesto(manifesto)}
       </article>
       <article class="wall-panel">
         <h2>Top Priorities</h2>
@@ -4821,6 +4817,10 @@ def _derivatives_analysis_panel(analysis: dict | None) -> str:
       <div class="derivative-window-grid">{''.join(_derivative_window_card(item) for item in analysis.get('windows', []))}</div>
       <h2>Chain Quality</h2>
       {_derivative_key_value_grid(analysis.get("chain_quality", {}))}
+      <div class="setup-box">
+        <p>Top Research Calls/Puts currently screen out ITM contracts and focus on OTM research candidates.</p>
+        <p class="subtle">ITM contracts are retained in chain snapshots but excluded from Top Research lists in this phase.</p>
+      </div>
       <h2>Top Research Calls</h2>
       {_derivative_contract_rankings(analysis.get("top_calls", {}))}
       <h2>Top Research Puts</h2>
@@ -6743,9 +6743,6 @@ def _page(title: str, content: str, active: str = "/") -> str:
     .mini-card {{ border: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.04); border-radius: 8px; padding: 10px; display: grid; gap: 4px; min-width: 0; }}
     .mini-card strong {{ color: #d6ffe4; font-size: 13px; overflow-wrap: anywhere; }}
     .mini-card span {{ color: var(--muted); overflow-wrap: anywhere; }}
-    .wall-split-intel {{ display: grid; grid-template-rows: 1fr 1fr; gap: 8px; height: 100%; }}
-    .wall-options-manifesto {{ border-top: 1px solid rgba(255,255,255,.12); padding-top: 8px; }}
-    .wall-options-manifesto p {{ margin: 3px 0; }}
     .calculator-card {{ display: flex; align-items: center; justify-content: space-between; gap: 16px; border-color: rgba(55,214,122,.38); }}
     .score-tool-hero {{ display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, .5fr); gap: 22px; align-items: end; }}
     .score-tool-hero .score-form {{ margin: 0; }}
@@ -6987,7 +6984,11 @@ def _wall_page(title: str, content: str) -> str:
     .wall-clock {{ text-align: right; }}
     .wall-clock strong {{ display: block; font-size: 23px; }}
     .wall-clock span {{ color: var(--muted); font-size: 16px; }}
-    .wall-intel-row {{ display: grid; grid-template-columns: 1.15fr .85fr .85fr 1fr; gap: 10px; min-height: 0; }}
+    .wall-intel-row {{ display: grid; grid-template-columns: 1fr 1fr .85fr .85fr 1fr; gap: 10px; min-height: 0; }}
+    .wall-options-manifesto {{ border-color: rgba(55,214,122,.52); background: linear-gradient(135deg, rgba(55,214,122,.11), rgba(12,17,24,.78)); }}
+    .wall-options-manifesto h2 {{ color: #d6ffe4; }}
+    .wall-options-manifesto p {{ margin: 3px 0; }}
+    .wall-options-manifesto a {{ color: #9ff5bb; }}
     .wall-bottom-split {{ display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr); gap: 10px; min-height: 0; }}
     .system-status-panel {{ min-height: 0; }}
     .system-status-panel .section-head {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 7px; }}

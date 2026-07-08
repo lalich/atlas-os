@@ -66,6 +66,17 @@ Initial weights:
 
 Contract Research Score considers liquidity, bid/ask spread percentage, open interest, volume, delta range, theta burden, IV condition, breakeven distance, timing alignment, and scenario behavior. It does not rank by cheapest premium or maximum upside alone.
 
+## OTM Top Research Guardrail
+
+Phase 10A Top Research lists are OTM-only by default:
+
+- Top Research Calls require strike greater than the current underlying price.
+- Top Research Puts require strike less than the current underlying price.
+
+ITM and deep ITM contracts are retained in raw chain snapshots (`calls.csv` and `puts.csv`) for inspection and future research, but they are excluded from Top Research Calls/Puts in this phase. The Contract Research Score favors OTM contracts that are reasonably near the underlying and penalizes extremely far OTM, very wide spreads, low/no open interest and volume, missing IV/model data, and near-worthless lottery-style contracts.
+
+This remains research-only ranking language, not a recommendation.
+
 ## Scenario Lab
 
 The P/L scenario lab shows premium at risk, breakeven, intrinsic/extrinsic value, theoretical value, dollar P/L, percent P/L, Greeks, and assumptions. The scenario grid evaluates underlying moves from `-15%` to `+20%` across today, one-third through remaining life, two-thirds through remaining life, and expiration.
