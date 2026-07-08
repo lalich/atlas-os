@@ -58,6 +58,23 @@ Doctor reports virtualenv status, command path, provider setting, yfinance avail
 
 When `ATLAS_GREENROCK_REAL_TICKERS` is blank, Atlas uses the local GreenRock watchlist CSVs.
 
+## Options Data
+
+Phase 10A uses the same local provider setting for research-only options chain diagnostics and snapshots:
+
+```bash
+atlas greenrock derivatives doctor AAPL
+atlas greenrock derivatives analyze AAPL
+```
+
+The Derivative Workbench checks underlying price, expirations, calls, puts, bid, ask, last, volume, open interest, implied volatility, contract symbol, strike, and expiration. Missing fields are reported as missing; Atlas does not fake option-chain values.
+
+Successful snapshots are stored locally at `.atlas/output/greenrock/derivatives/snapshots/<ticker>/<snapshot_id>/` with metadata, expirations, calls, puts, analysis, and derivative agent update JSON/CSV files.
+
+Listed U.S. equity options default to American binomial tree pricing. Missing dividend yield uses `0%` with a documented assumption, and missing risk-free rate uses the local default constant `4%`. Missing or invalid implied volatility makes the model unavailable for that contract instead of inventing volatility. Barone-Adesi-Whaley is deferred as a future comparison model.
+
+Derivative analysis never creates reports, approvals, PDFs, emails, Slack messages, publications, trading actions, broker/API orders, client files, credentials, or external LLM/API calls.
+
 ## GreenRock Watchlists
 
 GreenRock watchlists are operator-managed local ticker lists used as the default real-mode source set for the Picks Board and report.

@@ -46,6 +46,12 @@ from atlas_os.core.reports import get_report, list_reports
 from atlas_os.core.workflow_runs import get_workflow_run, list_workflow_runs
 from atlas_os.db.database import connect, initialize_database
 from atlas_os.greenrock.pdf_export import render_markdown_report_to_pdf
+from atlas_os.greenrock.derivatives import (
+    create_options_snapshot,
+    latest_derivative_analysis,
+    options_manifesto,
+    provider_diagnostics as derivatives_provider_diagnostics,
+)
 from atlas_os.greenrock.market_data import MarketDataConfigurationError
 from atlas_os.greenrock.market_engine import MARKET_ARCHETYPES, classify_market_archetype
 from atlas_os.greenrock.market_pulse import (
@@ -395,6 +401,16 @@ def create_app():
     def greenrock_score_post(ticker: str = Form("")) -> str:
         return render_greenrock_score(ticker=ticker)
 
+    @app.get("/greenrock/derivatives", response_class=HTMLResponse)
+    def greenrock_derivatives(request: Request) -> str:
+        return render_greenrock_derivatives(ticker=request.query_params.get("ticker", ""), status_message=request.query_params.get("status"))
+
+    @app.post("/greenrock/derivatives/analyze")
+    def greenrock_derivatives_analyze(ticker: str = Form("")):
+        message = run_greenrock_derivatives_from_browser(ticker)
+        target = f"/greenrock/derivatives?ticker={quote(ticker.strip().upper())}" if ticker.strip() else "/greenrock/derivatives"
+        return RedirectResponse(_with_status(target, message), status_code=303)
+
     @app.post("/greenrock/run-report")
     def run_greenrock_report(data_mode: str = Form("mock")):
         ok, message = run_greenrock_report_from_browser(data_mode)
@@ -573,6 +589,8 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
         return WebResponse(200, render_greenrock_staging_generation_confirmation(_first(query, "status")))
     if method == "GET" and route == "/greenrock/score":
         return WebResponse(200, render_greenrock_score(_first(query, "ticker") or ""))
+    if method == "GET" and route == "/greenrock/derivatives":
+        return WebResponse(200, render_greenrock_derivatives(_first(query, "ticker") or "", _first(query, "status")))
     if method == "GET" and route == "/greenrock/final-reports":
         return WebResponse(200, render_greenrock_final_reports(_first(query, "status")))
     if method == "GET" and route.startswith("/greenrock/reports/") and route.endswith("/review"):
@@ -775,6 +793,10 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
                 list_key=form.get("list_key", ""),
             ),
         )
+    if method == "POST" and route == "/greenrock/derivatives/analyze":
+        ticker = form.get("ticker", "")
+        target = f"/greenrock/derivatives?ticker={quote(ticker.strip().upper())}" if ticker.strip() else "/greenrock/derivatives"
+        return WebResponse(303, "", location=_with_status(target, run_greenrock_derivatives_from_browser(ticker)))
     if method == "POST" and route.startswith("/tasks/") and route.endswith("/status"):
         task_id = _route_int_part(route, 2)
         if task_id is None:
@@ -888,6 +910,7 @@ def render_dashboard(status_message: str | None = None) -> str:
       {_nav_card("GreenRock Market Scanner", "/greenrock/scanner", "Population scans before report picks")}
       {_nav_card("Report Candidate Staging", "/greenrock/staging", "Final local curation before approval-gated drafts")}
       {_nav_card("Score Any Ticker", "/greenrock/score", "Preview GreenRock Score without report artifacts")}
+      {_nav_card("Derivative Workbench", "/greenrock/derivatives", "Research-only options snapshots and scenario analysis")}
       {_nav_card("Agent Monitor", "/agents", "Planned local agent activity HUD")}
       {_nav_card("Approvals", "/greenrock", "Pending report approval actions")}
       {_nav_card("Final PDF Archive", "/greenrock/final-reports", "Approved local PDFs preserved long-term")}
@@ -2397,6 +2420,60 @@ def render_greenrock_score(
     return _page("GreenRock Score Calculator", content, active="/greenrock/score")
 
 
+def render_greenrock_derivatives(ticker: str = "", status_message: str | None = None) -> str:
+    settings = get_settings()
+    cleaned = ticker.strip().upper()
+    diagnostics = derivatives_provider_diagnostics(cleaned or "AAPL")
+    latest = latest_derivative_analysis(settings.output_dir, cleaned or None)
+    staged_rows = load_staged_candidates(settings.output_dir)
+    staged_queue = "".join(
+        f"<a class='badge' href='/greenrock/derivatives?ticker={quote(row.get('ticker', ''))}'>{_safe(row.get('ticker', ''))}</a>"
+        for row in staged_rows[:30]
+    ) or "<span class='subtle'>No staged tickers yet.</span>"
+    content = f"""
+    {_status_banner(status_message)}
+    <section class="hero compact greenrock-hero">
+      {_greenrock_brand_block()}
+      <p class="eyebrow">GreenRock Derivative Workbench</p>
+      <h1>Research-Only Options Intelligence</h1>
+      <p>American-style single-leg call/put analysis for staged GreenRock names or a manual ticker. No trading, orders, recommendations, reports, approvals, PDFs, email, Slack, publishing, or client files.</p>
+      <span class="badge">Primary model: American Binomial Tree</span>
+    </section>
+    <section class="panel derivative-control-panel">
+      <div class="section-head"><h2>Provider Readiness</h2><span class="badge">{_safe(str(diagnostics.get('status', 'blocked')))}</span></div>
+      {_derivatives_diagnostics_grid(diagnostics)}
+      <form method="post" action="/greenrock/derivatives/analyze" class="score-form" onsubmit="return confirm('Create a local research-only derivatives snapshot? No orders, reports, approvals, PDFs, email, Slack, publishing, or client files will be created.');">
+        <input name="ticker" value="{_safe(cleaned)}" placeholder="Ticker" required>
+        <button type="submit">Analyze Ticker</button>
+      </form>
+    </section>
+    <section class="panel">
+      <div class="section-head"><h2>Staged Ticker Queue</h2><span class="subtle">Analysis links only; staging is unchanged</span></div>
+      <div class="derivative-chip-row">{staged_queue}</div>
+    </section>
+    {_derivatives_analysis_panel(latest)}
+    <section class="panel">
+      <div class="section-head"><h2>Model Notes</h2><span class="subtle">BAW deferred</span></div>
+      <p>Phase 10A uses an American binomial tree as the source of truth for listed U.S. equity options. Barone-Adesi-Whaley is not producing numbers yet; it remains a planned future comparison model.</p>
+      <p class="subtle">Language is intentionally limited to research fit, contract quality, scenario profile, and timing alignment. This page does not use buy/sell/hold or trade recommendation language.</p>
+    </section>
+    """
+    return _page("Derivative Workbench", content, active="/greenrock/derivatives")
+
+
+def run_greenrock_derivatives_from_browser(ticker: str) -> str:
+    settings = get_settings()
+    cleaned = ticker.strip().upper()
+    try:
+        analysis = create_options_snapshot(settings.output_dir, cleaned)
+    except (MarketDataConfigurationError, ValueError) as error:
+        return f"Derivative analysis blocked: {error}"
+    return (
+        f"Derivative snapshot {analysis.snapshot_id} created for {analysis.ticker}. "
+        "No staging, report, approval, PDF, email, Slack, publishing, trading action, client file, or external LLM/API action was created."
+    )
+
+
 def save_greenrock_score_ticker(ticker: str, list_key: str) -> str:
     settings = get_settings()
     cleaned_ticker = ticker.strip().upper()
@@ -2541,6 +2618,7 @@ def render_atlas_wall(status_message: str | None = None) -> str:
     pdf_exported = [artifact for artifact in context["artifacts"] if artifact.artifact_type == "report_final_pdf"]
     latest_snapshot = latest_morning_brief_snapshot(get_settings().output_dir)
     daily = latest_daily_brief(get_settings().output_dir)
+    manifesto = options_manifesto(get_settings().output_dir)
     report_state = report_readiness(get_settings().output_dir, get_settings().db_path)
     inbox_counts = {
         "critical": sum(1 for item in inbox_items if item.severity == "critical"),
@@ -2571,12 +2649,21 @@ def render_atlas_wall(status_message: str | None = None) -> str:
       <a href="/greenrock/market-pulse">Market Pulse</a>
       <a href="/agents">Agents</a>
       <a href="/greenrock/report-workbench">Report Workbench</a>
+      <a href="/greenrock/derivatives">Derivative Workbench</a>
     </section>
     <section class="wall-intel-row">
       <article class="wall-panel">
-        <h2>Daily Intelligence</h2>
-        <p><strong>Latest daily cycle:</strong> {_safe(daily.get("daily_id", "none") if daily else "none")}</p>
-        <p>{_safe(daily.get("executive_summary", "Run atlas daily to create the first Daily Intelligence Brief.") if daily else "Run atlas daily to create the first Daily Intelligence Brief.")}</p>
+        <div class="wall-split-intel">
+          <div>
+            <h2>Daily Intelligence</h2>
+            <p><strong>Latest daily cycle:</strong> {_safe(daily.get("daily_id", "none") if daily else "none")}</p>
+            <p>{_safe(daily.get("executive_summary", "Run atlas daily to create the first Daily Intelligence Brief.") if daily else "Run atlas daily to create the first Daily Intelligence Brief.")}</p>
+          </div>
+          <div class="wall-options-manifesto">
+            <h2>Options Manifesto</h2>
+            {_wall_options_manifesto(manifesto)}
+          </div>
+        </div>
       </article>
       <article class="wall-panel">
         <h2>Top Priorities</h2>
@@ -4693,6 +4780,119 @@ def _stage_metric(label: str, value: str) -> str:
     return f"<span><b>{_safe(label)}</b> {_safe(display or '-')}</span>"
 
 
+def _derivatives_diagnostics_grid(diagnostics: dict) -> str:
+    keys = (
+        "real_provider_configured",
+        "underlying_price_available",
+        "expirations_available",
+        "calls_available",
+        "puts_available",
+        "bid_available",
+        "ask_available",
+        "last_available",
+        "volume_available",
+        "open_interest_available",
+        "implied_volatility_available",
+    )
+    cards = "".join(
+        f"<article class='mini-card'><strong>{_safe(key.replace('_', ' ').title())}</strong><span>{_safe(str(diagnostics.get(key, False)))}</span></article>"
+        for key in keys
+    )
+    return f"<div class='derivative-status-grid'>{cards}</div><p class='subtle'>{_safe(str(diagnostics.get('message', '')))}</p>"
+
+
+def _derivatives_analysis_panel(analysis: dict | None) -> str:
+    if not analysis:
+        return """
+        <section class="panel">
+          <div class="section-head"><h2>Selected Ticker Intelligence</h2><span class="subtle">No snapshot yet</span></div>
+          <p>Run a local Derivative Workbench analysis to create 30/60/90 window cards, chain quality, binomial model outputs, scenario profile, and contract research rankings.</p>
+        </section>
+        """
+    return f"""
+    <section class="panel derivative-analysis-panel">
+      <div class="section-head"><h2>{_safe(analysis.get('ticker', ''))} Options Snapshot</h2><span class="badge">{_safe(analysis.get('snapshot_id', ''))}</span></div>
+      <div class="board-meta">
+        {_attention_card("green", _safe(str(analysis.get("underlying_price", "-"))), "Underlying", _safe(analysis.get("provider", "unknown")))}
+        {_attention_card("green", _safe(str(analysis.get("timing_score", {}).get("score", "-"))), "Derivative Timing Score", "Separate from GreenRock Score")}
+        {_attention_card("yellow" if analysis.get("warnings") else "green", str(len(analysis.get("warnings", []))), "Warnings", "Model / chain caveats")}
+      </div>
+      <h2>30 / 60 / 90 Windows</h2>
+      <div class="derivative-window-grid">{''.join(_derivative_window_card(item) for item in analysis.get('windows', []))}</div>
+      <h2>Chain Quality</h2>
+      {_derivative_key_value_grid(analysis.get("chain_quality", {}))}
+      <h2>Top Research Calls</h2>
+      {_derivative_contract_rankings(analysis.get("top_calls", {}))}
+      <h2>Top Research Puts</h2>
+      {_derivative_contract_rankings(analysis.get("top_puts", {}))}
+      <h2>P/L Scenario Lab Preview</h2>
+      {_derivative_scenario_preview(analysis.get("scenario_grid", []))}
+      <h2>Derivative Agent Analysis</h2>
+      {_derivative_key_value_grid(analysis.get("agent_updates", {}))}
+      <p class="subtle">Snapshot path: {_safe(analysis.get("snapshot_path", ""))}</p>
+    </section>
+    """
+
+
+def _derivative_window_card(window: dict) -> str:
+    warning = f"<p class='subtle'>{_safe(window.get('warning', ''))}</p>" if window.get("warning") else ""
+    return f"""
+    <article class="attention-card green">
+      <strong>{_safe(str(window.get('target_dte', '-')))}D</strong>
+      <h2>{_safe(window.get('expiration', '-'))}</h2>
+      <p>Actual DTE: {_safe(str(window.get('actual_dte', '-')))} | Diff: {_safe(str(window.get('difference', '-')))}</p>
+      {warning}
+    </article>
+    """
+
+
+def _derivative_key_value_grid(values: dict) -> str:
+    body = "".join(
+        f"<article class='mini-card'><strong>{_safe(str(key).replace('_', ' ').title())}</strong><span>{_safe(str(value))}</span></article>"
+        for key, value in values.items()
+    )
+    return f"<div class='derivative-status-grid'>{body or '<p class=\"empty\">No values available.</p>'}</div>"
+
+
+def _derivative_contract_rankings(groups: dict) -> str:
+    rows: list[str] = []
+    for window, contracts in groups.items():
+        for item in contracts[:5]:
+            contract = item.get("contract", {})
+            model = item.get("model", {})
+            rows.append(
+                "<tr>"
+                f"<td>{_safe(str(window))}D</td>"
+                f"<td>{_safe(contract.get('option_type', ''))}</td>"
+                f"<td>{_safe(contract.get('expiration', ''))}</td>"
+                f"<td>{_safe(str(contract.get('strike', '')))}</td>"
+                f"<td>{_safe(str(item.get('score', '')))}</td>"
+                f"<td>{_safe(str(model.get('theoretical_value', '')))}</td>"
+                f"<td>{_safe(str(model.get('delta', '')))}</td>"
+                f"<td>{_safe(str(model.get('theta', '')))}</td>"
+                f"<td>{_safe(str(item.get('breakeven', '')))}</td>"
+                "</tr>"
+            )
+    if not rows:
+        return "<p class='empty'>No ranked contracts available.</p>"
+    return "<table class='compact-candidate-table'><thead><tr><th>Window</th><th>Type</th><th>Expiration</th><th>Strike</th><th>Research Score</th><th>Theoretical</th><th>Delta</th><th>Theta</th><th>Breakeven</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
+
+
+def _derivative_scenario_preview(points: list[dict]) -> str:
+    sample = points[:8]
+    rows = "".join(
+        "<tr>"
+        f"<td>{_safe(str(point.get('underlying_price', '')))}</td>"
+        f"<td>{_safe(point.get('valuation_date', ''))}</td>"
+        f"<td>{_safe(str(point.get('theoretical_value', '')))}</td>"
+        f"<td>{_safe(str(point.get('dollar_pl', '')))}</td>"
+        f"<td>{_safe(str(point.get('percent_pl', '')))}%</td>"
+        "</tr>"
+        for point in sample
+    )
+    return "<table class='compact-candidate-table'><thead><tr><th>Underlying</th><th>Date</th><th>Theoretical</th><th>Dollar P/L</th><th>Percent P/L</th></tr></thead><tbody>" + (rows or "<tr><td colspan='5' class='empty'>No scenario grid yet.</td></tr>") + "</tbody></table>"
+
+
 def _staging_source_stage_form(ticker: str, source_list: str) -> str:
     bucket_options = _staging_bucket_options("research")
     return f"""
@@ -5906,6 +6106,22 @@ def _wall_count(label: str, value: int, color: str) -> str:
     return f"<div class='wall-count {color}'><strong>{value}</strong><span>{_safe(label)}</span></div>"
 
 
+def _wall_options_manifesto(manifesto: dict) -> str:
+    if manifesto.get("status") == "empty":
+        return """
+        <p>No derivative analysis yet.</p>
+        <p><a href="/greenrock/derivatives">Open Derivative Workbench</a></p>
+        """
+    return f"""
+    <p><strong>Analyzed:</strong> {_safe(str(manifesto.get('staged_tickers_analyzed', 0)))} | <strong>Healthy chains:</strong> {_safe(str(manifesto.get('healthy_chains', 0)))}</p>
+    <p><strong>Timing leader:</strong> {_safe(str(manifesto.get('timing_leader', 'none')))}</p>
+    <p><strong>30D:</strong> {_safe(str(manifesto.get('strongest_30d', 'none')))}</p>
+    <p><strong>60D:</strong> {_safe(str(manifesto.get('strongest_60d', 'none')))}</p>
+    <p><strong>90D:</strong> {_safe(str(manifesto.get('strongest_90d', 'none')))}</p>
+    <p class="subtle">{_safe(str(manifesto.get('material_warning', '')))} / updated {_safe(_wall_short_timestamp(str(manifesto.get('updated_at', 'none'))))}</p>
+    """
+
+
 def _wall_inbox_item(item) -> str:
     return f"""
     <div class="wall-inbox-item">
@@ -6287,6 +6503,7 @@ def _page(title: str, content: str, active: str = "/") -> str:
                 ("Watchlists", "/greenrock/watchlists"),
                 ("Staging", "/greenrock/staging"),
                 ("Score", "/greenrock/score"),
+                ("Derivative Workbench", "/greenrock/derivatives"),
                 ("Report Workbench", "/greenrock/report-workbench"),
             ),
         ),
@@ -6519,6 +6736,16 @@ def _page(title: str, content: str, active: str = "/") -> str:
     .source-notes-row textarea {{ min-height: 58px; width: 100%; }}
     .source-action-row {{ display: grid; grid-template-columns: minmax(180px, .45fr) auto; gap: 8px; align-items: center; max-width: 100%; }}
     .source-action-row select, .source-action-row button {{ max-width: 100%; }}
+    .derivative-control-panel {{ border-color: rgba(55,214,122,.26); }}
+    .derivative-chip-row {{ display: flex; flex-wrap: wrap; gap: 8px; }}
+    .derivative-status-grid {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 12px 0; }}
+    .derivative-window-grid {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 12px 0 18px; }}
+    .mini-card {{ border: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.04); border-radius: 8px; padding: 10px; display: grid; gap: 4px; min-width: 0; }}
+    .mini-card strong {{ color: #d6ffe4; font-size: 13px; overflow-wrap: anywhere; }}
+    .mini-card span {{ color: var(--muted); overflow-wrap: anywhere; }}
+    .wall-split-intel {{ display: grid; grid-template-rows: 1fr 1fr; gap: 8px; height: 100%; }}
+    .wall-options-manifesto {{ border-top: 1px solid rgba(255,255,255,.12); padding-top: 8px; }}
+    .wall-options-manifesto p {{ margin: 3px 0; }}
     .calculator-card {{ display: flex; align-items: center; justify-content: space-between; gap: 16px; border-color: rgba(55,214,122,.38); }}
     .score-tool-hero {{ display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, .5fr); gap: 22px; align-items: end; }}
     .score-tool-hero .score-form {{ margin: 0; }}
@@ -6665,6 +6892,7 @@ def _page(title: str, content: str, active: str = "/") -> str:
       .source-card-top {{ flex-direction: column; }}
       .source-card-badges {{ justify-content: flex-start; }}
       .source-action-row {{ grid-template-columns: 1fr; }}
+      .derivative-status-grid, .derivative-window-grid {{ grid-template-columns: 1fr; }}
       .compact-source-table, .market-pulse-table, .compact-candidate-table {{ min-width: 760px; }}
       .calculator-card, .score-hero-line {{ align-items: flex-start; flex-direction: column; }}
       main, header, footer {{ padding-left: 16px; padding-right: 16px; }}

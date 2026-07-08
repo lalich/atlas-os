@@ -64,6 +64,10 @@ atlas greenrock latest-candidates
 atlas greenrock picks-board
 atlas greenrock score AAPL
 atlas greenrock score-audit AAPL SOFI PLTR NVDA
+atlas greenrock derivatives doctor AAPL
+atlas greenrock derivatives snapshot AAPL
+atlas greenrock derivatives analyze AAPL
+atlas greenrock derivatives analyze-staged
 atlas greenrock review
 atlas greenrock open-latest
 atlas greenrock export-pdf <approval_id>

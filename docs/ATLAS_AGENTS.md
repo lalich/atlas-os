@@ -60,6 +60,16 @@ Configured agents:
 - QA Agent: flags provider failures, missing analytics, underfilled or overfilled staging buckets, pending approvals, and approved reports missing PDFs.
 - Inbox Agent: turns safe findings into local Atlas Inbox items.
 
+Derivative Workbench adds a local derivative desk inside GreenRock, not the main Wall Agent Room:
+
+- Chain Agent: inspects options provider readiness, expirations, calls, puts, and chain-quality fields.
+- Timing Agent: calculates Derivative Timing Score without mutating GreenRock Score or ranking.
+- Greeks Agent: runs American binomial model outputs and finite-difference Greeks.
+- Scenario Agent: prepares research-only scenario grids.
+- Derivatives Analyst: summarizes research fit, contract quality, scenario profile, and timing alignment without recommendation or order language.
+
+These derivative agents may write local derivative snapshots and Workbench summaries only. They may not trade, place broker/API orders, send email or Slack, publish, create client files, call external LLM/API services, create reports, insert options into reports, approve drafts, or export PDFs. Atlas Wall shows only the compact **Options Manifesto** summary; detailed options work stays on `/greenrock/derivatives`.
+
 ## Agent Runs
 
 Run records are stored locally as JSON:

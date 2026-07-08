@@ -325,6 +325,9 @@ atlas greenrock scan --population all
 atlas greenrock scan-promote <scan_id> SOFI --list watchlist
 atlas greenrock staging add SOFI --bucket small_mid
 atlas greenrock staging ready
+atlas greenrock derivatives doctor SOFI
+atlas greenrock derivatives analyze SOFI
+atlas greenrock derivatives analyze-staged
 atlas greenrock report-from-staging --allow-underfilled
 ```
 
@@ -340,6 +343,7 @@ http://127.0.0.1:8000/greenrock/market-pulse
 http://127.0.0.1:8000/greenrock/scanner
 http://127.0.0.1:8000/greenrock/watchlists
 http://127.0.0.1:8000/greenrock/staging
+http://127.0.0.1:8000/greenrock/derivatives
 ```
 
 Outputs are local only:
@@ -401,6 +405,21 @@ Without `--allow-underfilled`, Atlas blocks underfilled staging buckets. With it
 Missing analytics are a separate readiness issue from underfilled sections. Manually staged names or list-sourced names may need Score, Confidence, Evidence Agreement, Guardrail, Research Priority, and signal fields refreshed before report generation. Run `atlas greenrock staging enrich` for staged candidates only, or use `atlas greenrock staging enrich --scope visible` / the browser **Refresh / Enrich Staging Page** button to refresh staged candidates, watchlist candidates, and latest scan candidates shown on the staging page. Watchlist and latest scan refresh values are stored in a local display cache at `.atlas/output/greenrock/staging/enrichment_cache.csv` when mutating their source records is not appropriate. If the real provider is missing, enrichment fails cleanly with setup instructions and creates no report, approval, artifact, PDF, email, Slack message, publication, trade, or client file.
 
 `atlas greenrock report-from-staging` blocks when analytics are missing unless `--allow-missing-analytics` is explicitly supplied. That override should only be used for intentional drafts that include data warnings.
+
+## Derivative Workbench
+
+Open `/greenrock/derivatives` for research-only single-leg options analysis. The Workbench can analyze staged GreenRock tickers or a manual ticker, select nearest practical 30/60/90 day expirations, price American-style equity options with the binomial tree model, rank research calls/puts, and show a scenario lab. Successful runs write local snapshots under `.atlas/output/greenrock/derivatives/snapshots/`.
+
+CLI:
+
+```bash
+atlas greenrock derivatives doctor AAPL
+atlas greenrock derivatives snapshot AAPL
+atlas greenrock derivatives analyze AAPL
+atlas greenrock derivatives analyze-staged
+```
+
+Derivative analysis is not a recommendation and does not mutate GreenRock Score, Confidence, Evidence Agreement, ranking, staging, reports, approvals, PDFs, universes, watchlists, email, Slack, publishing, trading, broker/API orders, client files, credentials, or external LLM/API services. Atlas Wall shows only the compact **Options Manifesto** summary; detailed chain work stays inside the Workbench.
 
 The GreenRock Report Review Center shows run metadata, data mode, selection mode, candidate source, source lists, scan IDs, candidate tables, evidence notes, approval status, and PDF status in one browser page. Approve/reject controls still open a confirmation page, and PDF export remains blocked until approval.
 

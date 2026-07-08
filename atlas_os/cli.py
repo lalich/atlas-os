@@ -38,6 +38,12 @@ from atlas_os.core.workflow_steps import list_workflow_steps
 from atlas_os.db.database import connect, initialize_database
 from atlas_os.greenrock.lifecycle import cleanup_greenrock_drafts
 from atlas_os.greenrock.market_data import MarketDataConfigurationError
+from atlas_os.greenrock.derivatives import (
+    create_options_snapshot,
+    options_manifesto,
+    provider_diagnostics as derivatives_provider_diagnostics,
+    analyze_staged as analyze_staged_derivatives,
+)
 from atlas_os.greenrock.market_engine import MARKET_ARCHETYPES, classify_market_archetype
 from atlas_os.greenrock.market_pulse import stage_analyst_slate_candidates, stage_top_market_pulse_candidates
 from atlas_os.greenrock.memory import compare_ticker, load_memory_rows, memory_movers, memory_summary, movement_explanation, ticker_history
@@ -318,6 +324,18 @@ def build_parser() -> argparse.ArgumentParser:
         default="real",
         help=argparse.SUPPRESS,
     )
+    derivatives = greenrock_subparsers.add_parser(
+        "derivatives",
+        help="Run research-only GreenRock Derivative Workbench commands.",
+    )
+    derivatives_subparsers = derivatives.add_subparsers(dest="derivatives_command")
+    derivatives_doctor = derivatives_subparsers.add_parser("doctor", help="Check local options provider readiness for a ticker.")
+    derivatives_doctor.add_argument("ticker")
+    derivatives_snapshot = derivatives_subparsers.add_parser("snapshot", help="Create a local options snapshot for one ticker.")
+    derivatives_snapshot.add_argument("ticker")
+    derivatives_analyze = derivatives_subparsers.add_parser("analyze", help="Analyze one ticker with the Derivative Workbench.")
+    derivatives_analyze.add_argument("ticker")
+    derivatives_subparsers.add_parser("analyze-staged", help="Analyze currently staged GreenRock tickers locally.")
     greenrock_subparsers.add_parser(
         "review",
         help="Show latest GreenRock report review summary.",
@@ -1321,6 +1339,48 @@ def run_greenrock_score_audit(tickers: list[str], data_mode: str = "real") -> in
             continue
         _print_score_audit(preview)
     return exit_code
+
+
+def run_greenrock_derivatives(command: str | None, ticker: str | None = None) -> int:
+    settings = get_settings()
+    if command == "doctor" and ticker:
+        diagnostics = derivatives_provider_diagnostics(ticker)
+        print("GreenRock derivatives doctor")
+        for key, value in diagnostics.items():
+            print(f"{key}: {value}")
+        print("No report, approval, PDF, email, Slack, publication, trading action, client file, or external LLM/API action was created.")
+        return 0 if diagnostics.get("status") == "ready" else 1
+    if command in {"snapshot", "analyze"} and ticker:
+        try:
+            analysis = create_options_snapshot(settings.output_dir, ticker)
+        except (MarketDataConfigurationError, ValueError) as error:
+            print("GreenRock derivatives analysis blocked")
+            print(f"ticker: {ticker.upper()}")
+            print(f"reason: {error}")
+            print("No staging, report, approval, PDF, email, Slack, publication, trading action, client file, or external LLM/API action was created.")
+            return 1
+        print("GreenRock derivatives analysis")
+        print(f"ticker: {analysis.ticker}")
+        print(f"snapshot_id: {analysis.snapshot_id}")
+        print(f"provider: {analysis.provider}")
+        print(f"underlying_price: {analysis.underlying_price}")
+        print(f"timing_score: {analysis.timing_score.score}")
+        print(f"snapshot_path: {analysis.snapshot_path}")
+        print("model: american_binomial")
+        print("baw_comparison: unavailable (planned future approximation)")
+        print("No staging, report, approval, PDF, email, Slack, publication, trading action, client file, or external LLM/API action was created.")
+        return 0
+    if command == "analyze-staged":
+        analyses = analyze_staged_derivatives(settings.output_dir)
+        manifesto = options_manifesto(settings.output_dir)
+        print("GreenRock staged derivatives analysis")
+        print(f"analyzed_count: {len(analyses)}")
+        print(f"manifesto_status: {manifesto.get('status')}")
+        print(f"timing_leader: {manifesto.get('timing_leader')}")
+        print("No staging, report, approval, PDF, email, Slack, publication, trading action, client file, or external LLM/API action was created.")
+        return 0
+    print("Choose a derivatives command: doctor, snapshot, analyze, or analyze-staged.")
+    return 1
 
 
 def _print_score_audit(preview) -> None:
@@ -3039,6 +3099,8 @@ def main(argv: list[str] | None = None) -> int:
             return run_greenrock_score(args.ticker, args.data, args.selection)
         if args.greenrock_command == "score-audit":
             return run_greenrock_score_audit(args.tickers, args.data)
+        if args.greenrock_command == "derivatives":
+            return run_greenrock_derivatives(args.derivatives_command, getattr(args, "ticker", None))
         if args.greenrock_command == "population":
             return run_greenrock_population(
                 args.population_command,
