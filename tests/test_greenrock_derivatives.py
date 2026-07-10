@@ -30,10 +30,12 @@ from atlas_os.greenrock.derivatives import (
     contract_score_factors,
     create_options_snapshot,
     cross_window_research,
+    derive_position_context,
     derivative_timing_score,
     excluded_contracts,
     latest_derivative_analysis,
     options_manifesto,
+    position_context_path,
     price_american_binomial,
     provider_diagnostics,
     rank_contracts,
@@ -298,6 +300,36 @@ class GreenRockDerivativesTests(unittest.TestCase):
         self.assertEqual(rows[0].classification, "insufficient_data")
         self.assertIn("Fewer than two windows", rows[0].rationale)
 
+    def test_position_context_defaults_when_no_portfolio_context_available(self) -> None:
+        context = derive_position_context("LC01", None, None, "", "", True, True, "none")
+
+        self.assertEqual(context.position_direction, "unknown")
+        self.assertFalse(context.flags["covered_call_candidate"])
+        self.assertTrue(context.flags["speculative_only"])
+        self.assertIn("No local position context file found", " ".join(context.notes))
+
+    def test_long_stock_creates_covered_call_and_hedge_context(self) -> None:
+        context = derive_position_context("LC01", 200, 42.5, "", "", True, True)
+
+        self.assertEqual(context.position_direction, "long_stock")
+        self.assertTrue(context.flags["covered_call_candidate"])
+        self.assertTrue(context.flags["hedge_candidate"])
+        self.assertFalse(context.flags["exposure_conflict"])
+
+    def test_no_stock_creates_speculative_and_cash_secured_put_context(self) -> None:
+        context = derive_position_context("LC01", 0, None, "", "", True, True)
+
+        self.assertEqual(context.position_direction, "none")
+        self.assertTrue(context.flags["cash_secured_put_candidate"])
+        self.assertTrue(context.flags["speculative_only"])
+        self.assertFalse(context.flags["covered_call_candidate"])
+
+    def test_conflicting_position_exposure_is_flagged(self) -> None:
+        context = derive_position_context("LC01", 100, 50, "short calls", "short_options", True, True)
+
+        self.assertEqual(context.position_direction, "mixed")
+        self.assertTrue(context.flags["exposure_conflict"])
+
     def test_snapshot_persistence_and_manifesto(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -329,8 +361,24 @@ class GreenRockDerivativesTests(unittest.TestCase):
         self.assertIn("cross_window", loaded)
         self.assertTrue(loaded["cross_window"])
         self.assertIn("classification", loaded["cross_window"][0])
+        self.assertIn("position_context", loaded)
+        self.assertEqual(loaded["position_context"]["position_direction"], "unknown")
         excluded_reasons = [reason for row in loaded["excluded_calls"]["30"] for reason in row["reasons"]]
         self.assertIn("ITM or ATM; Top Research is OTM-only.", excluded_reasons)
+
+    def test_local_position_context_file_is_read_only_and_serialized(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = position_context_path(root / "output")
+            path.parent.mkdir(parents=True)
+            path.write_text("ticker,shares,average_cost,option_exposure,option_direction\nLC01,200,42.5,,\n", encoding="utf-8")
+            create_options_snapshot(root / "output", "LC01", provider=FakeOptionsProvider())
+            loaded = latest_derivative_analysis(root / "output", "LC01")
+
+        self.assertEqual(loaded["position_context"]["current_shares"], 200.0)
+        self.assertEqual(loaded["position_context"]["average_cost"], 42.5)
+        self.assertEqual(loaded["position_context"]["position_direction"], "long_stock")
+        self.assertTrue(loaded["position_context"]["flags"]["covered_call_candidate"])
 
     def test_itm_contracts_remain_in_raw_snapshot_data(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -408,6 +456,8 @@ class GreenRockDerivativesTests(unittest.TestCase):
         self.assertIn("Supported by", page.body)
         self.assertIn("Cross-Window Intelligence", page.body)
         self.assertIn("Score Move", page.body)
+        self.assertIn("Position Context", page.body)
+        self.assertIn("Speculative Only", page.body)
 
     def test_cli_derivatives_doctor_and_analyze_commands(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

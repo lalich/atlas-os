@@ -4817,6 +4817,8 @@ def _derivatives_analysis_panel(analysis: dict | None) -> str:
       <div class="derivative-window-grid">{''.join(_derivative_window_card(item) for item in analysis.get('windows', []))}</div>
       <h2>Chain Quality</h2>
       {_derivative_key_value_grid(analysis.get("chain_quality", {}))}
+      <h2>Position Context</h2>
+      {_derivative_position_context_panel(analysis.get("position_context", {}))}
       <div class="setup-box">
         <p>Top Research Calls/Puts currently screen out ITM contracts and focus on OTM research candidates.</p>
         <p class="subtle">ITM contracts are retained in chain snapshots but excluded from Top Research lists in this phase.</p>
@@ -4856,6 +4858,25 @@ def _derivative_key_value_grid(values: dict) -> str:
         for key, value in values.items()
     )
     return f"<div class='derivative-status-grid'>{body or '<p class=\"empty\">No values available.</p>'}</div>"
+
+
+def _derivative_position_context_panel(context: dict) -> str:
+    if not context:
+        return "<p class='empty'>No position context available.</p>"
+    flags = context.get("flags", {})
+    values = {
+        "Direction": context.get("position_direction", "unknown"),
+        "Shares": context.get("current_shares", "unknown"),
+        "Average Cost": context.get("average_cost", "unknown"),
+        "Option Exposure": context.get("existing_option_exposure", "") or "none",
+        "Covered Call": flags.get("covered_call_candidate", False),
+        "Cash-Secured Put": flags.get("cash_secured_put_candidate", False),
+        "Hedge": flags.get("hedge_candidate", False),
+        "Speculative Only": flags.get("speculative_only", False),
+        "Exposure Conflict": flags.get("exposure_conflict", False),
+    }
+    notes = "".join(f"<p class='subtle'>{_safe(str(note))}</p>" for note in context.get("notes", ()))
+    return _derivative_key_value_grid(values) + notes
 
 
 def _derivative_contract_rankings(groups: dict) -> str:

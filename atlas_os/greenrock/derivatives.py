@@ -52,8 +52,6 @@ SNAPSHOT_HEADERS = [
     "open_interest",
     "implied_volatility",
 ]
-
-
 @dataclass(frozen=True)
 class OptionContract:
     contract_symbol: str
@@ -159,6 +157,18 @@ class CrossWindowResearch:
 
 
 @dataclass(frozen=True)
+class PositionContext:
+    ticker: str
+    current_shares: float | None
+    average_cost: float | None
+    existing_option_exposure: str
+    position_direction: str
+    flags: dict[str, bool]
+    notes: tuple[str, ...]
+    source: str
+
+
+@dataclass(frozen=True)
 class ScenarioPoint:
     underlying_price: float
     valuation_date: str
@@ -182,6 +192,7 @@ class DerivativeAnalysis:
     excluded_calls: dict[str, tuple[ContractExclusion, ...]]
     excluded_puts: dict[str, tuple[ContractExclusion, ...]]
     cross_window: tuple[CrossWindowResearch, ...]
+    position_context: PositionContext
     scenario_grid: tuple[ScenarioPoint, ...]
     agent_updates: dict[str, str]
     warnings: tuple[str, ...]
@@ -336,6 +347,7 @@ def analyze_snapshot(output_dir: Path, snapshot: OptionsChainSnapshot) -> Deriva
         if window.warning:
             warnings.append(window.warning)
     cross_window = cross_window_research(top_calls, top_puts, snapshot.underlying_price)
+    position_context = load_position_context(output_dir, snapshot.ticker, has_calls=_has_ranked_contracts(top_calls), has_puts=_has_ranked_contracts(top_puts))
     scenario_source = _first_contract(top_calls, top_puts)
     scenario_grid = ()
     if scenario_source:
@@ -357,6 +369,7 @@ def analyze_snapshot(output_dir: Path, snapshot: OptionsChainSnapshot) -> Deriva
         excluded_calls=excluded_calls,
         excluded_puts=excluded_puts,
         cross_window=cross_window,
+        position_context=position_context,
         scenario_grid=scenario_grid,
         agent_updates=agent_updates(snapshot, timing, chain_quality),
         warnings=tuple(warnings),
@@ -669,6 +682,64 @@ def classify_cross_window(scores: tuple[float, ...], total_available_windows: in
     return "stable"
 
 
+def load_position_context(output_dir: Path, ticker: str, has_calls: bool = False, has_puts: bool = False) -> PositionContext:
+    normalized = ticker.strip().upper()
+    path = position_context_path(output_dir)
+    if not path.exists():
+        return derive_position_context(normalized, None, None, "", "", has_calls, has_puts, "none")
+    with path.open(newline="", encoding="utf-8") as csv_file:
+        for row in csv.DictReader(csv_file):
+            if row.get("ticker", "").strip().upper() != normalized:
+                continue
+            return derive_position_context(
+                normalized,
+                _optional_float(row.get("shares")),
+                _optional_float(row.get("average_cost")),
+                row.get("option_exposure", "").strip(),
+                row.get("option_direction", "").strip().lower(),
+                has_calls,
+                has_puts,
+                str(path),
+            )
+    return derive_position_context(normalized, None, None, "", "", has_calls, has_puts, str(path))
+
+
+def derive_position_context(
+    ticker: str,
+    shares: float | None,
+    average_cost: float | None,
+    option_exposure: str,
+    option_direction: str,
+    has_calls: bool,
+    has_puts: bool,
+    source: str = "provided",
+) -> PositionContext:
+    clean_option_direction = option_direction if option_direction in {"long_options", "short_options", "mixed"} else ""
+    has_option_exposure = bool(option_exposure.strip() or clean_option_direction)
+    explicit_zero_stock = shares == 0
+    if shares is None and not has_option_exposure:
+        direction = "unknown"
+    elif shares and shares > 0 and not has_option_exposure:
+        direction = "long_stock"
+    elif shares and shares < 0 and not has_option_exposure:
+        direction = "short_stock"
+    elif (shares is None or shares == 0) and clean_option_direction:
+        direction = clean_option_direction
+    elif shares == 0:
+        direction = "none"
+    else:
+        direction = "mixed"
+    flags = {
+        "covered_call_candidate": bool(shares and shares >= 100 and has_calls),
+        "cash_secured_put_candidate": bool((explicit_zero_stock or direction == "none") and has_puts),
+        "hedge_candidate": bool(((shares or 0) > 0 and has_puts) or ((shares or 0) < 0 and has_calls)),
+        "speculative_only": bool((direction in {"none", "unknown"} or shares in (None, 0)) and not has_option_exposure and (has_calls or has_puts)),
+        "exposure_conflict": bool(direction in {"mixed", "short_stock", "short_options"} or clean_option_direction == "mixed"),
+    }
+    notes = _position_context_notes(direction, flags, source)
+    return PositionContext(ticker.strip().upper(), shares, average_cost, option_exposure.strip(), direction, flags, notes, source)
+
+
 def scenario_analysis(
     contract: OptionContract,
     underlying: float,
@@ -783,6 +854,7 @@ def analysis_to_dict(analysis: DerivativeAnalysis) -> dict:
         "excluded_calls": {key: [_contract_exclusion_dict(item) for item in rows] for key, rows in analysis.excluded_calls.items()},
         "excluded_puts": {key: [_contract_exclusion_dict(item) for item in rows] for key, rows in analysis.excluded_puts.items()},
         "cross_window": [asdict(item) for item in analysis.cross_window],
+        "position_context": asdict(analysis.position_context),
         "scenario_grid": [asdict(item) for item in analysis.scenario_grid],
         "agent_updates": analysis.agent_updates,
         "warnings": list(analysis.warnings),
@@ -792,6 +864,10 @@ def analysis_to_dict(analysis: DerivativeAnalysis) -> dict:
 
 def derivatives_snapshot_dir(output_dir: Path, ticker: str, snapshot_id: str) -> Path:
     return Path(output_dir) / "greenrock" / "derivatives" / "snapshots" / ticker.strip().upper() / snapshot_id
+
+
+def position_context_path(output_dir: Path) -> Path:
+    return Path(output_dir) / "greenrock" / "derivatives" / "position_context.csv"
 
 
 def window_dte(expiration: str) -> int:
@@ -1134,6 +1210,31 @@ def _cross_window_rationale(classification: str, windows: tuple[str, ...], score
     if classification == "weakening":
         return f"Score fades across windows ({score_text}); {rank_text}."
     return f"Scores stay clustered across windows ({score_text}); {rank_text}."
+
+
+def _has_ranked_contracts(groups: dict[str, tuple[ContractResearch, ...]]) -> bool:
+    return any(bool(rows) for rows in groups.values())
+
+
+def _position_context_notes(direction: str, flags: dict[str, bool], source: str) -> tuple[str, ...]:
+    notes: list[str] = []
+    if source == "none":
+        notes.append("No local position context file found; research is shown without portfolio assumptions.")
+    elif direction == "unknown":
+        notes.append("No matching local position row found; exposure context is unknown.")
+    else:
+        notes.append("Local read-only position context applied; no broker or order action is available.")
+    if flags.get("covered_call_candidate"):
+        notes.append("Long stock context may make covered-call research relevant.")
+    if flags.get("cash_secured_put_candidate"):
+        notes.append("No stock position is recorded; put research may be cash-secured only if cash is available.")
+    if flags.get("hedge_candidate"):
+        notes.append("Existing stock exposure may make hedge research relevant.")
+    if flags.get("speculative_only"):
+        notes.append("No stock or option exposure is recorded; options research is speculative-only context.")
+    if flags.get("exposure_conflict"):
+        notes.append("Existing exposure may conflict with simple single-leg research framing.")
+    return tuple(notes)
 
 
 def _write_json(path: Path, payload: dict) -> None:
