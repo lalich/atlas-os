@@ -4821,6 +4821,8 @@ def _derivatives_analysis_panel(analysis: dict | None) -> str:
         <p>Top Research Calls/Puts currently screen out ITM contracts and focus on OTM research candidates.</p>
         <p class="subtle">ITM contracts are retained in chain snapshots but excluded from Top Research lists in this phase.</p>
       </div>
+      <h2>Cross-Window Intelligence</h2>
+      {_derivative_cross_window_table(analysis.get("cross_window", []))}
       <h2>Top Research Calls</h2>
       {_derivative_contract_rankings(analysis.get("top_calls", {}))}
       <h2>Top Research Puts</h2>
@@ -4880,6 +4882,24 @@ def _derivative_contract_rankings(groups: dict) -> str:
     if not rows:
         return "<p class='empty'>No ranked contracts available.</p>"
     return "<table class='compact-candidate-table'><thead><tr><th>Window</th><th>Type</th><th>Expiration</th><th>Strike</th><th>Research Score</th><th>Theoretical</th><th>Delta</th><th>Theta</th><th>Breakeven</th><th>Score Factors</th><th>Rationale</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
+
+
+def _derivative_cross_window_table(rows: list[dict]) -> str:
+    body = "".join(
+        "<tr>"
+        f"<td>{_safe(row.get('option_type', ''))}</td>"
+        f"<td>{_safe(str(row.get('idea_key', '')))}</td>"
+        f"<td>{_safe(str(row.get('classification', '')))}</td>"
+        f"<td>{_safe(' / '.join(str(item) + 'D' for item in row.get('windows', [])))}</td>"
+        f"<td>{_safe(str(row.get('score_movement', '')))}</td>"
+        f"<td>{_safe(str(row.get('rank_movement', '')))}</td>"
+        f"<td>{_safe(str(row.get('rationale', '')))}</td>"
+        "</tr>"
+        for row in rows
+    )
+    if not body:
+        return "<p class='empty'>No cross-window comparison available.</p>"
+    return "<table class='compact-candidate-table'><thead><tr><th>Type</th><th>Idea</th><th>State</th><th>Windows</th><th>Score Move</th><th>Rank Move</th><th>Rationale</th></tr></thead><tbody>" + body + "</tbody></table>"
 
 
 def _derivative_score_factor_summary(factors: dict) -> str:

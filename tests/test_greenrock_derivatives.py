@@ -17,15 +17,19 @@ from atlas_os.core.artifacts import list_artifacts
 from atlas_os.core.workflow_runs import list_workflow_runs
 from atlas_os.db.database import connect, initialize_database
 from atlas_os.greenrock.derivatives import (
+    BinomialResult,
+    ContractResearch,
     OptionContract,
     OptionsChainSnapshot,
     OptionsDataProvider,
     analyze_staged,
     chain_quality_summary,
+    classify_cross_window,
     contract_exclusion_reasons,
     contract_research_score,
     contract_score_factors,
     create_options_snapshot,
+    cross_window_research,
     derivative_timing_score,
     excluded_contracts,
     latest_derivative_analysis,
@@ -266,6 +270,34 @@ class GreenRockDerivativesTests(unittest.TestCase):
         self.assertLessEqual(len(rationale), 100)
         self.assertGreater(contract_research_score(factors), 0)
 
+    def test_cross_window_classification_states_are_deterministic(self) -> None:
+        self.assertEqual(classify_cross_window((60.0,), total_available_windows=1), "insufficient_data")
+        self.assertEqual(classify_cross_window((60.0,), total_available_windows=3), "isolated")
+        self.assertEqual(classify_cross_window((60.0, 66.0, 72.0), total_available_windows=3), "strengthening")
+        self.assertEqual(classify_cross_window((72.0, 66.0, 60.0), total_available_windows=3), "weakening")
+        self.assertEqual(classify_cross_window((70.0, 72.0, 71.0), total_available_windows=3), "stable")
+        self.assertEqual(classify_cross_window((60.0, 66.0, 72.0), total_available_windows=3), classify_cross_window((60.0, 66.0, 72.0), total_available_windows=3))
+
+    def test_cross_window_research_detects_strengthening_stable_weakening_and_isolated(self) -> None:
+        windows = ("30", "60", "90")
+        strengthening = cross_window_research(_research_groups("call", windows, (60, 67, 74), 105), {}, 100)[0]
+        stable = cross_window_research(_research_groups("call", windows, (70, 71, 72), 105), {}, 100)[0]
+        weakening = cross_window_research(_research_groups("call", windows, (74, 67, 60), 105), {}, 100)[0]
+        isolated = cross_window_research({"30": (_research_item("call", "30", 105, 70),), "60": (_research_item("call", "60", 112, 68),), "90": (_research_item("call", "90", 125, 66),)}, {}, 100)[0]
+
+        self.assertEqual(strengthening.classification, "strengthening")
+        self.assertEqual(stable.classification, "stable")
+        self.assertEqual(weakening.classification, "weakening")
+        self.assertEqual(isolated.classification, "isolated")
+        self.assertIn("Score improves", strengthening.rationale)
+        self.assertEqual(strengthening.score_movement, 14)
+
+    def test_cross_window_research_reports_insufficient_data(self) -> None:
+        rows = cross_window_research({"30": (_research_item("call", "30", 105, 70),), "60": (), "90": ()}, {}, 100)
+
+        self.assertEqual(rows[0].classification, "insufficient_data")
+        self.assertIn("Fewer than two windows", rows[0].rationale)
+
     def test_snapshot_persistence_and_manifesto(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -294,6 +326,9 @@ class GreenRockDerivativesTests(unittest.TestCase):
         self.assertIn("scenario_behavior", factor_keys)
         self.assertIn("ranking_rationale", loaded["top_calls"]["30"][0])
         self.assertIn("Supported by", loaded["top_calls"]["30"][0]["ranking_rationale"])
+        self.assertIn("cross_window", loaded)
+        self.assertTrue(loaded["cross_window"])
+        self.assertIn("classification", loaded["cross_window"][0])
         excluded_reasons = [reason for row in loaded["excluded_calls"]["30"] for reason in row["reasons"]]
         self.assertIn("ITM or ATM; Top Research is OTM-only.", excluded_reasons)
 
@@ -371,6 +406,8 @@ class GreenRockDerivativesTests(unittest.TestCase):
         self.assertIn("Scenario", page.body)
         self.assertIn("Rationale", page.body)
         self.assertIn("Supported by", page.body)
+        self.assertIn("Cross-Window Intelligence", page.body)
+        self.assertIn("Score Move", page.body)
 
     def test_cli_derivatives_doctor_and_analyze_commands(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -402,6 +439,31 @@ def _prices() -> tuple[float, ...]:
 
 def _volumes() -> tuple[int, ...]:
     return tuple(100_000 + index * 250 + (index % 5) * 7_500 for index in range(260))
+
+
+def _research_groups(option_type: str, windows: tuple[str, ...], scores: tuple[float, ...], strike: float) -> dict[str, tuple[ContractResearch, ...]]:
+    return {
+        window: (_research_item(option_type, window, strike, score),)
+        for window, score in zip(windows, scores)
+    }
+
+
+def _research_item(option_type: str, window: str, strike: float, score: float) -> ContractResearch:
+    expiration = (date.today() + timedelta(days=int(window))).isoformat()
+    contract = OptionContract(f"{option_type.upper()}{window}{strike}", option_type, expiration, strike, 2.0, 2.2, 2.1, 200, 1000, 0.35)
+    model = BinomialResult("american_binomial", "fixture", 2.1, 0.4, 0.01, -0.02, 0.1, 0.01, False, 0.0, 2.1, (), ())
+    factors = {
+        "liquidity": 90.0,
+        "spread": 90.0,
+        "otm_proximity": 90.0,
+        "otm_distance_pct": abs(strike - 100) / 100 * 100,
+        "iv_condition": 90.0,
+        "premium_quality": 90.0,
+        "window_fit": 90.0,
+        "timing_alignment": 90.0,
+        "scenario_behavior": 90.0,
+    }
+    return ContractResearch(contract, score, factors, (), model, strike + 2.1 if option_type == "call" else strike - 2.1, "fixture rationale")
 
 
 def _run_cli_raw(args: list[str]) -> tuple[str, int]:

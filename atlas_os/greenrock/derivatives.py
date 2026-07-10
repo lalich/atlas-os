@@ -146,6 +146,19 @@ class ContractExclusion:
 
 
 @dataclass(frozen=True)
+class CrossWindowResearch:
+    option_type: str
+    idea_key: str
+    classification: str
+    windows: tuple[str, ...]
+    scores: tuple[float, ...]
+    ranks: tuple[int, ...]
+    score_movement: float
+    rank_movement: int
+    rationale: str
+
+
+@dataclass(frozen=True)
 class ScenarioPoint:
     underlying_price: float
     valuation_date: str
@@ -168,6 +181,7 @@ class DerivativeAnalysis:
     top_puts: dict[str, tuple[ContractResearch, ...]]
     excluded_calls: dict[str, tuple[ContractExclusion, ...]]
     excluded_puts: dict[str, tuple[ContractExclusion, ...]]
+    cross_window: tuple[CrossWindowResearch, ...]
     scenario_grid: tuple[ScenarioPoint, ...]
     agent_updates: dict[str, str]
     warnings: tuple[str, ...]
@@ -321,6 +335,7 @@ def analyze_snapshot(output_dir: Path, snapshot: OptionsChainSnapshot) -> Deriva
         excluded_puts[str(window.target_dte)] = excluded_contracts(puts, "put", snapshot.underlying_price)
         if window.warning:
             warnings.append(window.warning)
+    cross_window = cross_window_research(top_calls, top_puts, snapshot.underlying_price)
     scenario_source = _first_contract(top_calls, top_puts)
     scenario_grid = ()
     if scenario_source:
@@ -341,6 +356,7 @@ def analyze_snapshot(output_dir: Path, snapshot: OptionsChainSnapshot) -> Deriva
         top_puts=top_puts,
         excluded_calls=excluded_calls,
         excluded_puts=excluded_puts,
+        cross_window=cross_window,
         scenario_grid=scenario_grid,
         agent_updates=agent_updates(snapshot, timing, chain_quality),
         warnings=tuple(warnings),
@@ -625,6 +641,34 @@ def ranking_rationale(factors: dict[str, float]) -> str:
     return f"Supported by {positive_text}; watch {caution_text}."
 
 
+def cross_window_research(
+    top_calls: dict[str, tuple[ContractResearch, ...]],
+    top_puts: dict[str, tuple[ContractResearch, ...]],
+    underlying: float,
+) -> tuple[CrossWindowResearch, ...]:
+    rows = [
+        _cross_window_side("call", top_calls, underlying),
+        _cross_window_side("put", top_puts, underlying),
+    ]
+    rows = [row for row in rows if row is not None]
+    rows.sort(key=lambda row: (row.option_type, row.idea_key))
+    return tuple(rows)
+
+
+def classify_cross_window(scores: tuple[float, ...], total_available_windows: int | None = None) -> str:
+    if len(scores) < 2:
+        return "insufficient_data" if (total_available_windows or 0) < 2 else "isolated"
+    movement = round(scores[-1] - scores[0], 2)
+    score_range = max(scores) - min(scores)
+    if score_range <= 3:
+        return "stable"
+    if movement >= 5:
+        return "strengthening"
+    if movement <= -5:
+        return "weakening"
+    return "stable"
+
+
 def scenario_analysis(
     contract: OptionContract,
     underlying: float,
@@ -738,6 +782,7 @@ def analysis_to_dict(analysis: DerivativeAnalysis) -> dict:
         "top_puts": {key: [_contract_research_dict(item) for item in rows] for key, rows in analysis.top_puts.items()},
         "excluded_calls": {key: [_contract_exclusion_dict(item) for item in rows] for key, rows in analysis.excluded_calls.items()},
         "excluded_puts": {key: [_contract_exclusion_dict(item) for item in rows] for key, rows in analysis.excluded_puts.items()},
+        "cross_window": [asdict(item) for item in analysis.cross_window],
         "scenario_grid": [asdict(item) for item in analysis.scenario_grid],
         "agent_updates": analysis.agent_updates,
         "warnings": list(analysis.warnings),
@@ -1019,6 +1064,76 @@ def _score_factor_output(item: ContractResearch) -> dict[str, float]:
         "timing_window_alignment": factors.get("timing_alignment", 0.0),
         "scenario_behavior": factors.get("scenario_behavior", 0.0),
     }
+
+
+def _cross_window_side(option_type: str, groups: dict[str, tuple[ContractResearch, ...]], underlying: float) -> CrossWindowResearch | None:
+    available_windows = tuple(window for window in _ordered_windows(groups) if groups.get(window))
+    if len(available_windows) < 2:
+        return CrossWindowResearch(
+            option_type,
+            "insufficient_data",
+            "insufficient_data",
+            available_windows,
+            tuple(),
+            tuple(),
+            0.0,
+            0,
+            "Fewer than two windows have Top Research candidates.",
+        )
+    buckets: dict[str, list[tuple[str, int, ContractResearch]]] = {}
+    for window in available_windows:
+        for rank, item in enumerate(groups.get(window, ()), start=1):
+            buckets.setdefault(_idea_key(item, underlying), []).append((window, rank, item))
+    best_key = min(buckets, key=lambda key: (-len(buckets[key]), _bucket_rank_sum(buckets[key]), key))
+    cohort = sorted(buckets[best_key], key=lambda row: _window_sort_key(row[0]))
+    windows = tuple(row[0] for row in cohort)
+    scores = tuple(row[2].score for row in cohort)
+    ranks = tuple(row[1] for row in cohort)
+    classification = classify_cross_window(scores, total_available_windows=len(available_windows))
+    score_movement = round(scores[-1] - scores[0], 2) if len(scores) >= 2 else 0.0
+    rank_movement = ranks[0] - ranks[-1] if len(ranks) >= 2 else 0
+    rationale = _cross_window_rationale(classification, windows, scores, ranks, len(available_windows))
+    return CrossWindowResearch(option_type, best_key, classification, windows, scores, ranks, score_movement, rank_movement, rationale)
+
+
+def _ordered_windows(groups: dict[str, tuple[ContractResearch, ...]]) -> tuple[str, ...]:
+    return tuple(sorted(groups, key=_window_sort_key))
+
+
+def _window_sort_key(window: str) -> int:
+    try:
+        return int(window)
+    except ValueError:
+        return 9999
+
+
+def _idea_key(item: ContractResearch, underlying: float) -> str:
+    distance = item.factors.get("otm_distance_pct")
+    if distance is None:
+        distance = abs(item.contract.strike - underlying) / underlying * 100 if underlying else 100.0
+    if distance <= 7:
+        return "near_otm"
+    if distance <= 18:
+        return "mid_otm"
+    return "far_otm"
+
+
+def _bucket_rank_sum(rows: list[tuple[str, int, ContractResearch]]) -> int:
+    return sum(rank for _, rank, _ in rows)
+
+
+def _cross_window_rationale(classification: str, windows: tuple[str, ...], scores: tuple[float, ...], ranks: tuple[int, ...], available_count: int) -> str:
+    if classification == "insufficient_data":
+        return "Fewer than two windows have Top Research candidates."
+    if classification == "isolated":
+        return f"Appears in {windows[0]}D only; {available_count} window(s) had candidates."
+    score_text = f"{windows[0]}D {scores[0]} to {windows[-1]}D {scores[-1]}"
+    rank_text = f"rank {ranks[0]} to {ranks[-1]}"
+    if classification == "strengthening":
+        return f"Score improves across windows ({score_text}); {rank_text}."
+    if classification == "weakening":
+        return f"Score fades across windows ({score_text}); {rank_text}."
+    return f"Scores stay clustered across windows ({score_text}); {rank_text}."
 
 
 def _write_json(path: Path, payload: dict) -> None:
