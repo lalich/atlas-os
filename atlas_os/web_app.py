@@ -4825,6 +4825,8 @@ def _derivatives_analysis_panel(analysis: dict | None) -> str:
       {_derivative_contract_rankings(analysis.get("top_calls", {}))}
       <h2>Top Research Puts</h2>
       {_derivative_contract_rankings(analysis.get("top_puts", {}))}
+      <h2>Excluded From Top Research</h2>
+      {_derivative_exclusion_table(analysis.get("excluded_calls", {}), analysis.get("excluded_puts", {}))}
       <h2>P/L Scenario Lab Preview</h2>
       {_derivative_scenario_preview(analysis.get("scenario_grid", []))}
       <h2>Derivative Agent Analysis</h2>
@@ -4871,11 +4873,48 @@ def _derivative_contract_rankings(groups: dict) -> str:
                 f"<td>{_safe(str(model.get('delta', '')))}</td>"
                 f"<td>{_safe(str(model.get('theta', '')))}</td>"
                 f"<td>{_safe(str(item.get('breakeven', '')))}</td>"
+                f"<td>{_derivative_score_factor_summary(item.get('score_factors', {}))}</td>"
                 "</tr>"
             )
     if not rows:
         return "<p class='empty'>No ranked contracts available.</p>"
-    return "<table class='compact-candidate-table'><thead><tr><th>Window</th><th>Type</th><th>Expiration</th><th>Strike</th><th>Research Score</th><th>Theoretical</th><th>Delta</th><th>Theta</th><th>Breakeven</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
+    return "<table class='compact-candidate-table'><thead><tr><th>Window</th><th>Type</th><th>Expiration</th><th>Strike</th><th>Research Score</th><th>Theoretical</th><th>Delta</th><th>Theta</th><th>Breakeven</th><th>Score Factors</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
+
+
+def _derivative_score_factor_summary(factors: dict) -> str:
+    labels = (
+        ("liquidity", "Liq"),
+        ("spread_quality", "Spread"),
+        ("iv_condition", "IV"),
+        ("otm_distance", "OTM"),
+        ("premium_quality", "Prem"),
+        ("timing_window_alignment", "Timing"),
+        ("scenario_behavior", "Scenario"),
+    )
+    return "<span class='factor-list'>" + " / ".join(
+        f"{label} {_safe(str(factors.get(key, '-')))}"
+        for key, label in labels
+    ) + "</span>"
+
+
+def _derivative_exclusion_table(call_groups: dict, put_groups: dict) -> str:
+    rows: list[str] = []
+    for label, groups in (("call", call_groups), ("put", put_groups)):
+        for window, items in groups.items():
+            for item in items[:8]:
+                contract = item.get("contract", {})
+                rows.append(
+                    "<tr>"
+                    f"<td>{_safe(str(window))}D</td>"
+                    f"<td>{_safe(label)}</td>"
+                    f"<td>{_safe(contract.get('expiration', ''))}</td>"
+                    f"<td>{_safe(str(contract.get('strike', '')))}</td>"
+                    f"<td>{_safe('; '.join(item.get('reasons', [])))}</td>"
+                    "</tr>"
+                )
+    if not rows:
+        return "<p class='empty'>No contracts excluded by Top Research guardrails.</p>"
+    return "<table class='compact-candidate-table'><thead><tr><th>Window</th><th>Type</th><th>Expiration</th><th>Strike</th><th>Reason</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
 
 
 def _derivative_scenario_preview(points: list[dict]) -> str:
@@ -6697,6 +6736,7 @@ def _page(title: str, content: str, active: str = "/") -> str:
     .compact-source-table th, .compact-source-table td,
     .market-pulse-table th, .market-pulse-table td,
     .compact-candidate-table th, .compact-candidate-table td {{ padding: 7px 6px; overflow-wrap: anywhere; vertical-align: top; }}
+    .factor-list {{ display: block; font-size: 11px; line-height: 1.35; color: var(--muted); }}
     .ticker-col {{ width: 76px; }}
     .metric-col {{ width: 62px; }}
     .guardrail-col {{ width: 86px; }}

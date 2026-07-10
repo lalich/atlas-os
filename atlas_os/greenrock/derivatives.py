@@ -26,6 +26,19 @@ from atlas_os.greenrock.staging import load_staged_candidates
 DEFAULT_RISK_FREE_RATE = 0.04
 DEFAULT_BINOMIAL_STEPS = 120
 TARGET_DTES = (30, 60, 90)
+CONTRACT_SCORE_FACTOR_KEYS = (
+    "liquidity",
+    "spread",
+    "otm_proximity",
+    "delta_range",
+    "theta_burden",
+    "iv_condition",
+    "model_availability",
+    "premium_quality",
+    "breakeven_distance",
+    "timing_alignment",
+    "scenario_behavior",
+)
 SNAPSHOT_HEADERS = [
     "contract_symbol",
     "option_type",
@@ -125,6 +138,12 @@ class ContractResearch:
 
 
 @dataclass(frozen=True)
+class ContractExclusion:
+    contract: OptionContract
+    reasons: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class ScenarioPoint:
     underlying_price: float
     valuation_date: str
@@ -145,6 +164,8 @@ class DerivativeAnalysis:
     timing_score: TimingScore
     top_calls: dict[str, tuple[ContractResearch, ...]]
     top_puts: dict[str, tuple[ContractResearch, ...]]
+    excluded_calls: dict[str, tuple[ContractExclusion, ...]]
+    excluded_puts: dict[str, tuple[ContractExclusion, ...]]
     scenario_grid: tuple[ScenarioPoint, ...]
     agent_updates: dict[str, str]
     warnings: tuple[str, ...]
@@ -232,7 +253,7 @@ def provider_diagnostics(ticker: str, provider: OptionsDataProvider | None = Non
         return diagnostics
     try:
         snapshot = (provider or YFinanceOptionsProvider(ticker)).fetch_snapshot(ticker)
-    except (MarketDataConfigurationError, ValueError) as error:
+    except Exception as error:
         diagnostics["message"] = str(error)
         return diagnostics
     contracts = snapshot.calls + snapshot.puts
@@ -286,12 +307,16 @@ def analyze_snapshot(output_dir: Path, snapshot: OptionsChainSnapshot) -> Deriva
     timing = derivative_timing_score(snapshot.price_history, snapshot.volume_history)
     top_calls: dict[str, tuple[ContractResearch, ...]] = {}
     top_puts: dict[str, tuple[ContractResearch, ...]] = {}
+    excluded_calls: dict[str, tuple[ContractExclusion, ...]] = {}
+    excluded_puts: dict[str, tuple[ContractExclusion, ...]] = {}
     warnings = list(snapshot.warnings)
     for window in windows:
         calls = tuple(contract for contract in snapshot.calls if contract.expiration == window.expiration)
         puts = tuple(contract for contract in snapshot.puts if contract.expiration == window.expiration)
         top_calls[str(window.target_dte)] = rank_contracts(calls, "call", snapshot.underlying_price, window.actual_dte, timing)[:5]
         top_puts[str(window.target_dte)] = rank_contracts(puts, "put", snapshot.underlying_price, window.actual_dte, timing)[:5]
+        excluded_calls[str(window.target_dte)] = excluded_contracts(calls, "call", snapshot.underlying_price)
+        excluded_puts[str(window.target_dte)] = excluded_contracts(puts, "put", snapshot.underlying_price)
         if window.warning:
             warnings.append(window.warning)
     scenario_source = _first_contract(top_calls, top_puts)
@@ -312,6 +337,8 @@ def analyze_snapshot(output_dir: Path, snapshot: OptionsChainSnapshot) -> Deriva
         timing_score=timing,
         top_calls=top_calls,
         top_puts=top_puts,
+        excluded_calls=excluded_calls,
+        excluded_puts=excluded_puts,
         scenario_grid=scenario_grid,
         agent_updates=agent_updates(snapshot, timing, chain_quality),
         warnings=tuple(warnings),
@@ -470,7 +497,7 @@ def rank_contracts(
 ) -> tuple[ContractResearch, ...]:
     ranked: list[ContractResearch] = []
     for contract in contracts:
-        if otm_only and not _is_otm_contract(contract, option_type, underlying):
+        if contract_exclusion_reasons(contract, option_type, underlying, otm_only=otm_only):
             continue
         premium = contract.premium
         iv = contract.implied_volatility
@@ -480,10 +507,46 @@ def rank_contracts(
         model = price_american_binomial(option_type, underlying, contract.strike, dte, iv)
         breakeven = contract.strike + (premium or 0) if option_type == "call" else contract.strike - (premium or 0)
         factors = contract_score_factors(contract, option_type, underlying, premium or 0, model, timing)
-        score = round(sum(factors.values()) / len(factors), 2)
+        score = round(sum(factors[key] for key in CONTRACT_SCORE_FACTOR_KEYS) / len(CONTRACT_SCORE_FACTOR_KEYS), 2)
         ranked.append(ContractResearch(contract, score, factors, tuple(warnings + list(model.warnings)), model, round(breakeven, 4)))
     ranked.sort(key=lambda item: item.score, reverse=True)
     return tuple(ranked)
+
+
+def excluded_contracts(
+    contracts: tuple[OptionContract, ...],
+    option_type: str,
+    underlying: float,
+    otm_only: bool = True,
+) -> tuple[ContractExclusion, ...]:
+    excluded: list[ContractExclusion] = []
+    for contract in contracts:
+        reasons = contract_exclusion_reasons(contract, option_type, underlying, otm_only=otm_only)
+        if reasons:
+            excluded.append(ContractExclusion(contract, reasons))
+    return tuple(excluded)
+
+
+def contract_exclusion_reasons(
+    contract: OptionContract,
+    option_type: str,
+    underlying: float,
+    otm_only: bool = True,
+) -> tuple[str, ...]:
+    reasons: list[str] = []
+    if otm_only and not _is_otm_contract(contract, option_type, underlying):
+        reasons.append("ITM or ATM; Top Research is OTM-only.")
+    if contract.implied_volatility is None or contract.implied_volatility <= 0:
+        reasons.append("Missing IV.")
+    if contract.premium is None:
+        reasons.append("Unusable premium.")
+    if _missing_quote_data(contract):
+        reasons.append("Missing/invalid quote data.")
+    if _spread_pct(contract) > 35:
+        reasons.append("Wide spread.")
+    if (contract.volume or 0) < 10 and (contract.open_interest or 0) < 50:
+        reasons.append("Poor liquidity.")
+    return tuple(reasons)
 
 
 def contract_score_factors(
@@ -510,6 +573,7 @@ def contract_score_factors(
         "liquidity": round(liquidity, 2),
         "spread": round(spread_score, 2),
         "otm_proximity": round(proximity_score, 2),
+        "otm_distance_pct": round(otm_distance * 100, 2),
         "delta_range": round(delta_score, 2),
         "theta_burden": round(theta_score, 2),
         "iv_condition": round(iv_score, 2),
@@ -632,6 +696,8 @@ def analysis_to_dict(analysis: DerivativeAnalysis) -> dict:
         "timing_score": asdict(analysis.timing_score),
         "top_calls": {key: [_contract_research_dict(item) for item in rows] for key, rows in analysis.top_calls.items()},
         "top_puts": {key: [_contract_research_dict(item) for item in rows] for key, rows in analysis.top_puts.items()},
+        "excluded_calls": {key: [_contract_exclusion_dict(item) for item in rows] for key, rows in analysis.excluded_calls.items()},
+        "excluded_puts": {key: [_contract_exclusion_dict(item) for item in rows] for key, rows in analysis.excluded_puts.items()},
         "scenario_grid": [asdict(item) for item in analysis.scenario_grid],
         "agent_updates": analysis.agent_updates,
         "warnings": list(analysis.warnings),
@@ -789,6 +855,18 @@ def _spread_pct(contract: OptionContract) -> float:
     return (contract.ask - contract.bid) / mid * 100 if mid else 100.0
 
 
+def _missing_quote_data(contract: OptionContract) -> bool:
+    return (
+        contract.strike <= 0
+        or not contract.expiration
+        or not _valid_date(contract.expiration)
+        or (contract.bid is None and contract.ask is None and contract.last is None)
+        or (contract.bid is not None and contract.bid < 0)
+        or (contract.ask is not None and contract.ask < 0)
+        or (contract.last is not None and contract.last < 0)
+    )
+
+
 def _is_otm_contract(contract: OptionContract, option_type: str, underlying: float) -> bool:
     if option_type == "call":
         return contract.strike > underlying
@@ -863,9 +941,30 @@ def _contract_research_dict(item: ContractResearch) -> dict:
         "contract": asdict(item.contract),
         "score": item.score,
         "factors": item.factors,
+        "score_factors": _score_factor_output(item),
         "warnings": item.warnings,
         "model": asdict(item.model),
         "breakeven": item.breakeven,
+    }
+
+
+def _contract_exclusion_dict(item: ContractExclusion) -> dict:
+    return {
+        "contract": asdict(item.contract),
+        "reasons": item.reasons,
+    }
+
+
+def _score_factor_output(item: ContractResearch) -> dict[str, float]:
+    factors = item.factors
+    return {
+        "liquidity": factors.get("liquidity", 0.0),
+        "spread_quality": factors.get("spread", 0.0),
+        "iv_condition": factors.get("iv_condition", 0.0),
+        "otm_distance": factors.get("otm_distance_pct", 0.0),
+        "premium_quality": factors.get("premium_quality", 0.0),
+        "timing_window_alignment": factors.get("timing_alignment", 0.0),
+        "scenario_behavior": factors.get("scenario_behavior", 0.0),
     }
 
 

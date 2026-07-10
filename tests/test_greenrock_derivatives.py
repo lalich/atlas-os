@@ -22,9 +22,11 @@ from atlas_os.greenrock.derivatives import (
     OptionsDataProvider,
     analyze_staged,
     chain_quality_summary,
+    contract_exclusion_reasons,
     contract_score_factors,
     create_options_snapshot,
     derivative_timing_score,
+    excluded_contracts,
     latest_derivative_analysis,
     options_manifesto,
     price_american_binomial,
@@ -60,6 +62,13 @@ class FakeOptionsProvider(OptionsDataProvider):
         return OptionsChainSnapshot(ticker.upper(), self.source_name, 100.0, _prices(), _volumes(), expirations, tuple(calls), tuple(puts))
 
 
+class FailingOptionsProvider(OptionsDataProvider):
+    source_name = "failing_options"
+
+    def fetch_snapshot(self, ticker: str) -> OptionsChainSnapshot:
+        raise RuntimeError("provider fetch failed")
+
+
 class GreenRockDerivativesTests(unittest.TestCase):
     def test_provider_missing_fails_cleanly(self) -> None:
         with patch.dict("os.environ", {"ATLAS_MARKET_DATA_PROVIDER": ""}, clear=False):
@@ -76,6 +85,12 @@ class GreenRockDerivativesTests(unittest.TestCase):
         self.assertTrue(diagnostics["calls_available"])
         self.assertTrue(diagnostics["puts_available"])
         self.assertTrue(diagnostics["implied_volatility_available"])
+
+    def test_provider_diagnostics_fail_closed_when_provider_fetch_fails(self) -> None:
+        diagnostics = provider_diagnostics("LC01", provider=FailingOptionsProvider())
+
+        self.assertEqual(diagnostics["status"], "blocked")
+        self.assertIn("provider fetch failed", diagnostics["message"])
 
     def test_ticker_with_no_options_fails_cleanly(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -164,6 +179,36 @@ class GreenRockDerivativesTests(unittest.TestCase):
         self.assertTrue(all(item.contract.strike > 100 for item in calls))
         self.assertTrue(all(item.contract.strike < 100 for item in puts))
 
+    def test_top_research_excludes_quality_guardrail_failures(self) -> None:
+        timing = derivative_timing_score(_prices(), _volumes())
+        expiration = (date.today() + timedelta(days=30)).isoformat()
+        good = OptionContract("GOOD", "call", expiration, 105, 2.0, 2.2, 2.1, 200, 1000, 0.35)
+        missing_iv = OptionContract("NOIV", "call", expiration, 106, 2.0, 2.2, 2.1, 200, 1000, None)
+        wide = OptionContract("WIDE", "call", expiration, 107, 1.0, 3.0, 2.0, 200, 1000, 0.35)
+        illiquid = OptionContract("ILLQ", "call", expiration, 108, 2.0, 2.2, 2.1, 0, 0, 0.35)
+        no_quote = OptionContract("NOQUOTE", "call", expiration, 109, None, None, None, 200, 1000, 0.35)
+
+        ranked = rank_contracts((good, missing_iv, wide, illiquid, no_quote), "call", 100, 30, timing)
+
+        self.assertEqual([item.contract.contract_symbol for item in ranked], ["GOOD"])
+        self.assertIn("Missing IV.", contract_exclusion_reasons(missing_iv, "call", 100))
+        self.assertIn("Wide spread.", contract_exclusion_reasons(wide, "call", 100))
+        self.assertIn("Poor liquidity.", contract_exclusion_reasons(illiquid, "call", 100))
+        self.assertIn("Unusable premium.", contract_exclusion_reasons(no_quote, "call", 100))
+        self.assertIn("Missing/invalid quote data.", contract_exclusion_reasons(no_quote, "call", 100))
+
+    def test_excluded_contracts_capture_itm_and_quote_reasons(self) -> None:
+        expiration = (date.today() + timedelta(days=30)).isoformat()
+        itm = OptionContract("ITM", "call", expiration, 90, 10.0, 10.5, 10.25, 200, 1000, 0.35)
+        invalid = OptionContract("INVALID", "call", "", 105, None, None, None, 0, 0, None)
+
+        rows = excluded_contracts((itm, invalid), "call", 100)
+        reasons = {row.contract.contract_symbol: row.reasons for row in rows}
+
+        self.assertIn("ITM or ATM; Top Research is OTM-only.", reasons["ITM"])
+        self.assertIn("Missing/invalid quote data.", reasons["INVALID"])
+        self.assertIn("Missing IV.", reasons["INVALID"])
+
     def test_far_otm_contracts_are_penalized_against_reasonable_otm(self) -> None:
         timing = derivative_timing_score(_prices(), _volumes())
         expiration = (date.today() + timedelta(days=30)).isoformat()
@@ -185,6 +230,23 @@ class GreenRockDerivativesTests(unittest.TestCase):
             self.assertTrue((Path(analysis.snapshot_path) / "calls.csv").exists())
             self.assertEqual(loaded["ticker"], "LC01")
             self.assertEqual(manifesto["status"], "available")
+
+    def test_analysis_persists_score_factors_and_exclusions(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            create_options_snapshot(root / "output", "LC01", provider=FakeOptionsProvider())
+            loaded = latest_derivative_analysis(root / "output", "LC01")
+
+        factor_keys = loaded["top_calls"]["30"][0]["score_factors"].keys()
+        self.assertIn("liquidity", factor_keys)
+        self.assertIn("spread_quality", factor_keys)
+        self.assertIn("iv_condition", factor_keys)
+        self.assertIn("otm_distance", factor_keys)
+        self.assertIn("premium_quality", factor_keys)
+        self.assertIn("timing_window_alignment", factor_keys)
+        self.assertIn("scenario_behavior", factor_keys)
+        excluded_reasons = [reason for row in loaded["excluded_calls"]["30"] for reason in row["reasons"]]
+        self.assertIn("ITM or ATM; Top Research is OTM-only.", excluded_reasons)
 
     def test_itm_contracts_remain_in_raw_snapshot_data(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -242,6 +304,21 @@ class GreenRockDerivativesTests(unittest.TestCase):
         self.assertIn("wall-daily-intelligence", wall.body)
         self.assertIn("wall-options-manifesto", wall.body)
         self.assertNotIn("wall-split-intel", wall.body)
+
+    def test_derivatives_page_shows_score_factors_and_exclusions(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {"ATLAS_DB_PATH": str(root / "atlas.db"), "ATLAS_OUTPUT_DIR": str(root / "output")}
+            with patch.dict("os.environ", env, clear=False):
+                create_options_snapshot(root / "output", "LC01", provider=FakeOptionsProvider())
+                page = dispatch_request("GET", "/greenrock/derivatives")
+
+        self.assertEqual(page.status, 200)
+        self.assertIn("Score Factors", page.body)
+        self.assertIn("Excluded From Top Research", page.body)
+        self.assertIn("ITM or ATM; Top Research is OTM-only.", page.body)
+        self.assertIn("Liq", page.body)
+        self.assertIn("Scenario", page.body)
 
     def test_cli_derivatives_doctor_and_analyze_commands(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
