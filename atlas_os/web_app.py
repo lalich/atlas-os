@@ -4898,11 +4898,20 @@ def _derivative_contract_rankings(groups: dict) -> str:
                 f"<td>{_safe(str(item.get('breakeven', '')))}</td>"
                 f"<td>{_derivative_score_factor_summary(item.get('score_factors', {}))}</td>"
                 f"<td>{_safe(str(item.get('ranking_rationale', '')))}</td>"
+                f"<td>{_derivative_intent_summary(item)}</td>"
                 "</tr>"
             )
     if not rows:
         return "<p class='empty'>No ranked contracts available.</p>"
-    return "<table class='compact-candidate-table'><thead><tr><th>Window</th><th>Type</th><th>Expiration</th><th>Strike</th><th>Research Score</th><th>Theoretical</th><th>Delta</th><th>Theta</th><th>Breakeven</th><th>Score Factors</th><th>Rationale</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
+    return "<table class='compact-candidate-table'><thead><tr><th>Window</th><th>Type</th><th>Expiration</th><th>Strike</th><th>Research Score</th><th>Theoretical</th><th>Delta</th><th>Theta</th><th>Breakeven</th><th>Score Factors</th><th>Rationale</th><th>Intent</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
+
+
+def _derivative_intent_summary(item: dict) -> str:
+    intent = _safe(str(item.get("strategy_intent", "research_only")))
+    rationale = _safe(str(item.get("intent_rationale", "")))
+    manifesto = _safe(str(item.get("manifesto_alignment", "")))
+    position = _safe(str(item.get("position_context_alignment", "")))
+    return f"<span class='factor-list'><strong>{intent}</strong><br>{rationale}<br>Manifesto {manifesto} / Position {position}</span>"
 
 
 def _derivative_cross_window_table(rows: list[dict]) -> str:

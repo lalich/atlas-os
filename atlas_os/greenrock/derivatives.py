@@ -135,6 +135,10 @@ class ContractResearch:
     model: BinomialResult
     breakeven: float
     ranking_rationale: str = ""
+    strategy_intent: str = "research_only"
+    intent_rationale: str = "Research-only options context; no execution action is available."
+    manifesto_alignment: str = "research_only"
+    position_context_alignment: str = "unknown"
 
 
 @dataclass(frozen=True)
@@ -348,6 +352,8 @@ def analyze_snapshot(output_dir: Path, snapshot: OptionsChainSnapshot) -> Deriva
             warnings.append(window.warning)
     cross_window = cross_window_research(top_calls, top_puts, snapshot.underlying_price)
     position_context = load_position_context(output_dir, snapshot.ticker, has_calls=_has_ranked_contracts(top_calls), has_puts=_has_ranked_contracts(top_puts))
+    top_calls = apply_strategy_intents(top_calls, cross_window, position_context)
+    top_puts = apply_strategy_intents(top_puts, cross_window, position_context)
     scenario_source = _first_contract(top_calls, top_puts)
     scenario_grid = ()
     if scenario_source:
@@ -740,6 +746,91 @@ def derive_position_context(
     return PositionContext(ticker.strip().upper(), shares, average_cost, option_exposure.strip(), direction, flags, notes, source)
 
 
+def apply_strategy_intents(
+    groups: dict[str, tuple[ContractResearch, ...]],
+    cross_window: tuple[CrossWindowResearch, ...],
+    position_context: PositionContext,
+) -> dict[str, tuple[ContractResearch, ...]]:
+    annotated: dict[str, tuple[ContractResearch, ...]] = {}
+    for window, rows in groups.items():
+        annotated[window] = tuple(strategy_intent_contract(row, cross_window, position_context) for row in rows)
+    return annotated
+
+
+def strategy_intent_contract(
+    item: ContractResearch,
+    cross_window: tuple[CrossWindowResearch, ...],
+    position_context: PositionContext,
+) -> ContractResearch:
+    intent, rationale, manifesto_alignment, position_alignment = strategy_intent_for_contract(item, cross_window, position_context)
+    return ContractResearch(
+        item.contract,
+        item.score,
+        item.factors,
+        item.warnings,
+        item.model,
+        item.breakeven,
+        item.ranking_rationale,
+        intent,
+        rationale,
+        manifesto_alignment,
+        position_alignment,
+    )
+
+
+def strategy_intent_for_contract(
+    item: ContractResearch,
+    cross_window: tuple[CrossWindowResearch, ...],
+    position_context: PositionContext,
+) -> tuple[str, str, str, str]:
+    option_type = item.contract.option_type
+    cross = _cross_window_for_type(option_type, cross_window)
+    manifesto_alignment = _manifesto_alignment(cross)
+    flags = position_context.flags
+    direction = position_context.position_direction
+    if flags.get("exposure_conflict"):
+        return (
+            "avoid_conflict",
+            "Existing exposure conflicts with simple single-leg research framing.",
+            manifesto_alignment,
+            "conflict",
+        )
+    if option_type == "call" and flags.get("covered_call_candidate"):
+        return (
+            "income_overlay",
+            "Long stock context makes covered-call research relevant.",
+            manifesto_alignment,
+            "aligned_with_long_stock",
+        )
+    if option_type == "put" and flags.get("cash_secured_put_candidate"):
+        return (
+            "cash_secured_entry",
+            "No stock position is recorded; put research may map to cash-secured entry context if cash is available.",
+            manifesto_alignment,
+            "aligned_with_no_stock",
+        )
+    if (option_type == "put" and direction == "long_stock") or (option_type == "call" and direction == "short_stock"):
+        return (
+            "downside_hedge",
+            "Existing stock exposure makes this side relevant as hedge research.",
+            manifesto_alignment,
+            "hedge_context",
+        )
+    if flags.get("speculative_only") and manifesto_alignment in {"strengthening", "stable"}:
+        return (
+            "speculative_convexity",
+            "No position context is recorded and cross-window research is constructive.",
+            manifesto_alignment,
+            "speculative_only",
+        )
+    return (
+        "research_only",
+        "Research-only options context; no execution action is available.",
+        manifesto_alignment,
+        direction,
+    )
+
+
 def scenario_analysis(
     contract: OptionContract,
     underlying: float,
@@ -1115,6 +1206,10 @@ def _contract_research_dict(item: ContractResearch) -> dict:
         "factors": item.factors,
         "score_factors": _score_factor_output(item),
         "ranking_rationale": item.ranking_rationale,
+        "strategy_intent": item.strategy_intent,
+        "intent_rationale": item.intent_rationale,
+        "manifesto_alignment": item.manifesto_alignment,
+        "position_context_alignment": item.position_context_alignment,
         "warnings": item.warnings,
         "model": asdict(item.model),
         "breakeven": item.breakeven,
@@ -1214,6 +1309,19 @@ def _cross_window_rationale(classification: str, windows: tuple[str, ...], score
 
 def _has_ranked_contracts(groups: dict[str, tuple[ContractResearch, ...]]) -> bool:
     return any(bool(rows) for rows in groups.values())
+
+
+def _cross_window_for_type(option_type: str, rows: tuple[CrossWindowResearch, ...]) -> CrossWindowResearch | None:
+    for row in rows:
+        if row.option_type == option_type:
+            return row
+    return None
+
+
+def _manifesto_alignment(row: CrossWindowResearch | None) -> str:
+    if row is None:
+        return "insufficient_data"
+    return row.classification
 
 
 def _position_context_notes(direction: str, flags: dict[str, bool], source: str) -> tuple[str, ...]:

@@ -19,6 +19,7 @@ from atlas_os.db.database import connect, initialize_database
 from atlas_os.greenrock.derivatives import (
     BinomialResult,
     ContractResearch,
+    CrossWindowResearch,
     OptionContract,
     OptionsChainSnapshot,
     OptionsDataProvider,
@@ -42,6 +43,7 @@ from atlas_os.greenrock.derivatives import (
     ranking_rationale,
     scenario_analysis,
     select_expiration_windows,
+    strategy_intent_for_contract,
 )
 from atlas_os.greenrock.market_data import MarketDataConfigurationError
 from atlas_os.greenrock.staging import add_staged_candidate, load_staged_candidates
@@ -330,6 +332,57 @@ class GreenRockDerivativesTests(unittest.TestCase):
         self.assertEqual(context.position_direction, "mixed")
         self.assertTrue(context.flags["exposure_conflict"])
 
+    def test_strategy_intent_income_overlay_for_long_stock_calls(self) -> None:
+        context = derive_position_context("LC01", 200, 42.5, "", "", True, True)
+        intent, rationale, manifesto, position = strategy_intent_for_contract(_research_item("call", "30", 105, 70), _cross_rows("call", "stable"), context)
+
+        self.assertEqual(intent, "income_overlay")
+        self.assertIn("covered-call", rationale)
+        self.assertEqual(manifesto, "stable")
+        self.assertEqual(position, "aligned_with_long_stock")
+
+    def test_strategy_intent_cash_secured_entry_for_no_stock_puts(self) -> None:
+        context = derive_position_context("LC01", 0, None, "", "", True, True)
+        intent, rationale, _, position = strategy_intent_for_contract(_research_item("put", "30", 95, 70), _cross_rows("put", "stable"), context)
+
+        self.assertEqual(intent, "cash_secured_entry")
+        self.assertIn("cash-secured", rationale)
+        self.assertEqual(position, "aligned_with_no_stock")
+
+    def test_strategy_intent_downside_hedge_for_long_stock_puts(self) -> None:
+        context = derive_position_context("LC01", 200, 42.5, "", "", True, True)
+        intent, rationale, _, position = strategy_intent_for_contract(_research_item("put", "30", 95, 70), _cross_rows("put", "weakening"), context)
+
+        self.assertEqual(intent, "downside_hedge")
+        self.assertIn("hedge", rationale)
+        self.assertEqual(position, "hedge_context")
+
+    def test_strategy_intent_speculative_convexity_without_position(self) -> None:
+        context = derive_position_context("LC01", None, None, "", "", True, True)
+        intent, rationale, manifesto, position = strategy_intent_for_contract(_research_item("call", "30", 105, 70), _cross_rows("call", "strengthening"), context)
+
+        self.assertEqual(intent, "speculative_convexity")
+        self.assertIn("constructive", rationale)
+        self.assertEqual(manifesto, "strengthening")
+        self.assertEqual(position, "speculative_only")
+
+    def test_strategy_intent_avoid_conflict_overrides_other_context(self) -> None:
+        context = derive_position_context("LC01", 100, 50, "short calls", "short_options", True, True)
+        intent, rationale, _, position = strategy_intent_for_contract(_research_item("call", "30", 105, 70), _cross_rows("call", "stable"), context)
+
+        self.assertEqual(intent, "avoid_conflict")
+        self.assertIn("conflicts", rationale)
+        self.assertEqual(position, "conflict")
+
+    def test_strategy_intent_research_only_fallback(self) -> None:
+        context = derive_position_context("LC01", None, None, "long call", "long_options", True, True)
+        intent, rationale, manifesto, position = strategy_intent_for_contract(_research_item("call", "30", 105, 70), _cross_rows("call", "isolated"), context)
+
+        self.assertEqual(intent, "research_only")
+        self.assertIn("Research-only", rationale)
+        self.assertEqual(manifesto, "isolated")
+        self.assertEqual(position, "long_options")
+
     def test_snapshot_persistence_and_manifesto(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -358,6 +411,10 @@ class GreenRockDerivativesTests(unittest.TestCase):
         self.assertIn("scenario_behavior", factor_keys)
         self.assertIn("ranking_rationale", loaded["top_calls"]["30"][0])
         self.assertIn("Supported by", loaded["top_calls"]["30"][0]["ranking_rationale"])
+        self.assertIn("strategy_intent", loaded["top_calls"]["30"][0])
+        self.assertIn("intent_rationale", loaded["top_calls"]["30"][0])
+        self.assertIn("manifesto_alignment", loaded["top_calls"]["30"][0])
+        self.assertIn("position_context_alignment", loaded["top_calls"]["30"][0])
         self.assertIn("cross_window", loaded)
         self.assertTrue(loaded["cross_window"])
         self.assertIn("classification", loaded["cross_window"][0])
@@ -458,6 +515,8 @@ class GreenRockDerivativesTests(unittest.TestCase):
         self.assertIn("Score Move", page.body)
         self.assertIn("Position Context", page.body)
         self.assertIn("Speculative Only", page.body)
+        self.assertIn("Intent", page.body)
+        self.assertIn("speculative_convexity", page.body)
 
     def test_cli_derivatives_doctor_and_analyze_commands(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -514,6 +573,12 @@ def _research_item(option_type: str, window: str, strike: float, score: float) -
         "scenario_behavior": 90.0,
     }
     return ContractResearch(contract, score, factors, (), model, strike + 2.1 if option_type == "call" else strike - 2.1, "fixture rationale")
+
+
+def _cross_rows(option_type: str, classification: str):
+    return (
+        CrossWindowResearch(option_type, "near_otm", classification, ("30", "60"), (70.0, 72.0), (1, 1), 2.0, 0, "fixture"),
+    )
 
 
 def _run_cli_raw(args: list[str]) -> tuple[str, int]:
