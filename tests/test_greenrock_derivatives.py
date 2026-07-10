@@ -23,6 +23,7 @@ from atlas_os.greenrock.derivatives import (
     analyze_staged,
     chain_quality_summary,
     contract_exclusion_reasons,
+    contract_research_score,
     contract_score_factors,
     create_options_snapshot,
     derivative_timing_score,
@@ -32,6 +33,7 @@ from atlas_os.greenrock.derivatives import (
     price_american_binomial,
     provider_diagnostics,
     rank_contracts,
+    ranking_rationale,
     scenario_analysis,
     select_expiration_windows,
 )
@@ -220,6 +222,50 @@ class GreenRockDerivativesTests(unittest.TestCase):
         self.assertEqual(ranked[0].contract.contract_symbol, "REASONABLE")
         self.assertGreater(ranked[0].factors["otm_proximity"], ranked[1].factors["otm_proximity"])
 
+    def test_contract_ranking_is_deterministic_with_tie_breakers(self) -> None:
+        timing = derivative_timing_score(_prices(), _volumes())
+        expiration = (date.today() + timedelta(days=30)).isoformat()
+        first = OptionContract("AAA", "call", expiration, 105, 2.0, 2.2, 2.1, 200, 1000, 0.35)
+        second = OptionContract("BBB", "call", expiration, 105, 2.0, 2.2, 2.1, 200, 1000, 0.35)
+
+        ranked_once = rank_contracts((second, first), "call", 100, 30, timing, target_dte=30)
+        ranked_twice = rank_contracts((second, first), "call", 100, 30, timing, target_dte=30)
+
+        self.assertEqual([item.contract.contract_symbol for item in ranked_once], ["AAA", "BBB"])
+        self.assertEqual([item.contract.contract_symbol for item in ranked_once], [item.contract.contract_symbol for item in ranked_twice])
+
+    def test_calibrated_ranking_prefers_liquid_tighter_reasonable_contract(self) -> None:
+        timing = derivative_timing_score(_prices(), _volumes())
+        expiration = (date.today() + timedelta(days=30)).isoformat()
+        balanced = OptionContract("BALANCED", "put", expiration, 95, 2.0, 2.2, 2.1, 250, 1200, 0.38)
+        thin = OptionContract("THIN", "put", expiration, 80, 1.0, 1.4, 1.2, 12, 55, 0.80)
+
+        ranked = rank_contracts((thin, balanced), "put", 100, 30, timing, target_dte=30)
+
+        self.assertEqual(ranked[0].contract.contract_symbol, "BALANCED")
+        self.assertGreater(ranked[0].factors["liquidity"], ranked[1].factors["liquidity"])
+        self.assertGreater(ranked[0].factors["spread"], ranked[1].factors["spread"])
+        self.assertGreater(ranked[0].factors["iv_condition"], ranked[1].factors["iv_condition"])
+
+    def test_ranking_rationale_is_concise_and_factor_based(self) -> None:
+        factors = {
+            "liquidity": 90,
+            "spread": 88,
+            "otm_proximity": 82,
+            "iv_condition": 42,
+            "premium_quality": 77,
+            "window_fit": 100,
+            "timing_alignment": 65,
+            "scenario_behavior": 48,
+        }
+
+        rationale = ranking_rationale(factors)
+
+        self.assertIn("Supported by liquidity, spread, OTM fit", rationale)
+        self.assertIn("watch IV, scenario", rationale)
+        self.assertLessEqual(len(rationale), 100)
+        self.assertGreater(contract_research_score(factors), 0)
+
     def test_snapshot_persistence_and_manifesto(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -243,8 +289,11 @@ class GreenRockDerivativesTests(unittest.TestCase):
         self.assertIn("iv_condition", factor_keys)
         self.assertIn("otm_distance", factor_keys)
         self.assertIn("premium_quality", factor_keys)
+        self.assertIn("window_fit", factor_keys)
         self.assertIn("timing_window_alignment", factor_keys)
         self.assertIn("scenario_behavior", factor_keys)
+        self.assertIn("ranking_rationale", loaded["top_calls"]["30"][0])
+        self.assertIn("Supported by", loaded["top_calls"]["30"][0]["ranking_rationale"])
         excluded_reasons = [reason for row in loaded["excluded_calls"]["30"] for reason in row["reasons"]]
         self.assertIn("ITM or ATM; Top Research is OTM-only.", excluded_reasons)
 
@@ -318,7 +367,10 @@ class GreenRockDerivativesTests(unittest.TestCase):
         self.assertIn("Excluded From Top Research", page.body)
         self.assertIn("ITM or ATM; Top Research is OTM-only.", page.body)
         self.assertIn("Liq", page.body)
+        self.assertIn("Window", page.body)
         self.assertIn("Scenario", page.body)
+        self.assertIn("Rationale", page.body)
+        self.assertIn("Supported by", page.body)
 
     def test_cli_derivatives_doctor_and_analyze_commands(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

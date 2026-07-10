@@ -26,19 +26,20 @@ from atlas_os.greenrock.staging import load_staged_candidates
 DEFAULT_RISK_FREE_RATE = 0.04
 DEFAULT_BINOMIAL_STEPS = 120
 TARGET_DTES = (30, 60, 90)
-CONTRACT_SCORE_FACTOR_KEYS = (
-    "liquidity",
-    "spread",
-    "otm_proximity",
-    "delta_range",
-    "theta_burden",
-    "iv_condition",
-    "model_availability",
-    "premium_quality",
-    "breakeven_distance",
-    "timing_alignment",
-    "scenario_behavior",
-)
+CONTRACT_SCORE_WEIGHTS = {
+    "liquidity": 0.15,
+    "spread": 0.14,
+    "otm_proximity": 0.13,
+    "iv_condition": 0.11,
+    "premium_quality": 0.11,
+    "window_fit": 0.10,
+    "timing_alignment": 0.09,
+    "scenario_behavior": 0.08,
+    "breakeven_distance": 0.04,
+    "delta_range": 0.03,
+    "theta_burden": 0.01,
+    "model_availability": 0.01,
+}
 SNAPSHOT_HEADERS = [
     "contract_symbol",
     "option_type",
@@ -135,6 +136,7 @@ class ContractResearch:
     warnings: tuple[str, ...]
     model: BinomialResult
     breakeven: float
+    ranking_rationale: str = ""
 
 
 @dataclass(frozen=True)
@@ -313,8 +315,8 @@ def analyze_snapshot(output_dir: Path, snapshot: OptionsChainSnapshot) -> Deriva
     for window in windows:
         calls = tuple(contract for contract in snapshot.calls if contract.expiration == window.expiration)
         puts = tuple(contract for contract in snapshot.puts if contract.expiration == window.expiration)
-        top_calls[str(window.target_dte)] = rank_contracts(calls, "call", snapshot.underlying_price, window.actual_dte, timing)[:5]
-        top_puts[str(window.target_dte)] = rank_contracts(puts, "put", snapshot.underlying_price, window.actual_dte, timing)[:5]
+        top_calls[str(window.target_dte)] = rank_contracts(calls, "call", snapshot.underlying_price, window.actual_dte, timing, target_dte=window.target_dte)[:5]
+        top_puts[str(window.target_dte)] = rank_contracts(puts, "put", snapshot.underlying_price, window.actual_dte, timing, target_dte=window.target_dte)[:5]
         excluded_calls[str(window.target_dte)] = excluded_contracts(calls, "call", snapshot.underlying_price)
         excluded_puts[str(window.target_dte)] = excluded_contracts(puts, "put", snapshot.underlying_price)
         if window.warning:
@@ -494,6 +496,7 @@ def rank_contracts(
     dte: int,
     timing: TimingScore,
     otm_only: bool = True,
+    target_dte: int | None = None,
 ) -> tuple[ContractResearch, ...]:
     ranked: list[ContractResearch] = []
     for contract in contracts:
@@ -506,10 +509,11 @@ def rank_contracts(
             warnings.append("Missing usable premium.")
         model = price_american_binomial(option_type, underlying, contract.strike, dte, iv)
         breakeven = contract.strike + (premium or 0) if option_type == "call" else contract.strike - (premium or 0)
-        factors = contract_score_factors(contract, option_type, underlying, premium or 0, model, timing)
-        score = round(sum(factors[key] for key in CONTRACT_SCORE_FACTOR_KEYS) / len(CONTRACT_SCORE_FACTOR_KEYS), 2)
-        ranked.append(ContractResearch(contract, score, factors, tuple(warnings + list(model.warnings)), model, round(breakeven, 4)))
-    ranked.sort(key=lambda item: item.score, reverse=True)
+        factors = contract_score_factors(contract, option_type, underlying, premium or 0, model, timing, dte=dte, target_dte=target_dte)
+        score = contract_research_score(factors)
+        rationale = ranking_rationale(factors)
+        ranked.append(ContractResearch(contract, score, factors, tuple(warnings + list(model.warnings)), model, round(breakeven, 4), rationale))
+    ranked.sort(key=lambda item: (-item.score, item.contract.expiration, item.contract.strike, item.contract.contract_symbol))
     return tuple(ranked)
 
 
@@ -556,6 +560,8 @@ def contract_score_factors(
     premium: float,
     model: BinomialResult,
     timing: TimingScore,
+    dte: int | None = None,
+    target_dte: int | None = None,
 ) -> dict[str, float]:
     spread = _spread_pct(contract)
     liquidity = min(100.0, ((contract.open_interest or 0) / 10) + ((contract.volume or 0) / 2))
@@ -569,6 +575,7 @@ def contract_score_factors(
     proximity_score = _otm_proximity_score(otm_distance)
     premium_pct = premium / underlying if underlying else 0
     premium_quality = 25.0 if premium <= 0 else _clamp(100.0 - abs(premium_pct - 0.025) * 1200)
+    window_fit = _window_fit_score(dte, target_dte)
     return {
         "liquidity": round(liquidity, 2),
         "spread": round(spread_score, 2),
@@ -579,10 +586,43 @@ def contract_score_factors(
         "iv_condition": round(iv_score, 2),
         "model_availability": 100.0 if model.model_status == "available" else 0.0,
         "premium_quality": round(premium_quality, 2),
+        "window_fit": window_fit,
         "breakeven_distance": round(max(0.0, 100.0 - distance * 220), 2),
         "timing_alignment": timing.score,
         "scenario_behavior": round(max(0.0, min(100.0, model.extrinsic_value * 8 + timing.score * 0.35)), 2),
     }
+
+
+def contract_research_score(factors: dict[str, float]) -> float:
+    total_weight = sum(CONTRACT_SCORE_WEIGHTS.values())
+    weighted = sum(factors.get(key, 0.0) * weight for key, weight in CONTRACT_SCORE_WEIGHTS.items())
+    return round(weighted / total_weight, 2) if total_weight else 0.0
+
+
+def ranking_rationale(factors: dict[str, float]) -> str:
+    labels = {
+        "liquidity": "liquidity",
+        "spread": "spread",
+        "otm_proximity": "OTM fit",
+        "iv_condition": "IV",
+        "premium_quality": "premium",
+        "window_fit": "window fit",
+        "timing_alignment": "timing",
+        "scenario_behavior": "scenario",
+    }
+    positives = [
+        labels[key]
+        for key in labels
+        if factors.get(key, 0.0) >= 75
+    ][:3]
+    cautions = [
+        labels[key]
+        for key in labels
+        if factors.get(key, 0.0) < 50
+    ][:2]
+    positive_text = ", ".join(positives) if positives else "balanced factor mix"
+    caution_text = ", ".join(cautions) if cautions else "no major factor drag"
+    return f"Supported by {positive_text}; watch {caution_text}."
 
 
 def scenario_analysis(
@@ -855,6 +895,17 @@ def _spread_pct(contract: OptionContract) -> float:
     return (contract.ask - contract.bid) / mid * 100 if mid else 100.0
 
 
+def _window_fit_score(dte: int | None, target_dte: int | None) -> float:
+    if dte is None or target_dte is None:
+        return 75.0
+    difference = abs(dte - target_dte)
+    if difference <= 3:
+        return 100.0
+    if difference <= 10:
+        return _clamp(100.0 - (difference - 3) * 4)
+    return _clamp(72.0 - (difference - 10) * 3)
+
+
 def _missing_quote_data(contract: OptionContract) -> bool:
     return (
         contract.strike <= 0
@@ -942,6 +993,7 @@ def _contract_research_dict(item: ContractResearch) -> dict:
         "score": item.score,
         "factors": item.factors,
         "score_factors": _score_factor_output(item),
+        "ranking_rationale": item.ranking_rationale,
         "warnings": item.warnings,
         "model": asdict(item.model),
         "breakeven": item.breakeven,
@@ -963,6 +1015,7 @@ def _score_factor_output(item: ContractResearch) -> dict[str, float]:
         "iv_condition": factors.get("iv_condition", 0.0),
         "otm_distance": factors.get("otm_distance_pct", 0.0),
         "premium_quality": factors.get("premium_quality", 0.0),
+        "window_fit": factors.get("window_fit", 0.0),
         "timing_window_alignment": factors.get("timing_alignment", 0.0),
         "scenario_behavior": factors.get("scenario_behavior", 0.0),
     }

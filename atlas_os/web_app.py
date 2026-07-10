@@ -4874,11 +4874,12 @@ def _derivative_contract_rankings(groups: dict) -> str:
                 f"<td>{_safe(str(model.get('theta', '')))}</td>"
                 f"<td>{_safe(str(item.get('breakeven', '')))}</td>"
                 f"<td>{_derivative_score_factor_summary(item.get('score_factors', {}))}</td>"
+                f"<td>{_safe(str(item.get('ranking_rationale', '')))}</td>"
                 "</tr>"
             )
     if not rows:
         return "<p class='empty'>No ranked contracts available.</p>"
-    return "<table class='compact-candidate-table'><thead><tr><th>Window</th><th>Type</th><th>Expiration</th><th>Strike</th><th>Research Score</th><th>Theoretical</th><th>Delta</th><th>Theta</th><th>Breakeven</th><th>Score Factors</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
+    return "<table class='compact-candidate-table'><thead><tr><th>Window</th><th>Type</th><th>Expiration</th><th>Strike</th><th>Research Score</th><th>Theoretical</th><th>Delta</th><th>Theta</th><th>Breakeven</th><th>Score Factors</th><th>Rationale</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
 
 
 def _derivative_score_factor_summary(factors: dict) -> str:
@@ -4888,6 +4889,7 @@ def _derivative_score_factor_summary(factors: dict) -> str:
         ("iv_condition", "IV"),
         ("otm_distance", "OTM"),
         ("premium_quality", "Prem"),
+        ("window_fit", "Window"),
         ("timing_window_alignment", "Timing"),
         ("scenario_behavior", "Scenario"),
     )
