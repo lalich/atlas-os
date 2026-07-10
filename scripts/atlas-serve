@@ -10,14 +10,16 @@ if [ ! -d ".venv" ]; then
 else
   # shellcheck disable=SC1091
   source ".venv/bin/activate"
+  PYTHON="$ROOT/.venv/bin/python"
   if [ ! -f ".env" ]; then
     echo ".env missing; running ./scripts/atlas-dev first"
     ./scripts/atlas-dev
     # shellcheck disable=SC1091
     source ".venv/bin/activate"
+    PYTHON="$ROOT/.venv/bin/python"
   fi
-  python3 -c "import atlas_os"
+  "$PYTHON" -c "import atlas_os"
 fi
 
 echo "Starting Atlas Command Center with module runner"
-python3 -m atlas_os.cli serve
+"${PYTHON:-$ROOT/.venv/bin/python}" -m atlas_os.cli serve

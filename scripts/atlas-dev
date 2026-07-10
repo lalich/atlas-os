@@ -14,9 +14,19 @@ fi
 
 # shellcheck disable=SC1091
 source ".venv/bin/activate"
+PYTHON="$ROOT/.venv/bin/python"
 
 echo "Installing Atlas OS editable package with market-data extras"
-python3 -m pip install -e ".[market-data]"
+"$PYTHON" -m pip install -e ".[market-data]"
+cat > ".venv/bin/atlas" <<'SH'
+#!/usr/bin/env sh
+set -eu
+
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
+cd "$ROOT"
+exec "$ROOT/.venv/bin/python" -m atlas_os.cli "$@"
+SH
+chmod +x ".venv/bin/atlas"
 
 if [ ! -f ".env" ]; then
   if [ -f ".env.example" ]; then
@@ -29,16 +39,16 @@ if [ ! -f ".env" ]; then
   fi
 fi
 
-python3 -c "import atlas_os"
-python3 -m atlas_os.cli doctor
+"$PYTHON" -c "import atlas_os"
+"$PYTHON" -m atlas_os.cli doctor
 
 cat <<'NEXT'
 
 Next commands:
-  atlas serve
-  atlas agents run
-  atlas morning-brief
+  bin/atlas serve
+  bin/atlas agents run
+  bin/atlas morning-brief
 
 If a stale atlas launcher fails, use:
-  python3 -m atlas_os.cli serve
+  .venv/bin/python -m atlas_os.cli serve
 NEXT

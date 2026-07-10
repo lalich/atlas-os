@@ -7,6 +7,7 @@ import types
 import unittest
 import os
 import json
+import subprocess
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -958,15 +959,43 @@ ABOVE AND ATLAS ANY AIDS ALL are ordinary prose words in this disclosure.
         root = Path(__file__).resolve().parents[1]
         dev = root / "scripts" / "atlas-dev"
         serve = root / "scripts" / "atlas-serve"
+        launcher = root / "bin" / "atlas"
 
         self.assertTrue(dev.exists())
         self.assertTrue(serve.exists())
+        self.assertTrue(launcher.exists())
         self.assertTrue(os.access(dev, os.X_OK))
         self.assertTrue(os.access(serve, os.X_OK))
-        self.assertIn("python3 -m atlas_os.cli doctor", dev.read_text(encoding="utf-8"))
-        self.assertIn("python3 -m atlas_os.cli serve", serve.read_text(encoding="utf-8"))
+        self.assertTrue(os.access(launcher, os.X_OK))
+        self.assertIn('"$PYTHON" -m atlas_os.cli doctor', dev.read_text(encoding="utf-8"))
+        self.assertIn("-m atlas_os.cli serve", serve.read_text(encoding="utf-8"))
+        self.assertIn('ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"', launcher.read_text(encoding="utf-8"))
+        self.assertIn('$ROOT/.venv/bin/python', launcher.read_text(encoding="utf-8"))
         self.assertNotIn("open ", dev.read_text(encoding="utf-8"))
         self.assertNotIn("open ", serve.read_text(encoding="utf-8"))
+
+    def test_bin_atlas_launcher_uses_project_environment_from_other_cwd(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as directory:
+            temp_root = Path(directory)
+            env = {
+                **os.environ,
+                "ATLAS_DB_PATH": str(temp_root / "atlas.db"),
+                "ATLAS_OUTPUT_DIR": str(temp_root / "output"),
+            }
+            result = subprocess.run(
+                [str(root / "bin" / "atlas"), "greenrock", "report-dry-run"],
+                cwd=temp_root,
+                env=env,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            dry_runs = tuple((temp_root / "output" / "greenrock" / "report_dry_runs").glob("*.md"))
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Report Agent dry run created", result.stdout)
+        self.assertEqual(len(dry_runs), 1)
 
     def test_default_agent_cycle_uses_latest_scan_without_fresh_pull(self) -> None:
         with _isolated_env() as root:
