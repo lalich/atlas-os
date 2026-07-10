@@ -52,6 +52,8 @@ SNAPSHOT_HEADERS = [
     "open_interest",
     "implied_volatility",
 ]
+
+
 @dataclass(frozen=True)
 class OptionContract:
     contract_symbol: str
@@ -327,6 +329,7 @@ def create_options_snapshot(
 
 
 def analyze_snapshot(output_dir: Path, snapshot: OptionsChainSnapshot) -> DerivativeAnalysis:
+    """Build a research snapshot while keeping raw chains separate from Top Research."""
     if snapshot.underlying_price is None or snapshot.underlying_price <= 0:
         raise ValueError("Underlying price is unavailable for options analysis.")
     if not snapshot.expirations:
@@ -350,6 +353,7 @@ def analyze_snapshot(output_dir: Path, snapshot: OptionsChainSnapshot) -> Deriva
         excluded_puts[str(window.target_dte)] = excluded_contracts(puts, "put", snapshot.underlying_price)
         if window.warning:
             warnings.append(window.warning)
+    # Cross-window and intent labels annotate research rows only; they do not create orders.
     cross_window = cross_window_research(top_calls, top_puts, snapshot.underlying_price)
     position_context = load_position_context(output_dir, snapshot.ticker, has_calls=_has_ranked_contracts(top_calls), has_puts=_has_ranked_contracts(top_puts))
     top_calls = apply_strategy_intents(top_calls, cross_window, position_context)
@@ -533,6 +537,7 @@ def rank_contracts(
     otm_only: bool = True,
     target_dte: int | None = None,
 ) -> tuple[ContractResearch, ...]:
+    """Rank deterministic OTM Top Research rows after quality exclusions."""
     ranked: list[ContractResearch] = []
     for contract in contracts:
         if contract_exclusion_reasons(contract, option_type, underlying, otm_only=otm_only):
@@ -558,6 +563,7 @@ def excluded_contracts(
     underlying: float,
     otm_only: bool = True,
 ) -> tuple[ContractExclusion, ...]:
+    """Return contracts filtered out of Top Research with concise guardrail reasons."""
     excluded: list[ContractExclusion] = []
     for contract in contracts:
         reasons = contract_exclusion_reasons(contract, option_type, underlying, otm_only=otm_only)
@@ -665,6 +671,7 @@ def cross_window_research(
     top_puts: dict[str, tuple[ContractResearch, ...]],
     underlying: float,
 ) -> tuple[CrossWindowResearch, ...]:
+    """Compare same-snapshot 30/60/90 cohorts without implying market history."""
     rows = [
         _cross_window_side("call", top_calls, underlying),
         _cross_window_side("put", top_puts, underlying),
@@ -689,6 +696,7 @@ def classify_cross_window(scores: tuple[float, ...], total_available_windows: in
 
 
 def load_position_context(output_dir: Path, ticker: str, has_calls: bool = False, has_puts: bool = False) -> PositionContext:
+    """Load optional local position context; never contacts a broker or credential source."""
     normalized = ticker.strip().upper()
     path = position_context_path(output_dir)
     if not path.exists():
@@ -783,6 +791,7 @@ def strategy_intent_for_contract(
     cross_window: tuple[CrossWindowResearch, ...],
     position_context: PositionContext,
 ) -> tuple[str, str, str, str]:
+    """Map read-only research context to an intent label, not an execution instruction."""
     option_type = item.contract.option_type
     cross = _cross_window_for_type(option_type, cross_window)
     manifesto_alignment = _manifesto_alignment(cross)

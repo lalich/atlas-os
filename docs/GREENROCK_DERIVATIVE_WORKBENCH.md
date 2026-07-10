@@ -1,12 +1,12 @@
 # GreenRock Derivative Workbench
 
-Phase 10A adds the first research-only GreenRock Derivative Workbench at `/greenrock/derivatives`.
+Phase 10A introduced the research-only GreenRock Derivative Workbench at `/greenrock/derivatives`. Phases 10B-10F added transparent ranking factors, exclusions, cross-window context, read-only position context, and strategy intent labels without adding brokerage execution.
 
 ## Safety Boundary
 
 The Derivative Workbench is local-only. It does not trade, place broker/API orders, send email or Slack messages, publish, create client files, call external LLM/API services, create reports, insert options into reports, approve drafts, or export PDFs.
 
-Outputs are research context only. Use language such as research fit, contract quality, scenario profile, and timing alignment. Do not use buy/sell/hold language, personalized recommendations, ACT mechanics, spreads, ratios, or LEAPS in Phase 10A.
+Outputs are research context only. Use language such as research fit, contract quality, scenario profile, timing alignment, position context, and strategy intent. Do not use buy/sell/hold language, personalized recommendations, ACT mechanics, spreads, ratios, or LEAPS in this Workbench.
 
 ## Scope
 
@@ -66,9 +66,11 @@ Initial weights:
 
 Contract Research Score considers liquidity, bid/ask spread percentage, open interest, volume, delta range, theta burden, IV condition, breakeven distance, timing alignment, and scenario behavior. It does not rank by cheapest premium or maximum upside alone.
 
+Each Top Research row also serializes concise `score_factors` and `ranking_rationale` values so the UI and `analysis.json` explain why a contract surfaced.
+
 ## OTM Top Research Guardrail
 
-Phase 10A Top Research lists are OTM-only by default:
+Top Research lists are OTM-only by default:
 
 - Top Research Calls require strike greater than the current underlying price.
 - Top Research Puts require strike less than the current underlying price.
@@ -76,6 +78,16 @@ Phase 10A Top Research lists are OTM-only by default:
 ITM and deep ITM contracts are retained in raw chain snapshots (`calls.csv` and `puts.csv`) for inspection and future research, but they are excluded from Top Research Calls/Puts in this phase. The Contract Research Score favors OTM contracts that are reasonably near the underlying and penalizes extremely far OTM, very wide spreads, low/no open interest and volume, missing IV/model data, and near-worthless lottery-style contracts.
 
 This remains research-only ranking language, not a recommendation.
+
+## Developer Notes: Phase 10A-10F Stack
+
+- OTM-only Top Research: Calls must have strikes above the underlying price, and puts must have strikes below it. The raw `calls.csv` and `puts.csv` files preserve the full chain, including ITM and excluded contracts.
+- Exclusions: Contracts filtered out of Top Research are serialized under `excluded_calls` and `excluded_puts` with reasons such as ITM/ATM, missing IV, poor liquidity, wide spread, unusable premium, or missing/invalid quote data.
+- Scoring and rationale: Ranked contracts expose weighted factor scores for liquidity, spread quality, IV condition, OTM distance/proximity, premium quality, window fit, timing alignment, and scenario behavior. `ranking_rationale` is short UI copy derived from those factors.
+- Cross-window intelligence: `cross_window` compares same-snapshot 30D/60D/90D Top Research cohorts using expiration/DTE windows. It classifies an idea as strengthening, stable, weakening, isolated, or insufficient_data without creating synthetic history.
+- Position context: The optional local `greenrock/derivatives/position_context.csv` file is read-only. If present, it can add shares, average cost, existing option exposure, direction, and research flags; missing context never blocks Top Research.
+- Strategy intent mapping: `strategy_intent`, `intent_rationale`, `manifesto_alignment`, and `position_context_alignment` are read-only labels for research framing, such as income_overlay, cash_secured_entry, downside_hedge, speculative_convexity, avoid_conflict, or research_only.
+- No brokerage execution: The Workbench has no order construction, broker API integration, credential handling, or trading action. Strategy intent is not an execution instruction.
 
 ## Scenario Lab
 
