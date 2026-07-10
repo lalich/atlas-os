@@ -58,6 +58,7 @@ from atlas_os.greenrock.population import (
     validate_populations,
 )
 from atlas_os.greenrock.report import build_sample_report
+from atlas_os.greenrock.report_dry_run import create_report_dry_run
 from atlas_os.greenrock.report_workbench import (
     CANDIDATE_DECISIONS,
     get_report_task,
@@ -273,6 +274,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--allow-missing-analytics",
         action="store_true",
         help="Allow a staging-sourced draft when staged candidate analytics are still missing.",
+    )
+    greenrock_subparsers.add_parser(
+        "report-dry-run",
+        help="Create a review-only Report Agent dry run without approvals, publishing, email, PDF export, or trading.",
     )
     latest_report = greenrock_subparsers.add_parser(
         "latest-report",
@@ -941,6 +946,16 @@ def run_greenrock_report_from_staging(allow_underfilled: bool = False, allow_mis
     else:
         print("  none")
     print("Draft is blocked until approved by a human. No email, publication, or PDF export was created.")
+    return 0
+
+
+def run_greenrock_report_dry_run() -> int:
+    settings = get_settings()
+    path = create_report_dry_run(settings.output_dir)
+    print("GreenRock Report Agent dry run created")
+    print(f"path: {path}")
+    print("Status: DRAFT / REVIEW ONLY")
+    print("No workflow run, approval, artifact record, report record, PDF export, email, publishing, broker order, client contact, or external LLM/API action was created.")
     return 0
 
 
@@ -3065,6 +3080,8 @@ def main(argv: list[str] | None = None) -> int:
             return run_greenrock_report_draft(args.data, args.selection)
         if args.greenrock_command == "report-from-staging":
             return run_greenrock_report_from_staging(args.allow_underfilled, args.allow_missing_analytics)
+        if args.greenrock_command == "report-dry-run":
+            return run_greenrock_report_dry_run()
         if args.greenrock_command == "latest-report":
             return run_greenrock_latest_report(args.print_contents)
         if args.greenrock_command == "latest-run":
