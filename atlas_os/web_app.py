@@ -2454,7 +2454,7 @@ def render_greenrock_derivatives(ticker: str = "", status_message: str | None = 
     {_derivatives_analysis_panel(latest)}
     <section class="panel">
       <div class="section-head"><h2>Model Notes</h2><span class="subtle">BAW deferred</span></div>
-      <p>Phase 10A uses an American binomial tree as the source of truth for listed U.S. equity options. Barone-Adesi-Whaley is not producing numbers yet; it remains a planned future comparison model.</p>
+      <p>The Derivative Workbench uses an American binomial tree as the source of truth for listed U.S. equity options. Barone-Adesi-Whaley is not producing numbers yet; it remains a planned future comparison model.</p>
       <p class="subtle">Language is intentionally limited to research fit, contract quality, scenario profile, and timing alignment. This page does not use buy/sell/hold or trade recommendation language.</p>
     </section>
     """

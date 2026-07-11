@@ -1,6 +1,6 @@
 # GreenRock Report Dry-Run Schedule
 
-Phase 11B adds local schedule evaluation for GreenRock Report Agent dry runs. It does not install a daemon, cron job, macOS launch agent, email sender, publisher, broker integration, approval record, PDF export, client contact path, or external LLM/API call.
+Atlas OS v0.8.0-alpha includes local schedule evaluation for GreenRock Report Agent dry runs. Originally implemented during Phase 11B, it does not install a daemon, cron job, macOS launch agent, email sender, publisher, broker integration, approval record, PDF export, client contact path, or external LLM/API call.
 
 ## Commands
 

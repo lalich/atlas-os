@@ -9,10 +9,55 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
+from atlas_os import __version__
 from atlas_os.cli import main
+from atlas_os.release import load_version, version_file_path
 
 
 class UserExperienceCliTests(unittest.TestCase):
+    def test_release_version_and_roadmap_cli_are_informational_only(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {
+                "ATLAS_DB_PATH": str(root / "atlas.db"),
+                "ATLAS_OUTPUT_DIR": str(root / "output"),
+            }
+
+            with patch.dict("os.environ", env, clear=False):
+                version_output, version_code = _run_cli_raw(["version"])
+                roadmap_output, roadmap_code = _run_cli_raw(["roadmap"])
+
+        self.assertEqual(version_code, 0)
+        self.assertEqual(roadmap_code, 0)
+        self.assertEqual(version_output.strip().splitlines(), ["Atlas OS v0.8.0-alpha", "Agent Orchestration"])
+        self.assertIn("Atlas OS Roadmap", roadmap_output)
+        self.assertIn("Current Release", roadmap_output)
+        self.assertIn("v0.8.0-alpha — Agent Orchestration", roadmap_output)
+        self.assertIn("v0.9 — Publishing and Distribution Foundations", roadmap_output)
+        self.assertIn("v1.0 — GreenRock Operating System", roadmap_output)
+        self.assertFalse((root / "atlas.db").exists())
+        self.assertFalse((root / "output").exists())
+
+    def test_release_version_source_is_available_and_synchronized(self) -> None:
+        self.assertTrue(version_file_path().exists())
+        self.assertEqual(load_version(), "0.8.0-alpha")
+        self.assertEqual(__version__, "0.8.0-alpha")
+
+    def test_release_commands_are_visible_in_help(self) -> None:
+        root_help, root_code = _run_cli_raw(["--help"])
+        greenrock_help, greenrock_code = _run_cli_raw(["greenrock", "--help"])
+        greenrock_agents_help, greenrock_agents_code = _run_cli_raw(["greenrock", "agents", "--help"])
+
+        self.assertEqual(root_code, 0)
+        self.assertEqual(greenrock_code, 0)
+        self.assertEqual(greenrock_agents_code, 0)
+        self.assertIn("version", root_help)
+        self.assertIn("roadmap", root_help)
+        self.assertIn("agents", greenrock_help)
+        self.assertIn("run-report", greenrock_agents_help)
+        self.assertIn("approve", greenrock_agents_help)
+        self.assertIn("reject", greenrock_agents_help)
+
     def test_greenrock_latest_shortcuts_and_dashboard(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -235,6 +280,16 @@ def _run_cli(args: list[str]) -> str:
     if exit_code != 0:
         raise AssertionError(f"CLI exited with {exit_code}: {args}")
     return buffer.getvalue()
+
+
+def _run_cli_raw(args: list[str]) -> tuple[str, int]:
+    buffer = io.StringIO()
+    with redirect_stdout(buffer):
+        try:
+            exit_code = main(args)
+        except SystemExit as error:
+            exit_code = int(error.code or 0)
+    return buffer.getvalue(), exit_code
 
 
 def _line_value(output: str, label: str) -> str:

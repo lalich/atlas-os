@@ -48,6 +48,57 @@ DEFAULT_AGENTS: tuple[Agent, ...] = (
         division="atlas-core",
         responsibility="Create local Atlas Inbox items from safe agent findings.",
     ),
+    Agent(
+        agent_id="market_scout",
+        name="Market Scout",
+        division="greenrock",
+        responsibility="Collect local market scan context for GreenRock report-agent dry runs.",
+    ),
+    Agent(
+        agent_id="derivative_analyst",
+        name="Derivative Analyst",
+        division="greenrock",
+        responsibility="Summarize read-only Derivative Workbench Top Research, exclusions, strategy intent, and guardrails.",
+    ),
+    Agent(
+        agent_id="portfolio_analyst",
+        name="Portfolio Analyst",
+        division="greenrock",
+        responsibility="Review local read-only position and staged-candidate context without broker access.",
+    ),
+    Agent(
+        agent_id="risk_officer",
+        name="Risk Officer",
+        division="greenrock",
+        responsibility="Propagate research risks, missing data, provider issues, and review-required flags.",
+    ),
+    Agent(
+        agent_id="compliance_reviewer",
+        name="Compliance Reviewer",
+        division="greenrock",
+        responsibility="Confirm draft-only boundaries and human-review requirements for report-agent workflows.",
+    ),
+    Agent(
+        agent_id="report_writer",
+        name="Report Writer",
+        division="greenrock",
+        responsibility="Assemble the local GreenRock report dry-run draft for review only.",
+    ),
+    Agent(
+        agent_id="atlas_chief_of_staff",
+        name="Atlas Chief of Staff",
+        division="atlas-core",
+        responsibility="Summarize report-agent handoffs, conflicts, flags, draft location, and approval state.",
+    ),
+    Agent(
+        agent_id="distribution_agent",
+        name="Distribution Agent",
+        division="greenrock",
+        responsibility="Registered for future distribution checks only; disabled and non-runnable in v0.8.0-alpha.",
+        status="blocked",
+        health="disabled",
+        last_message="Distribution is fail-closed and unavailable in v0.8.0-alpha.",
+    ),
 )
 
 

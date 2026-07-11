@@ -59,6 +59,14 @@ from atlas_os.greenrock.population import (
 )
 from atlas_os.greenrock.report import build_sample_report
 from atlas_os.greenrock.report_dry_run import create_report_dry_run, default_report_schedule_config, preview_report_schedule, run_due_report_dry_runs
+from atlas_os.greenrock.report_agents import (
+    approve_report_agent_workflow,
+    distribution_agent_lock_status,
+    get_report_agent_workflow,
+    list_report_agent_workflows,
+    reject_report_agent_workflow,
+    run_greenrock_report_agent_workflow,
+)
 from atlas_os.greenrock.report_workbench import (
     CANDIDATE_DECISIONS,
     get_report_task,
@@ -114,6 +122,7 @@ from atlas_os.morning_brief import (
     load_morning_brief_snapshot,
     save_morning_brief_snapshot,
 )
+from atlas_os.release import roadmap_lines, version_lines
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -125,6 +134,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers = parser.add_subparsers(dest="command")
 
+    subparsers.add_parser("version", help="Show the Atlas OS release version.")
+    subparsers.add_parser("roadmap", help="Show the concise Atlas OS release roadmap.")
     subparsers.add_parser("status", help="Show local Atlas OS status.")
     subparsers.add_parser("doctor", help="Check local Atlas OS setup readiness.")
     subparsers.add_parser("dashboard", help="Show analyst-friendly Atlas OS overview.")
@@ -287,6 +298,22 @@ def build_parser() -> argparse.ArgumentParser:
     report_schedule_preview = report_schedule_subparsers.add_parser("preview", help="Preview upcoming local report dry-run schedule times.")
     report_schedule_preview.add_argument("--count", type=int, default=3, help="Number of upcoming scheduled occurrences to show.")
     report_schedule_subparsers.add_parser("run-due", help="Generate due local report dry runs and skip duplicates.")
+    report_agents = greenrock_subparsers.add_parser(
+        "agents",
+        help="Run local GreenRock report-agent orchestration without distribution.",
+    )
+    report_agents_subparsers = report_agents.add_subparsers(dest="greenrock_agents_command")
+    report_agents_subparsers.add_parser("run-report", help="Run the local report-agent workflow and stop at human approval.")
+    report_agents_status = report_agents_subparsers.add_parser("status", help="Show report-agent workflow status.")
+    report_agents_status.add_argument("workflow_id", nargs="?")
+    report_agents_approve = report_agents_subparsers.add_parser("approve", help="Approve one local report-agent workflow.")
+    report_agents_approve.add_argument("workflow_id")
+    report_agents_approve.add_argument("--approver", default="managing_director")
+    report_agents_approve.add_argument("--note", default="")
+    report_agents_reject = report_agents_subparsers.add_parser("reject", help="Reject one local report-agent workflow.")
+    report_agents_reject.add_argument("workflow_id")
+    report_agents_reject.add_argument("--approver", default="managing_director")
+    report_agents_reject.add_argument("--note", default="")
     latest_report = greenrock_subparsers.add_parser(
         "latest-report",
         help="Show the latest GreenRock report path.",
@@ -596,6 +623,18 @@ def run_status() -> int:
     print(f"database: {db_path}")
     print("external services: disabled")
     print("approval gate: required for client-facing publication")
+    return 0
+
+
+def run_version() -> int:
+    for line in version_lines():
+        print(line)
+    return 0
+
+
+def run_roadmap() -> int:
+    for line in roadmap_lines():
+        print(line)
     return 0
 
 
@@ -992,6 +1031,79 @@ def run_greenrock_report_schedule(command: str | None, count: int = 3) -> int:
         print("Local draft generation only. Human review is required; no approval, PDF, email, publishing, broker, client, or external LLM/API action was created.")
         return 0
     print("Choose a report-schedule command: preview or run-due.")
+    return 1
+
+
+def run_greenrock_report_agents(command: str | None, workflow_id: str | None = None, approver: str = "managing_director", note: str = "") -> int:
+    settings = get_settings()
+    db_path = initialize_database(settings.db_path)
+    if command == "run-report":
+        with connect(db_path) as connection:
+            workflow = run_greenrock_report_agent_workflow(connection, settings.output_dir)
+        lock = distribution_agent_lock_status(settings.output_dir, workflow.workflow_id)
+        print("GreenRock report-agent workflow complete")
+        print(f"workflow_id: {workflow.workflow_id}")
+        print(f"status: {workflow.status}")
+        print(f"approval_status: {workflow.approval_status}")
+        print(f"final_draft_path: {workflow.final_draft_path or 'none'}")
+        print(f"workflow_path: {workflow.workflow_path}")
+        print(f"distribution_agent: {lock['status']} ({lock['reason']})")
+        if workflow.warnings:
+            print("warnings:")
+            for warning in workflow.warnings:
+                print(f"  {warning}")
+        print("Human approval is required. No email, publishing, broker, order, client, CRM, approval bypass, distribution, or external LLM/API action was created.")
+        return 0
+    if command == "status":
+        if workflow_id:
+            workflows = (get_report_agent_workflow(settings.output_dir, workflow_id),)
+        else:
+            workflows = list_report_agent_workflows(settings.output_dir)[:5]
+        print("GreenRock report-agent workflows")
+        if not workflows:
+            print("No report-agent workflows found.")
+            return 0
+        print("workflow_id status approval_status final_draft_path distribution_lock")
+        for workflow in workflows:
+            lock = distribution_agent_lock_status(settings.output_dir, workflow.workflow_id)
+            print(
+                f"{workflow.workflow_id} {workflow.status} {workflow.approval_status} "
+                f"{workflow.final_draft_path or 'none'} {lock['reason']}"
+            )
+        return 0
+    if command == "approve" and workflow_id:
+        try:
+            with connect(db_path) as connection:
+                approval = approve_report_agent_workflow(connection, settings.output_dir, workflow_id, approver=approver, note=note)
+        except ValueError as error:
+            print("GreenRock report-agent approval blocked")
+            print(f"reason: {error}")
+            return 1
+        lock = distribution_agent_lock_status(settings.output_dir, workflow_id)
+        print("GreenRock report-agent workflow approved")
+        print(f"approval_id: {approval.approval_id}")
+        print(f"workflow_id: {approval.workflow_id}")
+        print(f"approver: {approval.approver}")
+        print(f"approved_at: {approval.approved_at}")
+        print(f"distribution_agent: {lock['status']} ({lock['reason']})")
+        print("Approval was recorded locally. Distribution remains disabled in this release.")
+        return 0
+    if command == "reject" and workflow_id:
+        try:
+            with connect(db_path) as connection:
+                approval = reject_report_agent_workflow(connection, settings.output_dir, workflow_id, approver=approver, note=note)
+        except ValueError as error:
+            print("GreenRock report-agent rejection blocked")
+            print(f"reason: {error}")
+            return 1
+        print("GreenRock report-agent workflow rejected")
+        print(f"approval_id: {approval.approval_id}")
+        print(f"workflow_id: {approval.workflow_id}")
+        print(f"approver: {approval.approver}")
+        print(f"decided_at: {approval.decided_at}")
+        print("No distribution, email, publishing, broker, order, client, CRM, or external LLM/API action was created.")
+        return 0
+    print("Choose an agents command: run-report, status, approve, or reject.")
     return 1
 
 
@@ -3053,6 +3165,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "status":
         return run_status()
 
+    if args.command == "version":
+        return run_version()
+
+    if args.command == "roadmap":
+        return run_roadmap()
+
     if args.command == "doctor":
         return run_doctor_cli()
 
@@ -3120,6 +3238,13 @@ def main(argv: list[str] | None = None) -> int:
             return run_greenrock_report_dry_run()
         if args.greenrock_command == "report-schedule":
             return run_greenrock_report_schedule(args.report_schedule_command, getattr(args, "count", 3))
+        if args.greenrock_command == "agents":
+            return run_greenrock_report_agents(
+                args.greenrock_agents_command,
+                getattr(args, "workflow_id", None),
+                getattr(args, "approver", "managing_director"),
+                getattr(args, "note", ""),
+            )
         if args.greenrock_command == "latest-report":
             return run_greenrock_latest_report(args.print_contents)
         if args.greenrock_command == "latest-run":

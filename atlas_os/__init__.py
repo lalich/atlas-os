@@ -1,4 +1,6 @@
 """Atlas OS local-first workflow scaffold."""
 
-__version__ = "0.1.0"
+from atlas_os.release import load_version
 
+
+__version__ = load_version()

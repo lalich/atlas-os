@@ -1,8 +1,44 @@
 # Atlas OS
 
-Atlas OS is a local-first Python scaffold for multi-division AI workflows with human approval gates.
+## Atlas OS v0.8.0-alpha
 
-The first implementation target is the GreenRock Analysts Monthly Report. Phase 0 uses mock/sample data only and does not connect to market data, email, client files, brokerage accounts, OneDrive, Gmail, or credential stores.
+**Agent Orchestration**
+
+Status: **Feature complete; pending Managing Director user review**
+
+Atlas OS is a governed, local-first research operating system for GreenRock and Atlas workflows. It coordinates research, derivative context, report drafting, local agent handoffs, audit visibility, and explicit human approval without replacing the Managing Director's authority.
+
+Core safety boundary: Atlas OS does not send email, publish externally, contact clients, update CRM systems, call brokers, construct orders, handle credentials, call external LLM/API services, or distribute reports automatically. Approval alone must not trigger distribution.
+
+Release references:
+
+- [Roadmap](ROADMAP.md)
+- [Release Notes v0.8.0-alpha](docs/RELEASE_NOTES_v0.8.0-alpha.md)
+- [GreenRock Report Agent Orchestration](docs/GREENROCK_REPORT_AGENT_ORCHESTRATION.md)
+
+## Getting Started
+
+```bash
+cd ~/Desktop/atlas-os
+./scripts/atlas-dev
+./scripts/atlas-serve
+```
+
+Useful release commands:
+
+```bash
+atlas version
+atlas roadmap
+atlas greenrock report-dry-run
+atlas greenrock agents run-report
+atlas greenrock agents status
+atlas greenrock agents approve <workflow-id>
+atlas greenrock agents reject <workflow-id>
+```
+
+The dev script verifies the local environment. The serve script starts the local Command Center.
+
+Atlas OS started as the GreenRock Analysts report workflow and now includes Derivative Workbench research, review-only report dry runs, scheduled local drafts, and GreenRock report-agent orchestration.
 
 ## Local Install
 
@@ -32,6 +68,8 @@ If the editable install cannot fetch Python build tools, use the included local 
 cd ~/Desktop/atlas-os
 export PATH="$PWD/bin:$PATH"
 atlas --help
+atlas version
+atlas roadmap
 atlas status
 atlas doctor
 atlas morning-brief
@@ -45,6 +83,8 @@ atlas inbox list
 
 ```bash
 atlas --help
+atlas version
+atlas roadmap
 atlas status
 atlas doctor
 atlas greenrock sample-report
@@ -57,6 +97,11 @@ atlas greenrock report-draft --data mock
 atlas greenrock report-draft --data real
 atlas greenrock report-draft --data real --selection ranked
 atlas greenrock report-draft --data real --selection strict
+atlas greenrock report-dry-run
+atlas greenrock agents run-report
+atlas greenrock agents status
+atlas greenrock agents approve <workflow-id>
+atlas greenrock agents reject <workflow-id>
 atlas greenrock latest-report
 atlas greenrock latest-report --print
 atlas greenrock latest-run
