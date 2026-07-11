@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import difflib
 import subprocess
 import sys
 from pathlib import Path
@@ -1055,10 +1056,21 @@ def run_greenrock_report_agents(command: str | None, workflow_id: str | None = N
         print("Human approval is required. No email, publishing, broker, order, client, CRM, approval bypass, distribution, or external LLM/API action was created.")
         return 0
     if command == "status":
+        all_workflows = list_report_agent_workflows(settings.output_dir)
         if workflow_id:
-            workflows = (get_report_agent_workflow(settings.output_dir, workflow_id),)
+            try:
+                workflows = (get_report_agent_workflow(settings.output_dir, workflow_id),)
+            except KeyError:
+                print(f"Workflow not found: {workflow_id}")
+                suggestion = _closest_cli_workflow_id(workflow_id, [workflow.workflow_id for workflow in all_workflows])
+                if suggestion:
+                    print(f"Closest workflow: {suggestion}")
+                print("")
+                print("Check the workflow ID or run:")
+                print("  atlas greenrock agents status")
+                return 1
         else:
-            workflows = list_report_agent_workflows(settings.output_dir)[:5]
+            workflows = all_workflows[:5]
         print("GreenRock report-agent workflows")
         if not workflows:
             print("No report-agent workflows found.")
@@ -3123,6 +3135,11 @@ def _cli_float_or_none(value: str) -> float | None:
 
 def _yes_no(value: bool) -> str:
     return "yes" if value else "no"
+
+
+def _closest_cli_workflow_id(workflow_id: str, known_ids: list[str]) -> str:
+    matches = difflib.get_close_matches(workflow_id, known_ids, n=1, cutoff=0.72)
+    return matches[0] if matches else ""
 
 
 def _cli_date_part(timestamp: str) -> str:

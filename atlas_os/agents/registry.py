@@ -94,10 +94,10 @@ DEFAULT_AGENTS: tuple[Agent, ...] = (
         agent_id="distribution_agent",
         name="Distribution Agent",
         division="greenrock",
-        responsibility="Registered for future distribution checks only; disabled and non-runnable in v0.8.0-alpha.",
+        responsibility="Registered for future distribution checks only; disabled and non-runnable in v0.8.1.",
         status="blocked",
         health="disabled",
-        last_message="Distribution is fail-closed and unavailable in v0.8.0-alpha.",
+        last_message="Distribution is fail-closed and unavailable in v0.8.1.",
     ),
 )
 

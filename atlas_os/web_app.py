@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import csv
+import difflib
 import html
 import importlib.util
+import json
 import os
 import subprocess
 import sys
@@ -46,6 +48,15 @@ from atlas_os.core.reports import get_report, list_reports
 from atlas_os.core.workflow_runs import get_workflow_run, list_workflow_runs
 from atlas_os.db.database import connect, initialize_database
 from atlas_os.greenrock.pdf_export import render_markdown_report_to_pdf
+from atlas_os.greenrock.report_agents import (
+    REPORT_AGENT_ORDER,
+    approve_report_agent_workflow,
+    distribution_agent_lock_status,
+    get_report_agent_workflow,
+    list_report_agent_workflows,
+    reject_report_agent_workflow,
+    run_greenrock_report_agent_workflow,
+)
 from atlas_os.greenrock.derivatives import (
     create_options_snapshot,
     latest_derivative_analysis,
@@ -253,6 +264,32 @@ def create_app():
     @app.get("/greenrock", response_class=HTMLResponse)
     def greenrock() -> str:
         return render_greenrock()
+
+    @app.get("/greenrock/agents/workflows/{workflow_id}", response_class=HTMLResponse)
+    def greenrock_agent_workflow(request: Request, workflow_id: str):
+        try:
+            return render_greenrock_agent_workflow(workflow_id, request.query_params.get("status"))
+        except KeyError:
+            return HTMLResponse(render_greenrock_workflow_not_found(workflow_id), status_code=404)
+
+    @app.post("/greenrock/agents/run-report")
+    def greenrock_agents_run_report():
+        message = run_greenrock_report_agent_from_browser()
+        return RedirectResponse(_with_status("/greenrock", message), status_code=303)
+
+    @app.post("/greenrock/agents/workflows/{workflow_id}/approve")
+    def greenrock_agent_workflow_approve(workflow_id: str, note: str = Form("")):
+        message, target = decide_greenrock_report_agent_workflow_from_browser(workflow_id, "approve", note)
+        if not target:
+            return HTMLResponse(render_greenrock_workflow_not_found(workflow_id), status_code=404)
+        return RedirectResponse(_with_status(target, message), status_code=303)
+
+    @app.post("/greenrock/agents/workflows/{workflow_id}/reject")
+    def greenrock_agent_workflow_reject(workflow_id: str, note: str = Form("")):
+        message, target = decide_greenrock_report_agent_workflow_from_browser(workflow_id, "reject", note)
+        if not target:
+            return HTMLResponse(render_greenrock_workflow_not_found(workflow_id), status_code=404)
+        return RedirectResponse(_with_status(target, message), status_code=303)
 
     @app.get("/greenrock/report-workbench", response_class=HTMLResponse)
     def greenrock_report_workbench(request: Request) -> str:
@@ -565,6 +602,12 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
             return _error_response(404, "Inbox Item Not Found", f"No inbox item exists for {item_id}.")
     if method == "GET" and route == "/greenrock":
         return WebResponse(200, render_greenrock(_first(query, "status")))
+    if method == "GET" and route.startswith("/greenrock/agents/workflows/"):
+        workflow_id = unquote(route.removeprefix("/greenrock/agents/workflows/").strip("/"))
+        try:
+            return WebResponse(200, render_greenrock_agent_workflow(workflow_id, _first(query, "status")))
+        except KeyError:
+            return WebResponse(404, render_greenrock_workflow_not_found(workflow_id))
     if method == "GET" and route == "/greenrock/report-workbench":
         return WebResponse(200, render_greenrock_report_workbench(_first(query, "status")))
     if method == "GET" and route == "/greenrock/picks":
@@ -667,6 +710,9 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
         return WebResponse(303, "", location=_with_status("/pt", "Project stage updated."))
     if method == "POST" and route == "/greenrock/run-report":
         ok, message = run_greenrock_report_from_browser(form.get("data_mode", "mock"))
+        return WebResponse(303, "", location=_with_status("/greenrock", message))
+    if method == "POST" and route == "/greenrock/agents/run-report":
+        message = run_greenrock_report_agent_from_browser()
         return WebResponse(303, "", location=_with_status("/greenrock", message))
     if method == "POST" and route == "/atlas/morning-brief/snapshot":
         return WebResponse(303, "", location=_with_status("/atlas/morning-brief", save_morning_brief_snapshot_from_browser()))
@@ -797,6 +843,17 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
         ticker = form.get("ticker", "")
         target = f"/greenrock/derivatives?ticker={quote(ticker.strip().upper())}" if ticker.strip() else "/greenrock/derivatives"
         return WebResponse(303, "", location=_with_status(target, run_greenrock_derivatives_from_browser(ticker)))
+    if method == "POST" and route.startswith("/greenrock/agents/workflows/") and route.endswith("/approve"):
+        workflow_id = unquote(route.removeprefix("/greenrock/agents/workflows/").removesuffix("/approve").strip("/"))
+        message, target = decide_greenrock_report_agent_workflow_from_browser(workflow_id, "approve", form.get("note", ""))
+        status = 303 if target else 404
+        return WebResponse(status, "" if target else render_greenrock_workflow_not_found(workflow_id), location=_with_status(target, message) if target else None)
+    if method == "POST" and route.startswith("/greenrock/agents/workflows/") and route.endswith("/reject"):
+        workflow_id = unquote(route.removeprefix("/greenrock/agents/workflows/").removesuffix("/reject").strip("/"))
+        message, target = decide_greenrock_report_agent_workflow_from_browser(workflow_id, "reject", form.get("note", ""))
+        if not target:
+            return WebResponse(404, render_greenrock_workflow_not_found(workflow_id))
+        return WebResponse(303, "", location=_with_status(target, message))
     if method == "POST" and route.startswith("/tasks/") and route.endswith("/status"):
         task_id = _route_int_part(route, 2)
         if task_id is None:
@@ -1300,15 +1357,20 @@ def render_greenrock(status_message: str | None = None) -> str:
     artifacts = list_artifacts_for_run(context["connection"], latest_run.run_id) if latest_run else ()
     large_candidates = _candidate_rows(latest_run.output_paths.get("large_cap") if latest_run else None)
     small_candidates = _candidate_rows(latest_run.output_paths.get("small_cap") if latest_run else None)
+    report_agent_workflows = list_report_agent_workflows(context["settings"].output_dir)
+    latest_agent_workflow = report_agent_workflows[0] if report_agent_workflows else None
 
     content = f"""
     {_status_banner(status_message)}
     <section class="hero compact greenrock-hero">
       {_greenrock_brand_block()}
-      <p class="eyebrow">GreenRock Analysts</p>
-      <h1>Report Review Console</h1>
-      <p>Discovery Scan, Review Results, Stage Candidates, Generate Draft Report, Human Approval, Export PDF.</p>
+      <p class="eyebrow">GreenRock Research</p>
+      <h1>Executive Report Console</h1>
+      <p>Powered by Atlas OS. Review research, workflow state, warnings, approvals, PDFs, and distribution lock status from one local command center.</p>
+      <p class="subtle">Atlas OS v{_safe(__version__)} - Executive UX</p>
     </section>
+    {_greenrock_executive_workflow_panel(context, latest_agent_workflow)}
+    {_greenrock_workflow_history_panel(context, report_agent_workflows)}
     <section class="attention-grid">
       {_attention_card("neutral", _safe(latest_run.status if latest_run else "none"), "Latest Report Status", _safe(latest_run.run_id if latest_run else "No run yet"))}
       {_attention_card(_approval_color(latest_approval), _safe(latest_approval.status.value if latest_approval else "none"), "Latest Approval Status", "Human gate remains mandatory")}
@@ -1321,9 +1383,12 @@ def render_greenrock(status_message: str | None = None) -> str:
         <span class="subtle">Local review only. No publish or send controls.</span>
       </div>
       <div class="action-row">
+        <form method="post" action="/greenrock/agents/run-report" onsubmit="return confirm('Run a new local report-agent workflow? This creates local review artifacts only.');">
+          <button type="submit">Run Executive Workflow</button>
+        </form>
         <form method="post" action="/greenrock/run-report" onsubmit="return confirm('Run a new local MOCK GreenRock report draft?');">
           <input type="hidden" name="data_mode" value="mock">
-          <button type="submit">Run Sample/Mock Report</button>
+          <button class="secondary" type="submit">Run Legacy Mock Draft</button>
         </form>
         <form method="post" action="/greenrock/run-report" onsubmit="return confirm('Run a new local REAL GreenRock report draft using the configured provider?');">
           <input type="hidden" name="data_mode" value="real">
@@ -1377,6 +1442,301 @@ def render_greenrock(status_message: str | None = None) -> str:
     </section>
     """
     return _page("GreenRock Command Center", content, active="/greenrock")
+
+
+def render_greenrock_agent_workflow(workflow_id: str, status_message: str | None = None) -> str:
+    context = _load_context()
+    workflow = get_report_agent_workflow(context["settings"].output_dir, workflow_id)
+    view = _greenrock_workflow_view(context, workflow)
+    content = f"""
+    {_status_banner(status_message)}
+    <section class="hero compact greenrock-hero">
+      {_greenrock_brand_block()}
+      <p class="eyebrow">GreenRock Research · Powered by Atlas OS</p>
+      <h1>{_safe(view["report_label"])}</h1>
+      <p>{_safe(view["status_label"])}. {_safe(view["distribution_label"])}.</p>
+    </section>
+    {_greenrock_workflow_summary_panel(view, detail=True)}
+    <section class="panel">
+      <div class="section-head">
+        <h2>Report Actions</h2>
+        <span class="subtle">Explicit local review actions only</span>
+      </div>
+      <div class="action-row">
+        {_workflow_action_buttons(view)}
+        <a class="button secondary" href="/greenrock">Back to GreenRock</a>
+      </div>
+    </section>
+    {_workflow_warning_panel(view)}
+    <section class="panel">
+      <div class="section-head">
+        <h2>Agent Progress</h2>
+        <span class="subtle">Structured handoffs, newest workflow</span>
+      </div>
+      {_workflow_step_grid(view)}
+    </section>
+    {_chief_of_staff_panel(view)}
+    <details class="panel technical-details">
+      <summary>Technical Details</summary>
+      <dl class="detail-grid">
+        <div><dt>Workflow ID</dt><dd class="path">{_safe(view["workflow_id"])}</dd></div>
+        <div><dt>Workflow JSON</dt><dd class="path">{_safe(str(view["workflow_path"]))}</dd></div>
+        <div><dt>Draft Path</dt><dd class="path">{_safe(view["draft_path"] or "not generated")}</dd></div>
+        <div><dt>PDF Path</dt><dd class="path">{_safe(view["pdf_path"] or "not generated")}</dd></div>
+      </dl>
+    </details>
+    """
+    return _page(f"GreenRock Workflow - {view['report_label']}", content, active="/greenrock")
+
+
+def render_greenrock_workflow_not_found(workflow_id: str) -> str:
+    settings = get_settings()
+    known_ids = [workflow.workflow_id for workflow in list_report_agent_workflows(settings.output_dir)]
+    suggestion = _closest_workflow_id(workflow_id, known_ids)
+    hint = f"<p>Closest workflow: <a href='/greenrock/agents/workflows/{quote(suggestion)}'>{_safe(suggestion)}</a></p>" if suggestion else "<p>Open the latest workflow list from GreenRock home.</p>"
+    content = f"""
+    <section class="panel warning-panel">
+      <h1>Workflow not found</h1>
+      <p>No GreenRock report-agent workflow exists for <code>{_safe(workflow_id)}</code>.</p>
+      {hint}
+      <p><a class="button" href="/greenrock">Return to GreenRock</a></p>
+    </section>
+    """
+    return _page("Workflow Not Found", content, active="/greenrock")
+
+
+def _greenrock_executive_workflow_panel(context: dict, workflow) -> str:
+    if workflow is None:
+        scan = latest_scan(context["settings"].output_dir)
+        reason = _latest_scan_provider_failure_summary(scan)
+        return f"""
+        <section class="panel executive-workflow-panel warning-panel">
+          <div class="section-head">
+            <h2>Latest Research Report</h2>
+            <span class="badge pending">Needs setup</span>
+          </div>
+          <p><strong>No executive workflow has been generated yet.</strong></p>
+          <p class="subtle">{_safe(reason or "Run a local report-agent workflow to assemble the first review packet.")}</p>
+          <div class="action-row">
+            <form method="post" action="/greenrock/agents/run-report" onsubmit="return confirm('Run a local report-agent workflow?');">
+              <button type="submit">Run Executive Workflow</button>
+            </form>
+            <a class="button secondary" href="/greenrock/scanner">Review Scanner</a>
+            <a class="button secondary" href="/greenrock/staging">Open Staging</a>
+          </div>
+        </section>
+        """
+    view = _greenrock_workflow_view(context, workflow)
+    return _greenrock_workflow_summary_panel(view, detail=False)
+
+
+def _greenrock_workflow_summary_panel(view: dict, detail: bool) -> str:
+    technical = (
+        f"""
+        <details class="technical-details">
+          <summary>Technical Details</summary>
+          <p class="path">Workflow ID: {_safe(view["workflow_id"])}</p>
+          <p class="path">Workflow JSON: {_safe(str(view["workflow_path"]))}</p>
+        </details>
+        """
+        if not detail
+        else ""
+    )
+    return f"""
+    <section class="panel executive-workflow-panel">
+      <div class="section-head">
+        <div>
+          <h2>Latest Research Report</h2>
+          <p class="subtle">{_safe(view["report_label"])}</p>
+        </div>
+        <span class="badge {_safe(view["status_badge"])}">{_safe(view["status_label"])}</span>
+      </div>
+      <div class="executive-status-grid">
+        {_executive_stat("Workflow", view["status_label"], view["generated_at_label"])}
+        {_executive_stat("Approval", view["approval_label"], view["approval_detail"])}
+        {_executive_stat("Draft", view["draft_label"], view["draft_detail"])}
+        {_executive_stat("PDF", view["pdf_label"], view["pdf_detail"])}
+        {_executive_stat("Distribution", view["distribution_label"], view["distribution_detail"])}
+        {_executive_stat("Warnings", str(view["warning_count"]), "unique warning(s)")}
+        {_executive_stat("Candidates", view["candidate_label"], view["candidate_detail"])}
+      </div>
+      <div class="action-row">
+        {_workflow_action_buttons(view)}
+      </div>
+      {technical}
+    </section>
+    """
+
+
+def _greenrock_workflow_history_panel(context: dict, workflows: tuple) -> str:
+    if not workflows:
+        return """
+        <section class="panel">
+          <div class="section-head"><h2>Recent Workflows</h2><span class="subtle">Newest first</span></div>
+          <p class="empty">No report-agent workflows yet. Run the Executive Workflow to create the first review packet.</p>
+        </section>
+        """
+    rows = "".join(_greenrock_workflow_history_row(_greenrock_workflow_view(context, workflow)) for workflow in workflows[:5])
+    return f"""
+    <section class="panel">
+      <div class="section-head"><h2>Recent Workflows</h2><span class="subtle">Newest first</span></div>
+      <table class="executive-history-table">
+        <thead><tr><th>Report</th><th>Generated</th><th>Status</th><th>Approval</th><th>PDF</th><th>Warnings</th><th>Distribution</th><th>Action</th></tr></thead>
+        <tbody>{rows}</tbody>
+      </table>
+    </section>
+    """
+
+
+def _greenrock_workflow_history_row(view: dict) -> str:
+    return (
+        "<tr>"
+        f"<td><strong>{_safe(view['report_label'])}</strong></td>"
+        f"<td>{_safe(view['generated_at_label'])}</td>"
+        f"<td><span class='badge {_safe(view['status_badge'])}'>{_safe(view['status_label'])}</span></td>"
+        f"<td>{_safe(view['approval_label'])}</td>"
+        f"<td>{_safe(view['pdf_label'])}</td>"
+        f"<td>{_safe(str(view['warning_count']))}</td>"
+        f"<td>{_safe(view['distribution_label'])}</td>"
+        f"<td><a class='button secondary' href='/greenrock/agents/workflows/{quote(view['workflow_id'])}'>View</a></td>"
+        "</tr>"
+    )
+
+
+def _greenrock_workflow_view(context: dict, workflow) -> dict:
+    payload = _workflow_json_payload(workflow)
+    approval_record = payload.get("approval_record", {}) if isinstance(payload.get("approval_record", {}), dict) else {}
+    lock = distribution_agent_lock_status(context["settings"].output_dir, workflow.workflow_id)
+    warnings = _dedup_workflow_warnings(workflow.tasks)
+    artifacts = list_artifacts_for_run(context["connection"], workflow.workflow_id)
+    pdf = next((artifact for artifact in artifacts if artifact.artifact_type == "report_final_pdf"), None)
+    generated_at = _workflow_generated_at(workflow)
+    report_label = _report_period_label(generated_at)
+    candidate_count = _workflow_candidate_count(payload)
+    draft_path = str(workflow.final_draft_path) if workflow.final_draft_path else ""
+    return {
+        "workflow_id": workflow.workflow_id,
+        "workflow_path": workflow.workflow_path,
+        "report_label": report_label,
+        "status_label": _workflow_status_label(workflow.status),
+        "status_badge": _workflow_status_badge(workflow.status),
+        "approval_label": _approval_status_label(workflow.approval_status),
+        "approval_detail": _approval_detail_label(approval_record),
+        "generated_at": generated_at,
+        "generated_at_label": _display_timestamp(generated_at),
+        "approver": approval_record.get("approver", ""),
+        "approval_record": approval_record,
+        "draft_path": draft_path,
+        "draft_label": "Draft Ready" if draft_path else "Draft Not Generated",
+        "draft_detail": "Review-only markdown is available" if draft_path else "Run report writer step",
+        "pdf_path": pdf.path if pdf else "",
+        "pdf_label": "PDF Ready" if pdf else "PDF Not Generated",
+        "pdf_detail": "Local PDF artifact only" if pdf else "Generate or export the approved report from Report Workbench.",
+        "distribution_label": _distribution_reason_label(str(lock.get("reason", ""))),
+        "distribution_detail": "Distribution remains blocked; approval does not send anything.",
+        "distribution_lock": lock,
+        "warning_count": len(warnings),
+        "warnings": warnings,
+        "candidate_label": f"{candidate_count} available" if candidate_count else "No staged candidates",
+        "candidate_detail": _candidate_detail(context, candidate_count),
+        "tasks": workflow.tasks,
+        "chief_summary": payload.get("chief_of_staff_summary", {}),
+    }
+
+
+def _workflow_action_buttons(view: dict) -> str:
+    buttons = []
+    if view["draft_path"]:
+        buttons.append(_open_link(view["draft_path"], "Open Draft"))
+    else:
+        buttons.append("<span class='button disabled'>Open Draft unavailable</span>")
+    if view["pdf_path"]:
+        buttons.append(_open_link(view["pdf_path"], "Open PDF"))
+    else:
+        buttons.append("<span class='button disabled'>PDF Not Generated</span>")
+    buttons.append(f"<a class='button secondary' href='/greenrock/agents/workflows/{quote(view['workflow_id'])}'>View Workflow Details</a>")
+    buttons.append('<a class="button secondary" href="#chief-of-staff">View Chief-of-Staff Summary</a>')
+    finalized = view["approval_label"] in {"Approved", "Rejected"}
+    if finalized:
+        buttons.append("<span class='button disabled'>Approval finalized</span>")
+    elif view["status_label"] == "Awaiting Managing Director Review":
+        buttons.append(
+            f"""
+            <form method="post" action="/greenrock/agents/workflows/{quote(view['workflow_id'])}/approve" onsubmit="return confirm('Approve this local workflow? Distribution will remain disabled.');">
+              <button type="submit">Approve</button>
+            </form>
+            """
+        )
+        buttons.append(
+            f"""
+            <form method="post" action="/greenrock/agents/workflows/{quote(view['workflow_id'])}/reject" onsubmit="return this.note.value.trim().length > 0 || (alert('Please enter a rejection reason.'), false);">
+              <input name="note" placeholder="Rejection reason" required>
+              <button class="secondary" type="submit">Reject</button>
+            </form>
+            """
+        )
+    else:
+        buttons.append("<span class='button disabled'>Approval unavailable</span>")
+    return "".join(buttons)
+
+
+def _workflow_warning_panel(view: dict) -> str:
+    if not view["warnings"]:
+        return "<section class='panel'><div class='section-head'><h2>Warnings</h2><span class='badge approved'>0 unique</span></div><p class='empty'>No workflow warnings recorded.</p></section>"
+    items = "".join(
+        f"<li>{_safe(item['text'])}<br><span class='subtle'>Reported by: {_safe(', '.join(item['agents']))}</span></li>"
+        for item in view["warnings"]
+    )
+    return f"""
+    <section class="panel warning-panel">
+      <div class="section-head"><h2>Warnings</h2><span class="badge pending">{view["warning_count"]} unique</span></div>
+      <ul class="compact-list">{items}</ul>
+    </section>
+    """
+
+
+def _workflow_step_grid(view: dict) -> str:
+    by_role = {task.get("agent_role", ""): task for task in view["tasks"]}
+    warning_texts = {str(item["text"]) for item in view["warnings"]}
+    cards = []
+    for role in REPORT_AGENT_ORDER:
+        task = by_role.get(role, {})
+        cards.append(_workflow_step_card(role, task, warning_texts))
+    return f"<div class='agent-step-grid'>{''.join(cards)}</div>"
+
+
+def _workflow_step_card(role: str, task: dict, warning_texts: set[str]) -> str:
+    label = _agent_role_label(role)
+    status = _workflow_status_label(str(task.get("status", "pending")))
+    warnings = task.get("warnings", ()) or ()
+    outputs = task.get("output_artifact_refs", ()) or ()
+    summary = task.get("summary", "") or "No output summary recorded."
+    payload_preview = _workflow_payload_preview(task.get("payload", {}), warning_texts)
+    return f"""
+    <article class="agent-step-card">
+      <div class="section-head"><h3>{_safe(label)}</h3><span class="badge {_safe(_workflow_status_badge(str(task.get("status", "pending"))))}">{_safe(status)}</span></div>
+      <p>{_safe(summary)}</p>
+      <p class="subtle">Warnings: {len(warnings)} · Artifacts: {len(outputs)}</p>
+      <details>
+        <summary>View Output</summary>
+        <pre>{_safe(json_dumps_compact(payload_preview))}</pre>
+      </details>
+    </article>
+    """
+
+
+def _chief_of_staff_panel(view: dict) -> str:
+    summary = view.get("chief_summary", {}) or {}
+    if not summary:
+        return "<section id='chief-of-staff' class='panel'><h2>Chief-of-Staff Summary</h2><p class='empty'>No Chief-of-Staff summary recorded.</p></section>"
+    warning_texts = {str(item["text"]) for item in view["warnings"]}
+    items = "".join(f"<li><strong>{_safe(key.replace('_', ' ').title())}:</strong> {_safe(_compact_value(value, warning_texts))}</li>" for key, value in summary.items())
+    return f"""
+    <section id="chief-of-staff" class="panel">
+      <div class="section-head"><h2>Chief-of-Staff Summary</h2><span class="badge">Review context</span></div>
+      <ul class="compact-list">{items}</ul>
+    </section>
+    """
 
 
 def render_greenrock_report_workbench(status_message: str | None = None) -> str:
@@ -3268,6 +3628,46 @@ def open_local_path(path: str) -> bool:
     return result.returncode == 0
 
 
+def run_greenrock_report_agent_from_browser() -> str:
+    settings = get_settings()
+    db_path = initialize_database(settings.db_path)
+    with connect(db_path) as connection:
+        workflow = run_greenrock_report_agent_workflow(connection, settings.output_dir)
+    return f"Executive workflow created: {_report_period_label(_workflow_generated_at(workflow))}. Human review required; distribution remains disabled."
+
+
+def decide_greenrock_report_agent_workflow_from_browser(workflow_id: str, action: str, note: str) -> tuple[str, str | None]:
+    settings = get_settings()
+    try:
+        get_report_agent_workflow(settings.output_dir, workflow_id)
+    except KeyError:
+        return f"Workflow not found: {workflow_id}", None
+    db_path = initialize_database(settings.db_path)
+    try:
+        with connect(db_path) as connection:
+            if action == "approve":
+                approval = approve_report_agent_workflow(
+                    connection,
+                    settings.output_dir,
+                    workflow_id,
+                    approver="managing_director",
+                    note=note,
+                )
+                return f"Workflow approved by {approval.approver}. Distribution remains disabled.", f"/greenrock/agents/workflows/{quote(workflow_id)}"
+            if not note.strip():
+                return "Rejection blocked: please enter a reason.", f"/greenrock/agents/workflows/{quote(workflow_id)}"
+            approval = reject_report_agent_workflow(
+                connection,
+                settings.output_dir,
+                workflow_id,
+                approver="managing_director",
+                note=note.strip(),
+            )
+            return f"Workflow rejected by {approval.approver}. Distribution remains disabled.", f"/greenrock/agents/workflows/{quote(workflow_id)}"
+    except ValueError as error:
+        return str(error), f"/greenrock/agents/workflows/{quote(workflow_id)}"
+
+
 def _load_context() -> dict:
     settings = get_settings()
     db_path = initialize_database(settings.db_path)
@@ -3294,6 +3694,207 @@ def _load_context() -> dict:
         "latest_pdf": latest_pdf,
         "ticker_universes": ticker_universes,
     }
+
+
+def _workflow_json_payload(workflow) -> dict:
+    try:
+        return json.loads(Path(workflow.workflow_path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _workflow_status_label(status: str) -> str:
+    labels = {
+        "pending": "Pending",
+        "running": "Running",
+        "blocked": "Blocked",
+        "completed": "Completed",
+        "failed": "Failed",
+        "awaiting_human_approval": "Awaiting Managing Director Review",
+        "awaiting_approval": "Awaiting Managing Director Review",
+        "approved": "Approved",
+        "rejected": "Rejected",
+    }
+    return labels.get(status, status.replace("_", " ").title())
+
+
+def _workflow_status_badge(status: str) -> str:
+    if status in {"approved", "completed"}:
+        return "approved"
+    if status in {"awaiting_human_approval", "awaiting_approval", "running", "pending"}:
+        return "pending"
+    if status in {"failed", "blocked", "rejected"}:
+        return "failed"
+    return "neutral"
+
+
+def _approval_status_label(status: str) -> str:
+    if status == "awaiting_human_approval":
+        return "Awaiting Managing Director Review"
+    if status == "none":
+        return "No Approval Record"
+    return _workflow_status_label(status)
+
+
+def _distribution_reason_label(reason: str) -> str:
+    labels = {
+        "missing_explicit_approval_record": "Distribution Locked",
+        "distribution_disabled_in_phase_11c": "Distribution disabled in Atlas OS v0.8.1",
+    }
+    return labels.get(reason, "Distribution Locked")
+
+
+def _approval_detail_label(record: dict) -> str:
+    if not record:
+        return "Explicit approval required"
+    approver = record.get("approver", "unknown")
+    timestamp = record.get("approved_at") or record.get("decided_at") or ""
+    return f"{approver} at {_display_timestamp(timestamp)}"
+
+
+def _display_timestamp(value: str | None) -> str:
+    if not value:
+        return "Not recorded"
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return str(value)
+    return parsed.strftime("%b %-d, %Y %H:%M")
+
+
+def _workflow_generated_at(workflow) -> str:
+    for task in workflow.tasks:
+        timestamp = task.get("started_at") or task.get("completed_at")
+        if timestamp:
+            return str(timestamp)
+    return ""
+
+
+def _report_period_label(generated_at: str | None) -> str:
+    if not generated_at:
+        return "GreenRock Research Report"
+    try:
+        parsed = datetime.fromisoformat(str(generated_at).replace("Z", "+00:00"))
+    except ValueError:
+        return "GreenRock Research Report"
+    return f"{parsed.strftime('%B %Y')} Research Report"
+
+
+def _dedup_workflow_warnings(tasks: tuple[dict, ...]) -> tuple[dict[str, tuple[str, ...] | str], ...]:
+    by_text: dict[str, set[str]] = {}
+    for task in tasks:
+        role = _agent_role_label(str(task.get("agent_role", "")))
+        for warning in task.get("warnings", ()) or ():
+            text = str(warning).strip()
+            if not text:
+                continue
+            by_text.setdefault(text, set()).add(role)
+    return tuple(
+        {"text": text, "agents": tuple(sorted(agents))}
+        for text, agents in sorted(by_text.items(), key=lambda item: item[0])
+    )
+
+
+def _agent_role_label(role: str) -> str:
+    labels = {
+        "market_scout": "Market Scout",
+        "derivative_analyst": "Derivative Analyst",
+        "portfolio_analyst": "Portfolio Analyst",
+        "risk_officer": "Risk Officer",
+        "compliance_reviewer": "Compliance Reviewer",
+        "report_writer": "Report Writer",
+        "atlas_chief_of_staff": "Atlas Chief of Staff",
+    }
+    return labels.get(role, role.replace("_", " ").title())
+
+
+def _workflow_candidate_count(payload: dict) -> int:
+    for task in payload.get("tasks", ()):
+        if task.get("agent_role") == "portfolio_analyst":
+            try:
+                return int(task.get("payload", {}).get("staged_count", 0))
+            except (TypeError, ValueError):
+                return 0
+    return 0
+
+
+def _candidate_detail(context: dict, count: int) -> str:
+    if count:
+        return "Staged Wall candidates are available."
+    scan = latest_scan(context["settings"].output_dir)
+    provider_summary = _latest_scan_provider_failure_summary(scan)
+    if provider_summary:
+        return f"{provider_summary} Review the latest population scan before staging candidates."
+    return "Open Staging to add candidates before the next report."
+
+
+def _latest_scan_provider_failure_summary(scan) -> str:
+    if scan and getattr(scan, "provider_failure_count", 0):
+        return f"{scan.provider_failure_count} provider failures were present in the latest scan."
+    return ""
+
+
+def _closest_workflow_id(workflow_id: str, known_ids: list[str]) -> str:
+    matches = difflib.get_close_matches(workflow_id, known_ids, n=1, cutoff=0.72)
+    return matches[0] if matches else ""
+
+
+def _executive_stat(label: str, value: str, detail: str) -> str:
+    return f"""
+    <article class="executive-stat">
+      <span>{_safe(label)}</span>
+      <strong>{_safe(value)}</strong>
+      <small>{_safe(detail)}</small>
+    </article>
+    """
+
+
+def json_dumps_compact(value) -> str:
+    if not value:
+        return "No structured payload recorded."
+    return json.dumps(value, indent=2, sort_keys=True)
+
+
+def _workflow_payload_preview(value, warning_texts: set[str]):
+    if isinstance(value, dict):
+        cleaned = {
+            key: _workflow_payload_preview(item, warning_texts)
+            for key, item in value.items()
+            if key != "warnings"
+        }
+        return {key: item for key, item in cleaned.items() if item not in ("", (), [], {})}
+    if isinstance(value, list):
+        return [
+            item
+            for item in (_workflow_payload_preview(item, warning_texts) for item in value)
+            if item not in ("", (), [], {})
+        ]
+    if isinstance(value, tuple):
+        return tuple(
+            item
+            for item in (_workflow_payload_preview(item, warning_texts) for item in value)
+            if item not in ("", (), [], {})
+        )
+    if isinstance(value, str) and value in warning_texts:
+        return ""
+    return value
+
+
+def _compact_value(value, warning_texts: set[str] | None = None) -> str:
+    warning_texts = warning_texts or set()
+    if isinstance(value, (list, tuple)):
+        visible = [str(item) for item in value if str(item) not in warning_texts]
+        hidden_count = len(value) - len(visible)
+        suffix = f"; {hidden_count} item(s) listed in Warnings" if hidden_count else ""
+        return (", ".join(visible) or "none") + suffix
+    if isinstance(value, dict):
+        visible = [f"{key}: {item}" for key, item in value.items() if str(item) not in warning_texts]
+        hidden_count = len(value) - len(visible)
+        suffix = f"; {hidden_count} item(s) listed in Warnings" if hidden_count else ""
+        return (", ".join(visible) or "none") + suffix
+    if isinstance(value, str) and value in warning_texts:
+        return "listed in Warnings"
+    return str(value)
 
 
 def _default_greenrock_data_mode() -> str:
@@ -3796,9 +4397,9 @@ def _candidate_rows(path: str | None, limit: int | None = 6) -> list[dict[str, s
     return rows[:limit] if limit is not None else rows
 
 
-def _candidate_table(rows: list[dict[str, str]]) -> str:
+def _candidate_table(rows: list[dict[str, str]], empty_message: str | None = None) -> str:
     if not rows:
-        return "<p class='empty'>No candidates available yet.</p>"
+        return f"<p class='empty'>{_safe(empty_message or _candidate_empty_state())}</p>"
     body = "".join(
         "<tr>"
         f"<td>{_safe(row.get('symbol', ''))}</td>"
@@ -3809,6 +4410,14 @@ def _candidate_table(rows: list[dict[str, str]]) -> str:
         for row in rows
     )
     return f"<table><thead><tr><th>Symbol</th><th>Name</th><th>GreenRock Score</th><th>Signal Label</th></tr></thead><tbody>{body}</tbody></table>"
+
+
+def _candidate_empty_state() -> str:
+    scan = latest_scan(get_settings().output_dir)
+    provider_summary = _latest_scan_provider_failure_summary(scan)
+    if provider_summary:
+        return f"No staged candidates. {provider_summary} Run or review the latest population scan before staging candidates."
+    return "No staged candidates yet. Open Staging or review the Scanner to build the report slate."
 
 
 def _universe_panels(universes: dict) -> str:
@@ -3823,8 +4432,9 @@ def _universe_panels(universes: dict) -> str:
             f"""
             <div class="universe-panel">
               <h3>{_safe(labels.get(name, name))}</h3>
-              <p class="subtle">{len(universe.tickers)} tickers at {_safe(universe.path)}</p>
+              <p><span class="badge">{len(universe.tickers)} tickers</span></p>
               <div class="ticker-cloud">{''.join(f'<span>{_safe(ticker)}</span>' for ticker in universe.tickers)}</div>
+              <details class="technical-details"><summary>Source path</summary><p class="path">{_safe(universe.path)}</p></details>
             </div>
             """
         )
@@ -6527,6 +7137,7 @@ def _branded_title_hero(title: str, eyebrow: str, subtitle: str, context, metada
         </div>
         <div class="brand-title-line">
           <span>Atlas OS Command Center</span>
+          <span>v{_safe(__version__)}</span>
           <span>GreenRock Analysts</span>
           <span>Local development mode</span>
         </div>
@@ -6710,6 +7321,16 @@ def _page(title: str, content: str, active: str = "/") -> str:
     .brand-status-stack dd {{ margin: 0; font-weight: 800; overflow-wrap: anywhere; }}
     .brand-status-stack code {{ color: #d8efff; }}
     .command-actions {{ border-color: rgba(55,214,122,.32); background: rgba(55,214,122,.055); }}
+    .executive-workflow-panel {{ border-color: rgba(55,214,122,.38); background: rgba(55,214,122,.055); }}
+    .executive-status-grid {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 14px 0; }}
+    .executive-stat {{ border: 1px solid rgba(255,255,255,.1); background: rgba(0,0,0,.14); border-radius: 8px; padding: 12px; min-width: 0; }}
+    .executive-stat span, .executive-stat small {{ display: block; color: var(--muted); overflow-wrap: anywhere; }}
+    .executive-stat strong {{ display: block; color: #d6ffe4; font-size: 18px; margin: 5px 0; overflow-wrap: anywhere; }}
+    .agent-step-grid {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }}
+    .agent-step-card {{ border: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.045); border-radius: 8px; padding: 14px; min-width: 0; }}
+    .agent-step-card h3 {{ margin: 0; }}
+    .agent-step-card pre {{ white-space: pre-wrap; overflow-wrap: anywhere; max-height: 260px; overflow: auto; background: rgba(0,0,0,.18); border-radius: 8px; padding: 10px; }}
+    .technical-details {{ margin-top: 12px; }}
     .picks-hero {{ background: linear-gradient(135deg, rgba(7,42,25,.95), rgba(31,24,55,.88) 58%, rgba(50,39,18,.86)); }}
     .greenrock-brand {{ display: flex; align-items: center; gap: 10px; margin-bottom: 12px; color: #d8ffe6; font-weight: 800; }}
     .greenrock-logo {{ width: 46px; height: 46px; object-fit: contain; border-radius: 8px; background: rgba(255,255,255,.06); border: 1px solid rgba(55,214,122,.22); padding: 4px; }}
@@ -6973,7 +7594,7 @@ def _page(title: str, content: str, active: str = "/") -> str:
     footer {{ border-top: 1px solid var(--line); padding: 18px 30px 28px; color: var(--muted); background: rgba(8,10,16,.7); }}
     footer div {{ display: flex; gap: 12px; flex-wrap: wrap; max-width: 1500px; margin: 0 auto; }}
     @media (max-width: 1000px) {{
-      .attention-grid, .board-meta, .nav-grid, .project-grid, .candidate-grid, .detail-grid, .kanban, .agent-grid, .task-form, .mega-card, .universe-grid, .score-form, .save-list-form, .score-explainer, .score-tool-hero, .rank-grid, .score-breakdown-grid, .target-assumptions, .score-intel-grid, .evidence-grid, .confidence-explain-grid, .workflow-stepper, .workflow-grid, .watchlist-grid, .scanner-filter-form, .staging-add-form, .staging-add-form.compact-add, .priority-tile-grid {{ grid-template-columns: 1fr; }}
+      .attention-grid, .board-meta, .nav-grid, .project-grid, .candidate-grid, .detail-grid, .kanban, .agent-grid, .task-form, .mega-card, .universe-grid, .score-form, .save-list-form, .score-explainer, .score-tool-hero, .rank-grid, .score-breakdown-grid, .target-assumptions, .score-intel-grid, .evidence-grid, .confidence-explain-grid, .workflow-stepper, .workflow-grid, .watchlist-grid, .scanner-filter-form, .staging-add-form, .staging-add-form.compact-add, .priority-tile-grid, .executive-status-grid, .agent-step-grid {{ grid-template-columns: 1fr; }}
       .compact-source-panel, .staging-bucket {{ overflow-x: auto; }}
       .compact-stage-grid {{ grid-template-columns: 1fr; }}
       .stageable-card {{ grid-template-columns: 1fr; }}

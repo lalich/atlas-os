@@ -204,6 +204,21 @@ class GreenRockReportAgentTests(unittest.TestCase):
         self.assertIn("awaiting_human_approval", status_output)
         self.assertIn("Distribution remains disabled", approve_output)
 
+    def test_greenrock_agents_cli_unknown_workflow_is_friendly(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {
+                "ATLAS_DB_PATH": str(root / "atlas.db"),
+                "ATLAS_OUTPUT_DIR": str(root / "output"),
+            }
+            with patch.dict(os.environ, env, clear=False):
+                output, code = _run_cli_raw(["greenrock", "agents", "status", "greenrock-missing"])
+
+        self.assertEqual(code, 1)
+        self.assertIn("Workflow not found: greenrock-missing", output)
+        self.assertIn("atlas greenrock agents status", output)
+        self.assertNotIn("Traceback", output)
+
 
 def _run_cli_raw(args: list[str]) -> tuple[str, int]:
     buffer = io.StringIO()

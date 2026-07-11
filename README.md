@@ -1,8 +1,8 @@
 # Atlas OS
 
-## Atlas OS v0.8.0-alpha
+## Atlas OS v0.8.1
 
-**Agent Orchestration**
+**Executive UX**
 
 Status: **Feature complete; pending Managing Director user review**
 
@@ -13,6 +13,7 @@ Core safety boundary: Atlas OS does not send email, publish externally, contact 
 Release references:
 
 - [Roadmap](ROADMAP.md)
+- [Release Notes v0.8.1](docs/RELEASE_NOTES_v0.8.1.md)
 - [Release Notes v0.8.0-alpha](docs/RELEASE_NOTES_v0.8.0-alpha.md)
 - [GreenRock Report Agent Orchestration](docs/GREENROCK_REPORT_AGENT_ORCHESTRATION.md)
 

@@ -7,7 +7,9 @@ import types
 import unittest
 import os
 import json
+import io
 import subprocess
+from contextlib import redirect_stdout
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -19,7 +21,7 @@ from atlas_os.agents.updates import list_agent_updates
 from atlas_os.cli import build_parser, main
 from atlas_os.config import get_settings
 from atlas_os.core.approvals import list_approvals
-from atlas_os.core.artifacts import list_artifacts
+from atlas_os.core.artifacts import create_artifact, list_artifacts
 from atlas_os.core.manual_tasks import list_manual_tasks
 from atlas_os.daily import get_daily_brief, list_daily_briefs, run_daily_cycle
 from atlas_os.greenrock.market_pulse import stage_analyst_slate_candidates
@@ -30,10 +32,12 @@ from atlas_os.greenrock.market_data import MarketDataProvider
 from atlas_os.greenrock.models import FundamentalSnapshot, PriceBar
 from atlas_os.greenrock.pdf_export import render_markdown_report_to_pdf
 from atlas_os.greenrock.report import build_sample_report
+from atlas_os.greenrock.report_agents import run_greenrock_report_agent_workflow
 from atlas_os.greenrock.sample_data import load_mock_stocks
 from atlas_os.greenrock.scanner import ScanResult, latest_scan, run_population_scan
 from atlas_os.greenrock.score import calculate_score_preview, confidence_band
 from atlas_os.greenrock.staging import add_staged_candidate, enrich_staged_candidates, load_staged_candidates
+from atlas_os.greenrock.universe import add_ticker_to_greenrock_list
 from atlas_os.inbox import create_inbox_item, list_inbox_items
 from atlas_os.web_app import _report_tickers, dispatch_request
 
@@ -116,7 +120,7 @@ class CommandCenterTests(unittest.TestCase):
             response = dispatch_request("GET", "/greenrock")
 
         self.assertEqual(response.status, 200)
-        self.assertIn("Report Review Console", response.body)
+        self.assertIn("Executive Report Console", response.body)
         self.assertIn("Approvals", response.body)
         self.assertIn("pending", response.body)
         self.assertIn("Approve", response.body)
@@ -125,12 +129,91 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("Signal Label", response.body)
         self.assertIn("Mega Rock Candidate Pool", response.body)
         self.assertIn("AAPL", response.body)
-        self.assertIn("Run Sample/Mock Report", response.body)
+        self.assertIn("Run Legacy Mock Draft", response.body)
         self.assertIn("Run Legacy Watchlist Report", response.body)
         self.assertIn("Generate Draft From Staging", response.body)
         self.assertIn("GreenRock Picks Board", response.body)
         self.assertIn("Score Any Ticker", response.body)
         self.assertIn("/static/greenrock_logo.png", response.body)
+
+    def test_greenrock_executive_workflow_panel_history_steps_and_warning_dedupe(self) -> None:
+        with _isolated_env() as root:
+            workflow_id = _create_report_agent_workflow(root)
+            response = dispatch_request("GET", "/greenrock")
+            detail = dispatch_request("GET", f"/greenrock/agents/workflows/{workflow_id}")
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(detail.status, 200)
+        self.assertIn("Executive Report Console", response.body)
+        self.assertIn("Latest Research Report", response.body)
+        self.assertIn("Awaiting Managing Director Review", response.body)
+        self.assertIn("Distribution Locked", response.body)
+        self.assertIn("Recent Workflows", response.body)
+        self.assertIn("PDF Not Generated", response.body)
+        self.assertIn("No staged candidates", response.body)
+        self.assertIn("Run Executive Workflow", response.body)
+        self.assertIn("GreenRock Research", response.body)
+        self.assertIn("Powered by Atlas OS", response.body)
+        self.assertIn("v0.8.1", response.body)
+        self.assertIn("Agent Progress", detail.body)
+        self.assertIn("Market Scout", detail.body)
+        self.assertIn("Derivative Analyst", detail.body)
+        self.assertIn("Atlas Chief of Staff", detail.body)
+        self.assertIn("Chief-of-Staff Summary", detail.body)
+        self.assertEqual(detail.body.count("No Derivative Workbench analysis found; derivative section will explain the absence."), 1)
+
+    def test_greenrock_executive_workflow_web_approval_rejection_and_distribution_lock(self) -> None:
+        with _isolated_env() as root:
+            workflow_id = _create_report_agent_workflow(root)
+            approved = dispatch_request("POST", f"/greenrock/agents/workflows/{workflow_id}/approve", "note=reviewed")
+            approved_page = dispatch_request("GET", f"/greenrock/agents/workflows/{workflow_id}")
+            duplicate = dispatch_request("POST", f"/greenrock/agents/workflows/{workflow_id}/approve", "note=again")
+
+            second_id = _create_report_agent_workflow(root)
+            blocked_reject = dispatch_request("POST", f"/greenrock/agents/workflows/{second_id}/reject", "note=")
+            rejected = dispatch_request("POST", f"/greenrock/agents/workflows/{second_id}/reject", "note=not+ready")
+            rejected_page = dispatch_request("GET", f"/greenrock/agents/workflows/{second_id}")
+
+        self.assertEqual(approved.status, 303)
+        self.assertIn("Approved", approved_page.body)
+        self.assertIn("Distribution disabled in Atlas OS v0.8.1", approved_page.body)
+        self.assertIn("Approval finalized", approved_page.body)
+        self.assertEqual(duplicate.status, 303)
+        self.assertIn("already+has+an+approval+decision", duplicate.location)
+        self.assertEqual(blocked_reject.status, 303)
+        self.assertIn("Rejection+blocked", blocked_reject.location)
+        self.assertEqual(rejected.status, 303)
+        self.assertIn("Rejected", rejected_page.body)
+        self.assertIn("Approval finalized", rejected_page.body)
+
+    def test_greenrock_executive_workflow_unknown_web_error_and_pdf_ready_state(self) -> None:
+        with _isolated_env() as root:
+            workflow_id = _create_report_agent_workflow(root)
+            db_path = initialize_database(root / "atlas.db")
+            pdf_path = root / "output" / "greenrock" / "report_agents" / workflow_id / "greenrock_report_final.pdf"
+            pdf_path.write_bytes(b"%PDF-1.4\n")
+            with connect(db_path) as connection:
+                create_artifact(connection, workflow_id, "report_final_pdf", pdf_path)
+            detail = dispatch_request("GET", f"/greenrock/agents/workflows/{workflow_id}")
+            missing = dispatch_request("GET", f"/greenrock/agents/workflows/{workflow_id}x")
+
+        self.assertEqual(detail.status, 200)
+        self.assertIn("PDF Ready", detail.body)
+        self.assertIn("Open PDF", detail.body)
+        self.assertEqual(missing.status, 404)
+        self.assertIn("Workflow not found", missing.body)
+        self.assertIn("Closest workflow", missing.body)
+        self.assertNotIn("Traceback", missing.body)
+
+    def test_greenrock_watchlists_render_readable_ticker_chips(self) -> None:
+        with _isolated_env() as root:
+            add_ticker_to_greenrock_list(root / "output", "LC01", "large_cap", market_cap_bucket="large_cap")
+            response = dispatch_request("GET", "/greenrock")
+
+        self.assertEqual(response.status, 200)
+        self.assertIn("ticker-cloud", response.body)
+        self.assertIn("<span>LC01</span>", response.body)
+        self.assertIn("Source path", response.body)
 
     def test_greenrock_picks_route_returns_200_with_finviz_links_and_23_slots(self) -> None:
         with _isolated_env():
@@ -1475,6 +1558,30 @@ class ConflictingSignalProvider(MarketDataProvider):
             for index in range(1512)
         )
         return (replace(stock, prices=bars),)
+
+
+def _run_cli_capture(args: list[str]) -> str:
+    buffer = io.StringIO()
+    with redirect_stdout(buffer):
+        exit_code = main(args)
+    if exit_code != 0:
+        raise AssertionError(f"CLI exited with {exit_code}: {args}\n{buffer.getvalue()}")
+    return buffer.getvalue()
+
+
+def _line_value(output: str, label: str) -> str:
+    prefix = f"{label}: "
+    for line in output.splitlines():
+        if line.startswith(prefix):
+            return line.removeprefix(prefix)
+    raise AssertionError(f"{label} not found in output:\n{output}")
+
+
+def _create_report_agent_workflow(root: Path) -> str:
+    db_path = initialize_database(root / "atlas.db")
+    with connect(db_path) as connection:
+        workflow = run_greenrock_report_agent_workflow(connection, root / "output")
+    return workflow.workflow_id
 
 
 class _isolated_env:

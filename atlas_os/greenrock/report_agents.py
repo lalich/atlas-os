@@ -238,7 +238,7 @@ def reject_report_agent_workflow(
 
 
 def distribution_agent_lock_status(output_dir: Path, workflow_id: str) -> dict[str, Any]:
-    """Return fail-closed distribution status for the v0.8.0-alpha release."""
+    """Return fail-closed distribution status for the current local-only release."""
 
     workflow = get_report_agent_workflow(output_dir, workflow_id)
     approval = _approval_for_workflow(output_dir, workflow_id)

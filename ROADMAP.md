@@ -6,9 +6,9 @@ Atlas OS is a governed research operating system that improves human decision-ma
 
 ## Current Release
 
-**v0.8.0-alpha — Agent Orchestration**
+**v0.8.1 — Executive UX**
 
-Status: **Feature complete; pending Managing Director user review**
+Status: **Feature complete; pending Managing Director review**
 
 ## Completed Release History
 
@@ -20,6 +20,8 @@ Status: **Feature complete; pending Managing Director user review**
   Established review-only report dry runs and scheduled local draft generation while keeping email, publishing, brokerage, CRM, and external actions disabled.
 - **v0.8 — Agent Orchestration**
   Established the GreenRock report-agent registry, dependency-based workflow orchestration, structured local handoffs, workflow state tracking, approval/rejection records, and Chief-of-Staff summary.
+- **v0.8.1 — Executive UX**
+  Polishes the GreenRock web interface into an executive workflow review experience with human-readable status, workflow history, agent step presentation, warning deduplication, clearer actions, and safer error handling.
 
 These are capability groupings and retrospective release classifications. They do not claim that exact historical Git releases or tags existed before v0.8.
 
@@ -29,6 +31,10 @@ These are capability groupings and retrospective release classifications. They d
 - Dependency-based workflow orchestration
 - Structured handoffs
 - Workflow state tracking
+- Executive workflow panel
+- Human-readable workflow history
+- Agent handoff presentation
+- Warning deduplication in the web UI
 - Artifact and audit visibility
 - Append-only approval and rejection records
 - Chief-of-Staff summary
