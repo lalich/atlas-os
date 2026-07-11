@@ -2,37 +2,97 @@
 
 from __future__ import annotations
 
+import json
+from dataclasses import asdict, dataclass
+from datetime import date, time, timedelta
 from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from atlas_os.greenrock.derivatives import latest_derivative_analysis
 from atlas_os.greenrock.scanner import latest_scan
 from atlas_os.greenrock.staging import STAGING_BUCKET_LABELS, load_staged_candidates
+
+DEFAULT_SCHEDULE_TIMEZONE = "America/New_York"
+DEFAULT_MONTH_END_TIME = time(19, 0)
+DEFAULT_SUNDAY_REFRESH_TIME = time(11, 0)
+
+
+@dataclass(frozen=True)
+class ReportDryRunScheduleConfig:
+    timezone: str = DEFAULT_SCHEDULE_TIMEZONE
+    month_end_hour: int = DEFAULT_MONTH_END_TIME.hour
+    month_end_minute: int = DEFAULT_MONTH_END_TIME.minute
+    sunday_refresh_enabled: bool = True
+    sunday_refresh_hour: int = DEFAULT_SUNDAY_REFRESH_TIME.hour
+    sunday_refresh_minute: int = DEFAULT_SUNDAY_REFRESH_TIME.minute
+    market_holidays: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ReportDryRunOccurrence:
+    occurrence_id: str
+    scheduled_for: str
+    schedule_reason: str
+    review_required: bool = True
 
 
 def report_dry_run_dir(output_dir: Path) -> Path:
     return Path(output_dir) / "greenrock" / "report_dry_runs"
 
 
-def create_report_dry_run(output_dir: Path) -> Path:
-    dry_run_id = "report-dry-run-" + datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-    markdown = build_report_dry_run_markdown(output_dir, dry_run_id=dry_run_id)
+def report_schedule_config_path(output_dir: Path) -> Path:
+    return report_dry_run_dir(output_dir) / "schedule_config.json"
+
+
+def report_schedule_ledger_path(output_dir: Path) -> Path:
+    return report_dry_run_dir(output_dir) / "schedule_runs.json"
+
+
+def create_report_dry_run(
+    output_dir: Path,
+    scheduled_for: str = "manual",
+    schedule_reason: str = "manual_dry_run",
+    occurrence_id: str | None = None,
+) -> Path:
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    dry_run_id = f"report-dry-run-{occurrence_id}-{timestamp}" if occurrence_id else f"report-dry-run-{timestamp}"
+    generated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    markdown = build_report_dry_run_markdown(
+        output_dir,
+        dry_run_id=dry_run_id,
+        scheduled_for=scheduled_for,
+        generated_at=generated_at,
+        schedule_reason=schedule_reason,
+    )
     directory = report_dry_run_dir(output_dir)
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{dry_run_id}.md"
     path.write_text(markdown, encoding="utf-8")
+    if occurrence_id:
+        _record_schedule_run(output_dir, occurrence_id, scheduled_for, generated_at, schedule_reason, path)
     return path
 
 
-def build_report_dry_run_markdown(output_dir: Path, dry_run_id: str = "local-dry-run") -> str:
+def build_report_dry_run_markdown(
+    output_dir: Path,
+    dry_run_id: str = "local-dry-run",
+    scheduled_for: str = "manual",
+    generated_at: str | None = None,
+    schedule_reason: str = "manual_dry_run",
+) -> str:
     scan = latest_scan(output_dir)
     staged = load_staged_candidates(output_dir)
     derivatives = latest_derivative_analysis(output_dir)
+    generated_at = generated_at or datetime.now(timezone.utc).isoformat(timespec="seconds")
     lines = [
         "# GreenRock Report Agent Dry Run",
         "",
         f"**Dry Run ID:** {dry_run_id}",
-        f"**Created At:** {datetime.now(timezone.utc).isoformat(timespec='seconds')}",
+        f"**scheduled_for:** {scheduled_for}",
+        f"**generated_at:** {generated_at}",
+        f"**schedule_reason:** {schedule_reason}",
+        "**review_required:** yes",
         "**Status:** DRAFT / REVIEW ONLY",
         "",
         (
@@ -78,6 +138,183 @@ def build_report_dry_run_markdown(output_dir: Path, dry_run_id: str = "local-dry
         ),
     ]
     return "\n".join(lines) + "\n"
+
+
+def load_report_schedule_config(output_dir: Path) -> ReportDryRunScheduleConfig:
+    path = report_schedule_config_path(output_dir)
+    if not path.exists():
+        return ReportDryRunScheduleConfig()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ReportDryRunScheduleConfig()
+    holidays = tuple(str(item) for item in payload.get("market_holidays", ()) if str(item).strip())
+    return ReportDryRunScheduleConfig(
+        timezone=str(payload.get("timezone", DEFAULT_SCHEDULE_TIMEZONE)),
+        month_end_hour=int(payload.get("month_end_hour", DEFAULT_MONTH_END_TIME.hour)),
+        month_end_minute=int(payload.get("month_end_minute", DEFAULT_MONTH_END_TIME.minute)),
+        sunday_refresh_enabled=bool(payload.get("sunday_refresh_enabled", True)),
+        sunday_refresh_hour=int(payload.get("sunday_refresh_hour", DEFAULT_SUNDAY_REFRESH_TIME.hour)),
+        sunday_refresh_minute=int(payload.get("sunday_refresh_minute", DEFAULT_SUNDAY_REFRESH_TIME.minute)),
+        market_holidays=holidays,
+    )
+
+
+def default_report_schedule_config(output_dir: Path) -> Path:
+    path = report_schedule_config_path(output_dir)
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(asdict(ReportDryRunScheduleConfig()), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return path
+
+
+def preview_report_schedule(
+    output_dir: Path,
+    now: datetime | None = None,
+    months: int = 3,
+    config: ReportDryRunScheduleConfig | None = None,
+) -> tuple[ReportDryRunOccurrence, ...]:
+    config = config or load_report_schedule_config(output_dir)
+    local_now = _local_now(now, config)
+    occurrences: list[ReportDryRunOccurrence] = []
+    year = local_now.year
+    month = local_now.month
+    for offset in range(max(1, months + 2)):
+        target_month = _add_months(date(year, month, 1), offset)
+        occurrences.extend(_month_occurrences(target_month.year, target_month.month, config))
+        future = tuple(item for item in occurrences if _parse_dt(item.scheduled_for) >= local_now)
+        if len(future) >= months:
+            return future[:months]
+    return tuple(item for item in occurrences if _parse_dt(item.scheduled_for) >= local_now)[:months]
+
+
+def due_report_schedule(
+    output_dir: Path,
+    now: datetime | None = None,
+    config: ReportDryRunScheduleConfig | None = None,
+) -> tuple[ReportDryRunOccurrence, ...]:
+    config = config or load_report_schedule_config(output_dir)
+    local_now = _local_now(now, config)
+    generated = _generated_occurrence_ids(output_dir)
+    current = date(local_now.year, local_now.month, 1)
+    due: list[ReportDryRunOccurrence] = []
+    for occurrence in _month_occurrences(current.year, current.month, config):
+        if _parse_dt(occurrence.scheduled_for) <= local_now and occurrence.occurrence_id not in generated:
+            due.append(occurrence)
+    return tuple(sorted(due, key=lambda item: item.scheduled_for))
+
+
+def run_due_report_dry_runs(
+    output_dir: Path,
+    now: datetime | None = None,
+    config: ReportDryRunScheduleConfig | None = None,
+) -> tuple[tuple[ReportDryRunOccurrence, Path], ...]:
+    created: list[tuple[ReportDryRunOccurrence, Path]] = []
+    for occurrence in due_report_schedule(output_dir, now=now, config=config):
+        path = create_report_dry_run(
+            output_dir,
+            scheduled_for=occurrence.scheduled_for,
+            schedule_reason=occurrence.schedule_reason,
+            occurrence_id=occurrence.occurrence_id,
+        )
+        created.append((occurrence, path))
+    return tuple(created)
+
+
+def _month_occurrences(year: int, month: int, config: ReportDryRunScheduleConfig) -> tuple[ReportDryRunOccurrence, ...]:
+    last_day = _last_trading_day(year, month, config)
+    trigger_day = _previous_trading_day(last_day, config)
+    zone = ZoneInfo(config.timezone)
+    scheduled = datetime.combine(trigger_day, time(config.month_end_hour, config.month_end_minute), tzinfo=zone)
+    reason = "friday_evening_before_monday_last_trading_day" if last_day.weekday() == 0 else "month_end_before_last_trading_day"
+    occurrences = [
+        ReportDryRunOccurrence(
+            f"greenrock-report-{year:04d}-{month:02d}-month-end",
+            scheduled.isoformat(timespec="minutes"),
+            reason,
+        )
+    ]
+    if last_day.weekday() == 0 and config.sunday_refresh_enabled:
+        sunday = last_day - timedelta(days=1)
+        refresh = datetime.combine(sunday, time(config.sunday_refresh_hour, config.sunday_refresh_minute), tzinfo=zone)
+        occurrences.append(
+            ReportDryRunOccurrence(
+                f"greenrock-report-{year:04d}-{month:02d}-sunday-refresh",
+                refresh.isoformat(timespec="minutes"),
+                "sunday_morning_refresh_before_monday_last_trading_day",
+            )
+        )
+    return tuple(sorted(occurrences, key=lambda item: item.scheduled_for))
+
+
+def _last_trading_day(year: int, month: int, config: ReportDryRunScheduleConfig) -> date:
+    cursor = _add_months(date(year, month, 1), 1) - timedelta(days=1)
+    while not _is_trading_day(cursor, config):
+        cursor -= timedelta(days=1)
+    return cursor
+
+
+def _previous_trading_day(day: date, config: ReportDryRunScheduleConfig) -> date:
+    cursor = day - timedelta(days=1)
+    while not _is_trading_day(cursor, config):
+        cursor -= timedelta(days=1)
+    return cursor
+
+
+def _is_trading_day(day: date, config: ReportDryRunScheduleConfig) -> bool:
+    return day.weekday() < 5 and day.isoformat() not in set(config.market_holidays)
+
+
+def _add_months(day: date, months: int) -> date:
+    month_index = day.month - 1 + months
+    year = day.year + month_index // 12
+    month = month_index % 12 + 1
+    return date(year, month, 1)
+
+
+def _local_now(now: datetime | None, config: ReportDryRunScheduleConfig) -> datetime:
+    zone = ZoneInfo(config.timezone)
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=zone)
+    return current.astimezone(zone)
+
+
+def _parse_dt(value: str) -> datetime:
+    return datetime.fromisoformat(value)
+
+
+def _generated_occurrence_ids(output_dir: Path) -> set[str]:
+    path = report_schedule_ledger_path(output_dir)
+    if not path.exists():
+        return set()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return set()
+    return {str(item.get("occurrence_id", "")) for item in payload.get("generated", ()) if item.get("occurrence_id")}
+
+
+def _record_schedule_run(output_dir: Path, occurrence_id: str, scheduled_for: str, generated_at: str, schedule_reason: str, path: Path) -> None:
+    ledger_path = report_schedule_ledger_path(output_dir)
+    ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        payload = json.loads(ledger_path.read_text(encoding="utf-8")) if ledger_path.exists() else {"generated": []}
+    except (OSError, json.JSONDecodeError):
+        payload = {"generated": []}
+    generated = [item for item in payload.get("generated", []) if item.get("occurrence_id") != occurrence_id]
+    generated.append(
+        {
+            "occurrence_id": occurrence_id,
+            "scheduled_for": scheduled_for,
+            "generated_at": generated_at,
+            "schedule_reason": schedule_reason,
+            "review_required": True,
+            "path": str(path),
+        }
+    )
+    payload["generated"] = sorted(generated, key=lambda item: item.get("scheduled_for", ""))
+    ledger_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def _market_scan_section(scan) -> str:

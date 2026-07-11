@@ -8,7 +8,9 @@ import os
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 from unittest.mock import patch
 
 from atlas_os.cli import main
@@ -18,7 +20,14 @@ from atlas_os.core.reports import list_reports
 from atlas_os.db.database import connect, initialize_database
 from atlas_os.greenrock import pdf_export
 from atlas_os.greenrock.report import build_report_draft
-from atlas_os.greenrock.report_dry_run import build_report_dry_run_markdown
+from atlas_os.greenrock.report_dry_run import (
+    ReportDryRunScheduleConfig,
+    build_report_dry_run_markdown,
+    due_report_schedule,
+    preview_report_schedule,
+    report_schedule_ledger_path,
+    run_due_report_dry_runs,
+)
 from atlas_os.greenrock.staging import save_staged_candidates
 from atlas_os.greenrock.staging_report import build_staging_report_markdown
 from atlas_os.greenrock.workflow import run_greenrock_screening_workflow
@@ -254,6 +263,94 @@ class GreenRockReportTests(unittest.TestCase):
         self.assertEqual(len(dry_runs), 1)
         self.assertIn("DRAFT / REVIEW ONLY", dry_run_text)
 
+    def test_report_schedule_normal_month_end_preview(self) -> None:
+        config = ReportDryRunScheduleConfig(timezone="America/New_York")
+
+        rows = preview_report_schedule(Path("/tmp/unused"), now=_dt("2026-07-01T10:00:00-04:00"), months=1, config=config)
+
+        self.assertEqual(rows[0].scheduled_for, "2026-07-30T19:00-04:00")
+        self.assertEqual(rows[0].schedule_reason, "month_end_before_last_trading_day")
+        self.assertTrue(rows[0].review_required)
+
+    def test_report_schedule_monday_last_trading_day_friday_and_sunday(self) -> None:
+        config = ReportDryRunScheduleConfig(timezone="America/New_York")
+
+        rows = preview_report_schedule(Path("/tmp/unused"), now=_dt("2026-08-01T10:00:00-04:00"), months=2, config=config)
+
+        self.assertEqual([row.scheduled_for for row in rows], ["2026-08-28T19:00-04:00", "2026-08-30T11:00-04:00"])
+        self.assertEqual(rows[0].schedule_reason, "friday_evening_before_monday_last_trading_day")
+        self.assertEqual(rows[1].schedule_reason, "sunday_morning_refresh_before_monday_last_trading_day")
+
+    def test_report_schedule_sunday_refresh_can_be_disabled(self) -> None:
+        config = ReportDryRunScheduleConfig(timezone="America/New_York", sunday_refresh_enabled=False)
+
+        rows = preview_report_schedule(Path("/tmp/unused"), now=_dt("2026-08-01T10:00:00-04:00"), months=2, config=config)
+
+        self.assertEqual(rows[0].scheduled_for, "2026-08-28T19:00-04:00")
+        self.assertNotIn("sunday", " ".join(row.schedule_reason for row in rows))
+
+    def test_report_schedule_holiday_adjusted_last_trading_day(self) -> None:
+        config = ReportDryRunScheduleConfig(timezone="America/New_York", market_holidays=("2026-07-31",))
+
+        rows = preview_report_schedule(Path("/tmp/unused"), now=_dt("2026-07-01T10:00:00-04:00"), months=1, config=config)
+
+        self.assertEqual(rows[0].scheduled_for, "2026-07-29T19:00-04:00")
+        self.assertEqual(rows[0].schedule_reason, "month_end_before_last_trading_day")
+
+    def test_report_schedule_prevents_duplicate_generation(self) -> None:
+        config = ReportDryRunScheduleConfig(timezone="America/New_York")
+        with tempfile.TemporaryDirectory() as directory:
+            output_dir = Path(directory) / "output"
+
+            first = run_due_report_dry_runs(output_dir, now=_dt("2026-07-30T20:00:00-04:00"), config=config)
+            second = run_due_report_dry_runs(output_dir, now=_dt("2026-07-30T21:00:00-04:00"), config=config)
+            ledger = json.loads(report_schedule_ledger_path(output_dir).read_text(encoding="utf-8"))
+
+        self.assertEqual(len(first), 1)
+        self.assertEqual(second, ())
+        self.assertEqual(len(ledger["generated"]), 1)
+
+    def test_report_schedule_no_due_report(self) -> None:
+        config = ReportDryRunScheduleConfig(timezone="America/New_York")
+        with tempfile.TemporaryDirectory() as directory:
+            output_dir = Path(directory) / "output"
+
+            due = due_report_schedule(output_dir, now=_dt("2026-07-30T18:59:00-04:00"), config=config)
+
+        self.assertEqual(due, ())
+
+    def test_report_schedule_timezone_handling_is_deterministic(self) -> None:
+        config = ReportDryRunScheduleConfig(timezone="America/New_York")
+        with tempfile.TemporaryDirectory() as directory:
+            output_dir = Path(directory) / "output"
+
+            due = due_report_schedule(output_dir, now=datetime(2026, 7, 30, 23, 0, tzinfo=ZoneInfo("UTC")), config=config)
+
+        self.assertEqual(due[0].scheduled_for, "2026-07-30T19:00-04:00")
+
+    def test_report_schedule_cli_preview_and_run_due_are_local_only(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {
+                "ATLAS_DB_PATH": str(root / "atlas.db"),
+                "ATLAS_OUTPUT_DIR": str(root / "output"),
+            }
+            with patch.dict(os.environ, env, clear=False):
+                preview_output, preview_code = _run_cli_raw(["greenrock", "report-schedule", "preview", "--count", "1"])
+                run_output, run_code = _run_cli_raw(["greenrock", "report-schedule", "run-due"])
+                with connect(initialize_database(root / "atlas.db")) as connection:
+                    approvals = list_approvals(connection)
+                    artifacts = list_artifacts(connection)
+                    reports = list_reports(connection)
+
+        self.assertEqual(preview_code, 0)
+        self.assertEqual(run_code, 0)
+        self.assertIn("schedule preview", preview_output)
+        self.assertIn("No due scheduled dry runs.", run_output)
+        self.assertEqual(approvals, ())
+        self.assertEqual(artifacts, ())
+        self.assertEqual(reports, ())
+
 
 def _run_cli_raw(args: list[str]) -> tuple[str, int]:
     buffer = io.StringIO()
@@ -308,6 +405,10 @@ def _write_derivative_fixture(output_dir: Path) -> None:
         "excluded_puts": {},
     }
     (snapshot_dir / "analysis.json").write_text(json.dumps(analysis), encoding="utf-8")
+
+
+def _dt(value: str) -> datetime:
+    return datetime.fromisoformat(value)
 
 
 if __name__ == "__main__":

@@ -58,7 +58,7 @@ from atlas_os.greenrock.population import (
     validate_populations,
 )
 from atlas_os.greenrock.report import build_sample_report
-from atlas_os.greenrock.report_dry_run import create_report_dry_run
+from atlas_os.greenrock.report_dry_run import create_report_dry_run, default_report_schedule_config, preview_report_schedule, run_due_report_dry_runs
 from atlas_os.greenrock.report_workbench import (
     CANDIDATE_DECISIONS,
     get_report_task,
@@ -279,6 +279,14 @@ def build_parser() -> argparse.ArgumentParser:
         "report-dry-run",
         help="Create a review-only Report Agent dry run without approvals, publishing, email, PDF export, or trading.",
     )
+    report_schedule = greenrock_subparsers.add_parser(
+        "report-schedule",
+        help="Preview or run due local GreenRock report dry-run schedules.",
+    )
+    report_schedule_subparsers = report_schedule.add_subparsers(dest="report_schedule_command")
+    report_schedule_preview = report_schedule_subparsers.add_parser("preview", help="Preview upcoming local report dry-run schedule times.")
+    report_schedule_preview.add_argument("--count", type=int, default=3, help="Number of upcoming scheduled occurrences to show.")
+    report_schedule_subparsers.add_parser("run-due", help="Generate due local report dry runs and skip duplicates.")
     latest_report = greenrock_subparsers.add_parser(
         "latest-report",
         help="Show the latest GreenRock report path.",
@@ -957,6 +965,34 @@ def run_greenrock_report_dry_run() -> int:
     print("Status: DRAFT / REVIEW ONLY")
     print("No workflow run, approval, artifact record, report record, PDF export, email, publishing, broker order, client contact, or external LLM/API action was created.")
     return 0
+
+
+def run_greenrock_report_schedule(command: str | None, count: int = 3) -> int:
+    settings = get_settings()
+    config_path = default_report_schedule_config(settings.output_dir)
+    if command == "preview":
+        rows = preview_report_schedule(settings.output_dir, months=count)
+        print("GreenRock report dry-run schedule preview")
+        print(f"config_path: {config_path}")
+        print("scheduled_for schedule_reason review_required")
+        for row in rows:
+            print(f"{row.scheduled_for} {row.schedule_reason} {row.review_required}")
+        if not rows:
+            print("No upcoming scheduled dry runs found.")
+        print("Preview only. No report, approval, artifact, PDF, email, publishing, broker, client, or external LLM/API action was created.")
+        return 0
+    if command == "run-due":
+        created = run_due_report_dry_runs(settings.output_dir)
+        print("GreenRock report dry-run schedule run")
+        print(f"config_path: {config_path}")
+        if not created:
+            print("No due scheduled dry runs.")
+        for occurrence, path in created:
+            print(f"created: {occurrence.scheduled_for} {occurrence.schedule_reason} {path}")
+        print("Local draft generation only. Human review is required; no approval, PDF, email, publishing, broker, client, or external LLM/API action was created.")
+        return 0
+    print("Choose a report-schedule command: preview or run-due.")
+    return 1
 
 
 def run_greenrock_latest_report(print_contents: bool = False) -> int:
@@ -3082,6 +3118,8 @@ def main(argv: list[str] | None = None) -> int:
             return run_greenrock_report_from_staging(args.allow_underfilled, args.allow_missing_analytics)
         if args.greenrock_command == "report-dry-run":
             return run_greenrock_report_dry_run()
+        if args.greenrock_command == "report-schedule":
+            return run_greenrock_report_schedule(args.report_schedule_command, getattr(args, "count", 3))
         if args.greenrock_command == "latest-report":
             return run_greenrock_latest_report(args.print_contents)
         if args.greenrock_command == "latest-run":
