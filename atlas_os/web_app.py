@@ -23,6 +23,7 @@ from atlas_os.agents.updates import latest_agent_update, list_agent_updates
 from atlas_os.config import get_settings
 from atlas_os.daily import latest_daily_brief, run_daily_cycle
 from atlas_os.diagnostics import provider_diagnostics
+from atlas_os.executive import executive_timeline, load_executive_context, remember_workflow
 from atlas_os.core.approvals import (
     ApprovalStatus,
     approve_approval,
@@ -48,6 +49,7 @@ from atlas_os.core.reports import get_report, list_reports
 from atlas_os.core.workflow_runs import get_workflow_run, list_workflow_runs
 from atlas_os.db.database import connect, initialize_database
 from atlas_os.greenrock.pdf_export import render_markdown_report_to_pdf
+from atlas_os.greenrock.picks_board import approved_picks_board
 from atlas_os.greenrock.report_agents import (
     REPORT_AGENT_ORDER,
     approve_report_agent_workflow,
@@ -97,6 +99,8 @@ from atlas_os.greenrock.staging import (
     load_staging_enrichment_cache,
     load_staged_candidates,
     move_staged_candidate,
+    plan_staged_candidate_addition,
+    replace_staged_candidate,
     remove_staged_candidate,
     row_missing_analytics,
     staging_analytics_status,
@@ -405,6 +409,17 @@ def create_app():
         notes: str = Form(""),
     ) -> str:
         return stage_greenrock_candidate(ticker, bucket, source_list, notes)
+
+    @app.post("/greenrock/staging/replace", response_class=HTMLResponse)
+    def greenrock_staging_replace(
+        ticker: str = Form(""),
+        bucket: str = Form("research"),
+        source_list: str = Form("manual"),
+        notes: str = Form(""),
+        replace_ticker: str = Form(""),
+        expected_tickers: str = Form(""),
+    ) -> str:
+        return replace_greenrock_staging_candidate(ticker, bucket, replace_ticker, expected_tickers, source_list, notes)
 
     @app.post("/greenrock/staging/move", response_class=HTMLResponse)
     def greenrock_staging_move(ticker: str = Form(""), bucket: str = Form("research")) -> str:
@@ -806,6 +821,18 @@ def dispatch_request(method: str, path: str, body: str = "") -> WebResponse:
                 notes=form.get("notes", ""),
             ),
         )
+    if method == "POST" and route == "/greenrock/staging/replace":
+        return WebResponse(
+            200,
+            replace_greenrock_staging_candidate(
+                ticker=form.get("ticker", ""),
+                bucket=form.get("bucket", "research"),
+                replace_ticker=form.get("replace_ticker", ""),
+                expected_tickers=form.get("expected_tickers", ""),
+                source_list=form.get("source_list", "manual"),
+                notes=form.get("notes", ""),
+            ),
+        )
     if method == "POST" and route == "/greenrock/staging/move":
         return WebResponse(200, move_greenrock_staging_candidate(form.get("ticker", ""), form.get("bucket", "research")))
     if method == "POST" and route == "/greenrock/staging/remove":
@@ -905,23 +932,13 @@ def render_dashboard(status_message: str | None = None) -> str:
     brief = _morning_brief_data(context)
     cycle = agent_cycle_summary(get_settings().output_dir)
     agent_inbox_items = list_inbox_items(get_settings().output_dir)
+    board = approved_picks_board(context["connection"], get_settings().output_dir)
+    executive_context = load_executive_context(get_settings().output_dir)
+    timeline = executive_timeline(context["audit_logs"], context["reports"], context["approvals"], context["artifacts"])
 
     content = f"""
     {_status_banner(status_message)}
     {_branded_title_hero("Atlas Inbox", "Atlas OS Command Center", "What needs your attention", context)}
-    <section class="panel warning-panel">
-      <div class="section-head">
-        <h2>Morning Brief</h2>
-        <span class="badge">Operator attention layer</span>
-      </div>
-      <section class="board-meta">
-        {_attention_card("green" if brief["scan_complete"] else "yellow", brief["scan_status"], "Scan Status", brief["latest_scan_id"] or "No latest scan")}
-        {_attention_card("yellow" if brief["important_changes"] else "neutral", str(brief["important_changes"]), "Important Changes", "Memory movers and new leaders")}
-        {_attention_card("red" if brief["pending_approvals"] else "neutral", str(brief["pending_approvals"]), "Pending Approvals", "Human review queue")}
-        {_attention_card("neutral", "Open", "Morning Brief", "Daily local command view")}
-      </section>
-      <p><a class="button" href="/atlas/morning-brief">Open Morning Brief</a></p>
-    </section>
     <section class="attention-grid">
       {_attention_card("red", str(len(pending_approvals)), "Pending Approvals", "Human review required")}
       {_attention_card("yellow", str(len(reports_ready)), "Reports Ready For PDF Export", "Approved locally, PDF not exported")}
@@ -958,6 +975,20 @@ def render_dashboard(status_message: str | None = None) -> str:
       </div>
       <div class="inbox-list">{''.join(_inbox_card(_inbox_item_to_card(item)) for item in agent_inbox_items[:8]) or ''.join(_inbox_card(item) for item in inbox_items)}</div>
     </section>
+    {_executive_command_center_sections(board, executive_context, timeline)}
+    <section class="panel warning-panel">
+      <div class="section-head">
+        <h2>Morning Brief</h2>
+        <span class="badge">Operator attention layer</span>
+      </div>
+      <section class="board-meta">
+        {_attention_card("green" if brief["scan_complete"] else "yellow", brief["scan_status"], "Scan Status", brief["latest_scan_id"] or "No latest scan")}
+        {_attention_card("yellow" if brief["important_changes"] else "neutral", str(brief["important_changes"]), "Important Changes", "Memory movers and new leaders")}
+        {_attention_card("red" if brief["pending_approvals"] else "neutral", str(brief["pending_approvals"]), "Pending Approvals", "Human review queue")}
+        {_attention_card("neutral", "Open", "Morning Brief", "Daily local command view")}
+      </section>
+      <p><a class="button" href="/atlas/morning-brief">Open Morning Brief</a></p>
+    </section>
     <section class="nav-grid">
       {_nav_card("Projects & Tasks", "/pt", "Consolidated local project/task operating queue")}
       {_nav_card("GreenRock Analysts", "/greenrock", "Run latest draft, approvals, candidates")}
@@ -981,6 +1012,58 @@ def render_dashboard(status_message: str | None = None) -> str:
     </section>
     """
     return _page("Atlas Command Center", content, active="/")
+
+
+def _executive_command_center_sections(board, executive_context: dict[str, str], timeline) -> str:
+    return f"""
+    <section class="panel command-actions">
+      <div class="section-head">
+        <h2>Executive Context</h2>
+        <span class="subtle">Local operating context</span>
+      </div>
+      <section class="board-meta">
+        {_attention_card("neutral", _safe(executive_context.get("selected_workspace", "greenrock")), "Workspace", "Current executive workspace")}
+        {_attention_card("neutral", _safe(_wall_short_id(executive_context.get("last_viewed_workflow_id", "none"))), "Last Workflow", "Most recently viewed report workflow")}
+        {_attention_card("green" if board.has_picks else "yellow", "updated" if board.has_picks else "waiting", "Picks Board", "Latest approved report only")}
+      </section>
+    </section>
+    <section class="panel">
+      <div class="section-head">
+        <h2>Approved Picks State</h2>
+        <span class="subtle">Approval-gated board source</span>
+      </div>
+      <section class="board-meta">
+        {_attention_card("green" if board.has_picks else "yellow", _safe(_wall_short_id(board.source_run_id or "none")), "Approved Report", "Board changes only after approval")}
+        {_attention_card("neutral", f"{board.slot_count}/23", "Visible Slots", "Mega 1, large 11, small/mid 11")}
+        {_attention_card("neutral", _safe(board.data_mode), "Data Mode", "From approved report artifacts")}
+        {_attention_card("neutral", "Open", "Picks Board", "Review approved picks")}
+      </section>
+      <p><a class="button secondary" href="/greenrock/picks">Open Picks Board</a></p>
+    </section>
+    <section class="panel">
+      <div class="section-head">
+        <h2>Executive Timeline</h2>
+        <span class="subtle">Reports, approvals, artifacts, and staging events</span>
+      </div>
+      {_executive_timeline_list(timeline)}
+    </section>
+    """
+
+
+def _executive_timeline_list(events) -> str:
+    if not events:
+        return "<p class='empty'>No executive timeline events yet. Atlas is waiting for research, workflow, approval, or artifact activity.</p>"
+    return "<div class='inbox-list'>" + "".join(
+        f"""
+        <article class="task-card">
+          <strong>{_safe(event.label)}</strong>
+          <span>{_safe(_wall_short_timestamp(event.timestamp))}</span>
+          <p>{_safe(event.detail)}</p>
+          <a href="{_safe(event.href)}">Review</a>
+        </article>
+        """
+        for event in events[:6]
+    ) + "</div>"
 
 
 def render_morning_brief(status_message: str | None = None) -> str:
@@ -1367,7 +1450,7 @@ def render_greenrock(status_message: str | None = None) -> str:
       <p class="eyebrow">GreenRock Research</p>
       <h1>Executive Report Console</h1>
       <p>Powered by Atlas OS. Review research, workflow state, warnings, approvals, PDFs, and distribution lock status from one local command center.</p>
-      <p class="subtle">Atlas OS v{_safe(__version__)} - Executive UX</p>
+      <p class="subtle">Atlas OS v{_safe(__version__)} - Executive Workflow</p>
     </section>
     {_greenrock_executive_workflow_panel(context, latest_agent_workflow)}
     {_greenrock_workflow_history_panel(context, report_agent_workflows)}
@@ -1447,6 +1530,7 @@ def render_greenrock(status_message: str | None = None) -> str:
 def render_greenrock_agent_workflow(workflow_id: str, status_message: str | None = None) -> str:
     context = _load_context()
     workflow = get_report_agent_workflow(context["settings"].output_dir, workflow_id)
+    remember_workflow(context["settings"].output_dir, workflow_id)
     view = _greenrock_workflow_view(context, workflow)
     content = f"""
     {_status_banner(status_message)}
@@ -1953,19 +2037,13 @@ def _readiness_color(state: str) -> str:
 
 def render_greenrock_picks_board(status_message: str | None = None) -> str:
     context = _load_context()
-    latest_run = context["latest_run"]
-    latest_report = context["latest_report"]
-    latest_source = _latest_report_data_source(latest_report)
-    approvals = [approval for approval in context["approvals"] if latest_run and approval.run_id == latest_run.run_id]
-    approval_status = approvals[0].status.value if approvals else "none"
-    all_candidates = _candidate_rows(latest_run.output_paths.get("all") if latest_run else None, limit=None)
-    mega_candidates = _candidate_rows(latest_run.output_paths.get("mega_rock") if latest_run else None, limit=1)
-    large_candidates = _candidate_rows(latest_run.output_paths.get("large_cap") if latest_run else None, limit=11)
-    small_candidates = _candidate_rows(latest_run.output_paths.get("small_cap") if latest_run else None, limit=11)
-    mega_pick = _top_candidate(mega_candidates) or _top_candidate(all_candidates)
-    slot_count = (1 if mega_pick else 0) + len(large_candidates) + len(small_candidates)
-    warnings = _picks_board_warnings(mega_pick, large_candidates, small_candidates)
-    data_mode = latest_run.data_mode.upper() if latest_run else "NONE"
+    board = approved_picks_board(context["connection"], context["settings"].output_dir)
+    mega_pick = board.mega_pick
+    large_candidates = list(board.large_candidates)
+    small_candidates = list(board.small_candidates)
+    slot_count = board.slot_count
+    warnings = list(board.warnings)
+    data_mode = board.data_mode
 
     content = f"""
     {_status_banner(status_message)}
@@ -1974,7 +2052,7 @@ def render_greenrock_picks_board(status_message: str | None = None) -> str:
         {_greenrock_brand_block()}
         <p class="eyebrow">GreenRock Analysts</p>
         <h1>Picks Board</h1>
-        <p>Local research dashboard for the latest approval-gated report run.</p>
+        <p>Local research dashboard sourced only from the most recent approved GreenRock report.</p>
       </div>
       <div class="picks-stamp">
         <span class="badge data-mode">{_safe(data_mode)} DATA</span>
@@ -1992,16 +2070,16 @@ def render_greenrock_picks_board(status_message: str | None = None) -> str:
       <a class="button secondary" href="/greenrock/discovery">Discovery Workflow</a>
     </section>
     <section class="board-meta">
-      {_attention_card("neutral", _safe(latest_run.run_id if latest_run else "none"), "Latest Run", _safe(latest_source or "No data source yet"))}
-      {_attention_card(_approval_color(approvals[0] if approvals else None), _safe(approval_status), "Approval Status", "Human gate remains mandatory")}
-      {_attention_card("green" if latest_report else "yellow", _safe(data_mode), "Data Mode", "Mock vs real is explicitly labeled")}
+      {_attention_card("green" if board.has_picks else "yellow", _safe(board.source_run_id or "none"), "Approved Report", "Board changes only after approval")}
+      {_attention_card("green" if board.has_picks else "yellow", "approved" if board.has_picks else "none", "Approval Status", "Approval does not trigger distribution")}
+      {_attention_card("green" if board.has_picks else "yellow", _safe(data_mode), "Data Mode", "From approved report artifacts")}
       {_attention_card("neutral", f"{slot_count}/23", "Selected Pick Count", "Mega 1, large 11, small/mid 11")}
     </section>
     <section class="board-meta">
       {_attention_card("neutral", "Configured", "Source Universe / Watchlist", "Mega Rock pool, large-cap watchlist, small/mid watchlist")}
       {_attention_card("green", "$1T+", "Mega Rock Eligibility", "Market cap must be at least $1T")}
       {_attention_card("neutral", "Planned", "Full-Market Scanner", "Current real mode ranks configured watchlists")}
-      {_attention_card("neutral", _safe(latest_source or "none"), "Data Source", "Provider label from latest report")}
+      {_attention_card("neutral", _safe(board.report_path or "none"), "Approved Report Path", "Shown for local review only")}
     </section>
     {_picks_warning_panel(warnings)}
     <section class="mega-pick">
@@ -2510,6 +2588,50 @@ def render_greenrock_staging_generation_confirmation(status_message: str | None 
     return _page("Confirm Staging Draft", content, active="/greenrock/staging")
 
 
+def render_greenrock_staging_replacement_confirmation(plan, source_list: str, notes: str, status_message: str | None = None) -> str:
+    candidate_rows = "".join(
+        "<tr>"
+        f"<td><label><input type='radio' name='replace_ticker' value='{_safe(row.get('ticker', ''))}' required> <strong>{_safe(row.get('ticker', ''))}</strong></label></td>"
+        f"<td>{_safe(row.get('greenrock_score', ''))}</td>"
+        f"<td>{_safe(row.get('confidence', ''))}</td>"
+        f"<td>{_safe(row.get('guardrail', ''))}</td>"
+        f"<td>{_safe(row.get('notes', ''))}</td>"
+        "</tr>"
+        for row in plan.candidates
+    )
+    content = f"""
+    {_status_banner(status_message)}
+    <section class="hero compact greenrock-hero">
+      {_greenrock_brand_block()}
+      <p class="eyebrow">Smart Staging Replacement</p>
+      <h1>Choose One Candidate To Replace</h1>
+      <p>{_safe(plan.label)} is full. Atlas will stage {_safe(plan.ticker)} only after you choose the exact current candidate to replace.</p>
+    </section>
+    <section class="panel warning-panel">
+      <div class="section-head">
+        <h2>{_safe(plan.label)}</h2>
+        <span class="badge pending">{_safe(str(plan.current_count))}/{_safe(str(plan.target))} staged</span>
+      </div>
+      <form method="post" action="/greenrock/staging/replace">
+        <input type="hidden" name="ticker" value="{_safe(plan.ticker)}">
+        <input type="hidden" name="bucket" value="{_safe(plan.bucket)}">
+        <input type="hidden" name="source_list" value="{_safe(source_list)}">
+        <input type="hidden" name="notes" value="{_safe(notes)}">
+        <input type="hidden" name="expected_tickers" value="{_safe(','.join(plan.current_tickers))}">
+        <table class="compact-candidate-table">
+          <thead><tr><th>Replace</th><th>Score</th><th>Confidence</th><th>Guardrail</th><th>Notes</th></tr></thead>
+          <tbody>{candidate_rows}</tbody>
+        </table>
+        <div class="action-row">
+          <button type="submit">Replace Selected Candidate</button>
+          <a class="button secondary" href="/greenrock/staging">Cancel</a>
+        </div>
+      </form>
+    </section>
+    """
+    return _page("Confirm Staging Replacement", content, active="/greenrock/staging")
+
+
 def run_greenrock_scan_from_browser(population: str) -> str:
     settings = get_settings()
     try:
@@ -2607,10 +2729,49 @@ def stage_greenrock_scan_tickers(scan_id: str, tickers: tuple[str, ...], bucket:
 def stage_greenrock_candidate(ticker: str, bucket: str, source_list: str = "manual", notes: str = "") -> str:
     settings = get_settings()
     try:
+        plan = plan_staged_candidate_addition(settings.output_dir, ticker, bucket, source_list=source_list)
+        if plan.action == "replace_required":
+            return render_greenrock_staging_replacement_confirmation(plan, source_list, notes)
+        if plan.action == "duplicate":
+            return render_greenrock_staging(f"Staging blocked: {plan.message}")
         row = add_staged_candidate(settings.output_dir, ticker, bucket, source_list=source_list, notes=notes)
         status = f"{row['ticker']} staged as {STAGING_BUCKET_LABELS[row['staged_bucket']]}."
     except ValueError as error:
         status = f"Staging blocked: {error}"
+    return render_greenrock_staging(status)
+
+
+def replace_greenrock_staging_candidate(
+    ticker: str,
+    bucket: str,
+    replace_ticker: str,
+    expected_tickers: str,
+    source_list: str = "manual",
+    notes: str = "",
+) -> str:
+    settings = get_settings()
+    expected = tuple(item.strip() for item in expected_tickers.split(",") if item.strip())
+    try:
+        row = replace_staged_candidate(
+            settings.output_dir,
+            ticker,
+            bucket,
+            replace_ticker,
+            expected,
+            source_list=source_list,
+            notes=notes,
+        )
+        db_path = initialize_database(settings.db_path)
+        with connect(db_path) as connection:
+            create_audit_log(
+                connection,
+                actor="greenrock_staging",
+                action="staging_candidate_replaced",
+                detail=f"section={row['staged_bucket']}; incoming={row['ticker']}; replaced={replace_ticker.strip().upper()}",
+            )
+        status = f"{row['ticker']} replaced {replace_ticker.strip().upper()} in {STAGING_BUCKET_LABELS[row['staged_bucket']]}."
+    except ValueError as error:
+        status = f"Replacement blocked: {error}"
     return render_greenrock_staging(status)
 
 
@@ -4455,6 +4616,11 @@ def _row_score(row: dict[str, str]) -> float:
 def _mega_pick_card(row: dict[str, str] | None) -> str:
     if not row:
         return "<p class='empty'>No Mega Rock pick available yet. Run a GreenRock report first.</p>"
+    source = row.get("source_list", "")
+    scan_id = row.get("source_scan_id", "")
+    source_detail = source if source and source != "Unavailable in approved report" else "approved report"
+    if scan_id and scan_id != "Unavailable in approved report":
+        source_detail = f"{source_detail} / {scan_id}"
     return f"""
     <article class="mega-card" data-pick-slot="mega">
       <div>
@@ -4466,15 +4632,20 @@ def _mega_pick_card(row: dict[str, str] | None) -> str:
         <div><dt>GreenRock Score</dt><dd>{_safe(row.get('score', ''))}</dd></div>
         <div><dt>Price</dt><dd>{_format_currency(row.get('latest_close', ''))}</dd></div>
         <div><dt>Market Cap</dt><dd>{_format_market_cap(row.get('market_cap', ''))}</dd></div>
-        <div><dt>RSI</dt><dd>{_safe(row.get('rsi_14', ''))}</dd></div>
-        <div><dt>52-week Low Distance</dt><dd>{_format_percent(row.get('low_proximity', ''))}</dd></div>
-        <div><dt>Bollinger Status</dt><dd>{_safe(_bollinger_status(row))}</dd></div>
-        <div><dt>Volume Acceleration</dt><dd>{_safe(_volume_acceleration(row))}</dd></div>
+        <div><dt>Confidence</dt><dd>{_safe(row.get('confidence', ''))}</dd></div>
+        <div><dt>Evidence Agreement</dt><dd>{_safe(row.get('evidence_agreement', ''))}</dd></div>
+        <div><dt>Research Priority</dt><dd>{_safe(row.get('research_priority', ''))}</dd></div>
+        <div><dt>Guardrail</dt><dd>{_safe(row.get('guardrail', ''))}</dd></div>
+        <div><dt>Approved Section</dt><dd>{_safe(row.get('market_cap_bucket', ''))}</dd></div>
+        <div><dt>Source</dt><dd>{_safe(source_detail)}</dd></div>
         <div><dt>Finviz</dt><dd>{_finviz_link(row.get('symbol', ''))}</dd></div>
       </dl>
       <div class="screened-in">
-        <h3>Why it screened in</h3>
-        {_why_screened_in(row)}
+        <h3>Approved Research Notes</h3>
+        <ul class="compact-list">
+          <li>{_safe(row.get('top_bullish_signal', ''))}</li>
+          <li>{_safe(row.get('top_caution_signal', ''))}</li>
+        </ul>
       </div>
     </article>
     """
@@ -4487,35 +4658,43 @@ def _picks_table(rows: list[dict[str, str]]) -> str:
         "<tr data-pick-slot='candidate'>"
         f"<td><strong>{_safe(row.get('symbol', ''))}</strong><br>{_finviz_link(row.get('symbol', ''))}</td>"
         f"<td>{_safe(row.get('company_name', ''))}</td>"
+        f"<td>{_safe(row.get('market_cap_bucket', ''))}</td>"
         f"<td>{_format_market_cap(row.get('market_cap', ''))}</td>"
         f"<td>{_format_currency(row.get('latest_close', ''))}</td>"
         f"<td>{_safe(row.get('score', ''))}</td>"
         f"<td><span class='badge signal'>{_safe(_candidate_signal(row))}</span></td>"
+        f"<td>{_safe(row.get('confidence', ''))}</td>"
+        f"<td>{_safe(row.get('evidence_agreement', ''))}</td>"
+        f"<td>{_safe(row.get('research_priority', ''))}</td>"
         f"<td><span class='badge selection'>{_safe(row.get('selection_label', 'Strict Pass'))}</span></td>"
         f"<td>{_safe(row.get('guardrail', 'Insufficient Data'))}</td>"
-        f"<td>{_safe(row.get('quick_ratio', 'unavailable'))}</td>"
-        f"<td>{_safe(row.get('net_cash_debt', 'unavailable'))}</td>"
-        f"<td>{_safe(row.get('share_change_percent', 'unavailable'))}</td>"
-        f"<td>{_safe(row.get('evidence_agreement', ''))}</td>"
         f"<td>{_safe(row.get('top_bullish_signal', 'none'))}</td>"
         f"<td>{_safe(row.get('top_caution_signal', 'none'))}</td>"
-        f"<td>{_safe(row.get('rsi_14', ''))}</td>"
-        f"<td>{_format_percent(row.get('low_proximity', ''))}</td>"
-        f"<td>{_safe(_bollinger_status(row))}</td>"
-        f"<td>{_safe(_volume_acceleration(row))}</td>"
-        f"<td>{_why_screened_in(row)}</td>"
+        f"<td>{_safe(row.get('source_list', ''))}</td>"
+        f"<td>{_safe(row.get('source_scan_id', ''))}</td>"
         "</tr>"
         for row in rows
     )
-    return (
-        "<table class='picks-table'><thead><tr><th>Ticker</th><th>Company</th><th>Market Cap</th>"
-        "<th>Price</th><th>GreenRock Score</th><th>Signal</th><th>Selection</th><th>Guardrail</th><th>Quick Ratio</th>"
-        "<th>Net Cash / Debt</th><th>Share Change</th><th>Evidence Agreement</th><th>Top Bullish Signal</th><th>Top Caution Signal</th>"
-        "<th>RSI</th><th>52-week Low Distance</th>"
-        "<th>Bollinger Band Status</th><th>Volume Acceleration</th><th>Why It Screened In</th></tr></thead><tbody>"
-        + body
-        + "</tbody></table>"
+    headers = (
+        "Ticker",
+        "Company",
+        "Section",
+        "Market Cap",
+        "Price",
+        "Score",
+        "Signal",
+        "Confidence",
+        "Evidence",
+        "Priority",
+        "Selection",
+        "Guardrail",
+        "Top Bullish Signal",
+        "Top Caution Signal",
+        "Source",
+        "Scan ID",
     )
+    head = "".join(f"<th>{_safe(header)}</th>" for header in headers)
+    return f"<table class='picks-table'><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
 
 
 def _scan_metadata(scan) -> dict[str, str]:

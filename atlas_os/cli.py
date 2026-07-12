@@ -49,6 +49,7 @@ from atlas_os.greenrock.market_engine import MARKET_ARCHETYPES, classify_market_
 from atlas_os.greenrock.market_pulse import stage_analyst_slate_candidates, stage_top_market_pulse_candidates
 from atlas_os.greenrock.memory import compare_ticker, load_memory_rows, memory_movers, memory_summary, movement_explanation, ticker_history
 from atlas_os.greenrock.pdf_export import render_markdown_report_to_pdf
+from atlas_os.greenrock.picks_board import approved_picks_board, approved_picks_board_diagnostics
 from atlas_os.greenrock.population import (
     ALL_POPULATION,
     GREENROCK_POPULATION_NAMES,
@@ -333,9 +334,14 @@ def build_parser() -> argparse.ArgumentParser:
         "latest-candidates",
         help="Show candidate summaries from the latest GreenRock run.",
     )
-    greenrock_subparsers.add_parser(
+    picks_board = greenrock_subparsers.add_parser(
         "picks-board",
         help="Show latest GreenRock Picks Board summary and local URL guidance.",
+    )
+    picks_board.add_argument(
+        "--diagnostics",
+        action="store_true",
+        help="Show approved-run Picks Board artifact hydration diagnostics.",
     )
     score = greenrock_subparsers.add_parser(
         "score",
@@ -1200,42 +1206,76 @@ def run_greenrock_review() -> int:
     return 0
 
 
-def run_greenrock_picks_board() -> int:
+def run_greenrock_picks_board(diagnostics: bool = False) -> int:
     settings = get_settings()
     db_path = initialize_database(settings.db_path)
     with connect(db_path) as connection:
-        latest_run = _latest_greenrock_run(connection)
-        latest_report = _latest_greenrock_report(connection)
-        approvals = _approvals_for_run(connection, latest_run.run_id) if latest_run else ()
+        if diagnostics:
+            _print_picks_board_diagnostics(connection)
+            return 0
+        board = approved_picks_board(connection, settings.output_dir)
 
-    if latest_run is None:
-        print("No GreenRock runs found. Run atlas greenrock report-draft first.")
+    if not board.has_picks:
+        print("GreenRock Picks Board")
+        print("status: empty")
+        print("source: latest approved report")
+        for warning in board.warnings:
+            print(f"warning: {warning}")
         print("Picks Board URL: http://127.0.0.1:8000/greenrock/picks")
         return 0
 
-    mega_rows = _read_candidate_rows(latest_run.output_paths.get("mega_rock"), limit=1)
-    large_rows = _read_candidate_rows(latest_run.output_paths.get("large_cap"), limit=11)
-    small_rows = _read_candidate_rows(latest_run.output_paths.get("small_cap"), limit=11)
-    all_rows = _read_candidate_rows(latest_run.output_paths.get("all"), limit=None)
-    mega = mega_rows[0] if mega_rows else (all_rows[0] if all_rows else None)
-    approval_status = approvals[0].status.value if approvals else "none"
-    slot_count = (1 if mega else 0) + len(large_rows) + len(small_rows)
-
     print("GreenRock Picks Board")
     print(f"url: http://127.0.0.1:8000/greenrock/picks")
-    print(f"latest_run: {latest_run.run_id}")
-    print(f"data_mode: {latest_run.data_mode.upper()}")
-    print(f"approval_status: {approval_status}")
-    print(f"report_path: {latest_report.content_path if latest_report else 'none'}")
-    print(f"visible_slots: {slot_count}/23")
-    print(f"mega_rock_count: {1 if mega else 0}/1")
-    print(f"large_cap_count: {len(large_rows)}/11")
-    print(f"small_mid_count: {len(small_rows)}/11")
-    print(f"mega_rock_pick: {_candidate_summary(mega) if mega else 'none'}")
-    _print_candidate_rows("Large-cap picks", large_rows)
-    _print_candidate_rows("Small/mid-cap picks", small_rows)
+    print(f"source_policy: latest approved report only")
+    print(f"approved_report_run: {board.source_run_id or 'none'}")
+    print(f"data_mode: {board.data_mode}")
+    print(f"approval_status: approved")
+    print(f"report_path: {board.report_path or 'none'}")
+    print(f"visible_slots: {board.slot_count}/23")
+    print(f"mega_rock_count: {1 if board.mega_pick else 0}/1")
+    print(f"large_cap_count: {len(board.large_candidates)}/11")
+    print(f"small_mid_count: {len(board.small_candidates)}/11")
+    for warning in board.warnings:
+        print(f"warning: {warning}")
+    print(f"mega_rock_pick: {_candidate_summary(board.mega_pick) if board.mega_pick else 'none'}")
+    _print_candidate_rows("Large-cap picks", list(board.large_candidates))
+    _print_candidate_rows("Small/mid-cap picks", list(board.small_candidates))
     print("Start the local Command Center with: atlas serve")
     return 0
+
+
+def _print_picks_board_diagnostics(connection) -> None:
+    diagnostics = approved_picks_board_diagnostics(connection)
+    print("GreenRock Picks Board Diagnostics")
+    print(f"report_id: {diagnostics.report_id or 'none'}")
+    print(f"approval_id: {diagnostics.approval_id or 'none'}")
+    print(f"run_id: {diagnostics.run_id or 'none'}")
+    print(f"report_path: {diagnostics.report_path or 'none'}")
+    if diagnostics.warning:
+        print(f"warning: {diagnostics.warning}")
+    print("artifacts:")
+    for artifact in diagnostics.artifact_diagnostics:
+        headers = ",".join(artifact.headers) if artifact.headers else "none"
+        print(
+            f"  {artifact.artifact_type}: path={artifact.path} exists={_yes_no(artifact.exists)} "
+            f"rows={artifact.row_count} issue={artifact.issue or 'none'}"
+        )
+        print(f"    headers: {headers}")
+        if artifact.representative_row:
+            preview = {key: artifact.representative_row.get(key, "") for key in artifact.headers[:8]}
+            print(f"    representative_row: {preview}")
+    print(f"matched_ticker_count: {diagnostics.matched_ticker_count}")
+    print(f"unmatched_ticker_count: {diagnostics.unmatched_ticker_count}")
+    print(f"populated_field_count: {diagnostics.populated_field_count}")
+    print(f"unavailable_field_count: {diagnostics.unavailable_field_count}")
+    print("field_mapping:")
+    for field in diagnostics.field_diagnostics:
+        if field.populated_count or field.unavailable_count:
+            reasons = ", ".join(f"{key}={value}" for key, value in field.reasons.items()) or "none"
+            print(
+                f"  {field.field}: columns={','.join(field.source_columns)} "
+                f"populated={field.populated_count} unavailable={field.unavailable_count} reasons={reasons}"
+            )
 
 
 def run_greenrock_report_workbench() -> int:
@@ -3162,11 +3202,12 @@ def _print_candidate_rows(title: str, rows: list[dict[str, str]]) -> None:
     if not rows:
         print("No candidate rows found.")
         return
-    print("symbol score evidence_agreement market_cap top_bullish_signal top_caution_signal company")
+    print("symbol score confidence evidence_agreement priority market_cap top_bullish_signal top_caution_signal company")
     for row in rows:
         print(
             f"{row.get('symbol', '')} {row.get('score', '')} "
-            f"{row.get('evidence_agreement', '')} {row.get('market_cap', '')} "
+            f"{row.get('confidence', '')} {row.get('evidence_agreement', '')} "
+            f"{row.get('research_priority', '')} {row.get('market_cap', '')} "
             f"{row.get('top_bullish_signal', 'none')} | {row.get('top_caution_signal', 'none')} | "
             f"{row.get('company_name', '')}"
         )
@@ -3269,7 +3310,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.greenrock_command == "latest-candidates":
             return run_greenrock_latest_candidates()
         if args.greenrock_command == "picks-board":
-            return run_greenrock_picks_board()
+            return run_greenrock_picks_board(diagnostics=args.diagnostics)
         if args.greenrock_command == "market-pulse":
             return run_greenrock_market_pulse()
         if args.greenrock_command == "stage-from-market-pulse":

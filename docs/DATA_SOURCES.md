@@ -108,7 +108,9 @@ python3 -m pip install -e ".[market-data]"
 
 ## Picks Board Data Source
 
-The GreenRock Picks Board at `/greenrock/picks` reads the latest run-specific CSV artifacts and inherits that run's data mode and report data source. A mock run displays a MOCK data badge. A real yfinance run displays REAL data and the report source, such as `yfinance:greenrock_watchlists`.
+The GreenRock Picks Board at `/greenrock/picks` reads the run-specific CSV artifacts for the most recent approved GreenRock report and inherits that approved report's data mode and report data source. A mock report displays a MOCK data badge. A real yfinance report displays REAL data and the report source, such as `yfinance:greenrock_watchlists`.
+
+Board hydration is same-run only. Atlas starts with the approved report's section CSVs, may fill empty fields from that same run's `candidates_csv`, supports compatible historical aliases such as `greenrock_score` and `price`, and marks truly missing values as unavailable in the approved report. Staging-sourced approved reports currently persist curated research fields such as score, confidence, evidence agreement, research priority, guardrail, source scan, approved section, and top signals; market cap, price, RSI, moving averages, and volume remain unavailable when those columns are blank in the approved-run CSVs. Operators can run `atlas greenrock picks-board --diagnostics` to inspect the selected approval, artifact roles, headers, ticker matches, populated counts, and unavailable-field reasons. The board does not use current scans, newer unapproved reports, live providers, or unrelated staging state to fill approved historical board values.
 
 The board targets:
 
@@ -124,7 +126,7 @@ Real-data market-cap buckets:
 
 If any section is incomplete, the board and report show a data quality warning.
 
-Current report mode ranks configured watchlists. Population scans are available as a broader upstream research source, but report picks do not source from scans yet.
+Draft reports, current scans, staging changes, and unapproved workflows do not update the board. If no approved report exists, Atlas shows an intentional empty state. If the newest approved report cannot be parsed safely, Atlas preserves the last valid approved board when one exists and surfaces a warning.
 
 Finviz links are plain outbound reference links in the format:
 

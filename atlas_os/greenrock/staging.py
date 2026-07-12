@@ -122,6 +122,19 @@ class StagingEnrichmentResult:
         return self.errors
 
 
+@dataclass(frozen=True)
+class StagingReplacementPlan:
+    action: str
+    ticker: str
+    bucket: str
+    label: str
+    target: int | None
+    current_count: int
+    current_tickers: tuple[str, ...]
+    candidates: tuple[dict[str, str], ...]
+    message: str
+
+
 def staging_path(output_dir: Path) -> Path:
     return Path(output_dir) / "greenrock" / "staging" / "report_candidates.csv"
 
@@ -216,6 +229,110 @@ def add_staged_candidate(
         existing.append(row)
     save_staged_candidates(output_dir, tuple(existing))
     return row
+
+
+def plan_staged_candidate_addition(
+    output_dir: Path,
+    ticker: str,
+    bucket: str,
+    source_list: str = "manual",
+) -> StagingReplacementPlan:
+    normalized_ticker = _normalize_ticker(ticker)
+    normalized_bucket = _normalize_bucket(bucket)
+    if not normalized_ticker:
+        raise ValueError("Ticker is required.")
+    metadata = _candidate_metadata(output_dir, normalized_ticker, source_list)
+    _validate_staging_bucket(normalized_ticker, normalized_bucket, metadata)
+    rows = load_staged_candidates(output_dir)
+    existing = next((row for row in rows if row["ticker"] == normalized_ticker), None)
+    if existing:
+        return StagingReplacementPlan(
+            action="duplicate",
+            ticker=normalized_ticker,
+            bucket=normalized_bucket,
+            label=STAGING_BUCKET_LABELS[normalized_bucket],
+            target=STAGING_BUCKET_TARGETS.get(normalized_bucket),
+            current_count=sum(1 for row in rows if row.get("staged_bucket") == normalized_bucket),
+            current_tickers=tuple(row["ticker"] for row in rows if row.get("staged_bucket") == normalized_bucket),
+            candidates=tuple(row for row in rows if row.get("staged_bucket") == normalized_bucket),
+            message=f"{normalized_ticker} is already staged in {STAGING_BUCKET_LABELS.get(existing['staged_bucket'], existing['staged_bucket'])}.",
+        )
+    bucket_rows = tuple(row for row in rows if row.get("staged_bucket") == normalized_bucket)
+    target = STAGING_BUCKET_TARGETS.get(normalized_bucket)
+    if target is not None and len(bucket_rows) >= target:
+        return StagingReplacementPlan(
+            action="replace_required",
+            ticker=normalized_ticker,
+            bucket=normalized_bucket,
+            label=STAGING_BUCKET_LABELS[normalized_bucket],
+            target=target,
+            current_count=len(bucket_rows),
+            current_tickers=tuple(row["ticker"] for row in bucket_rows),
+            candidates=bucket_rows,
+            message=f"{STAGING_BUCKET_LABELS[normalized_bucket]} is full. Choose a staged candidate to replace.",
+        )
+    return StagingReplacementPlan(
+        action="add",
+        ticker=normalized_ticker,
+        bucket=normalized_bucket,
+        label=STAGING_BUCKET_LABELS[normalized_bucket],
+        target=target,
+        current_count=len(bucket_rows),
+        current_tickers=tuple(row["ticker"] for row in bucket_rows),
+        candidates=bucket_rows,
+        message=f"{normalized_ticker} can be staged in {STAGING_BUCKET_LABELS[normalized_bucket]}.",
+    )
+
+
+def replace_staged_candidate(
+    output_dir: Path,
+    ticker: str,
+    bucket: str,
+    replace_ticker: str,
+    expected_tickers: tuple[str, ...],
+    source_list: str = "manual",
+    notes: str = "",
+) -> dict[str, str]:
+    normalized_ticker = _normalize_ticker(ticker)
+    normalized_bucket = _normalize_bucket(bucket)
+    normalized_replace = _normalize_ticker(replace_ticker)
+    expected = tuple(_normalize_ticker(item) for item in expected_tickers if _normalize_ticker(item))
+    if not normalized_ticker or not normalized_replace:
+        raise ValueError("Incoming and replaced tickers are required.")
+    rows = list(load_staged_candidates(output_dir))
+    bucket_rows = tuple(row for row in rows if row.get("staged_bucket") == normalized_bucket)
+    current_tickers = tuple(row["ticker"] for row in bucket_rows)
+    if expected and current_tickers != expected:
+        raise ValueError("Staging section changed. Review the current section before replacing a candidate.")
+    if normalized_replace not in current_tickers:
+        raise ValueError(f"{normalized_replace} is not staged in {STAGING_BUCKET_LABELS[normalized_bucket]}.")
+    if any(row["ticker"] == normalized_ticker and row["ticker"] != normalized_replace for row in rows):
+        raise ValueError(f"{normalized_ticker} is already staged. Remove or move the existing row first.")
+    metadata = _candidate_metadata(output_dir, normalized_ticker, source_list)
+    _validate_staging_bucket(normalized_ticker, normalized_bucket, metadata)
+    replacement = _normalize_row(
+        {
+            "ticker": normalized_ticker,
+            "staged_bucket": normalized_bucket,
+            "source_list": source_list or metadata.get("source_list", "manual"),
+            "source_scan_id": metadata.get("source_scan_id", ""),
+            "greenrock_score": metadata.get("greenrock_score", ""),
+            "confidence": metadata.get("confidence", ""),
+            "evidence_agreement": metadata.get("evidence_agreement", ""),
+            "guardrail": metadata.get("guardrail", ""),
+            "research_priority": metadata.get("research_priority", ""),
+            "top_bullish_signal": metadata.get("top_bullish_signal", ""),
+            "top_caution_signal": metadata.get("top_caution_signal", ""),
+            "staged_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "notes": notes,
+        }
+    )
+    for index, row in enumerate(rows):
+        if row["ticker"] == normalized_replace and row.get("staged_bucket") == normalized_bucket:
+            rows[index] = replacement
+            save_staged_candidates(output_dir, tuple(rows))
+            return replacement
+    raise ValueError("Replacement target disappeared. Review the current staging section.")
 
 
 def add_staged_scan_candidate(

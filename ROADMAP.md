@@ -6,7 +6,7 @@ Atlas OS is a governed research operating system that improves human decision-ma
 
 ## Current Release
 
-**v0.8.1 — Executive UX**
+**v0.9.0 — Executive Workflow**
 
 Status: **Feature complete; pending Managing Director review**
 
@@ -22,11 +22,18 @@ Status: **Feature complete; pending Managing Director review**
   Established the GreenRock report-agent registry, dependency-based workflow orchestration, structured local handoffs, workflow state tracking, approval/rejection records, and Chief-of-Staff summary.
 - **v0.8.1 — Executive UX**
   Polishes the GreenRock web interface into an executive workflow review experience with human-readable status, workflow history, agent step presentation, warning deduplication, clearer actions, and safer error handling.
+- **v0.9.0 — Executive Workflow**
+  Makes The Wall and GreenRock workflow more authoritative with approved-report Picks Board persistence, Smart Staging Replacement, persistent executive context, and a unified executive timeline while preserving the local-only safety boundary.
 
 These are capability groupings and retrospective release classifications. They do not claim that exact historical Git releases or tags existed before v0.8.
 
-## Current v0.8 Capabilities
+## Current v0.9 Capabilities
 
+- The Wall as the primary executive command surface
+- Approved-report Picks Board source of truth
+- Smart Staging Replacement for full report sections
+- Persistent local executive context
+- Unified executive timeline
 - Agent registry
 - Dependency-based workflow orchestration
 - Structured handoffs
@@ -44,19 +51,9 @@ These are capability groupings and retrospective release classifications. They d
 
 ## Next Release
 
-**v0.9 — Publishing and Distribution Foundations**
+**v1.0 — GreenRock Operating System**
 
-Planning-level scope may include:
-
-- Approved-content publishing queue
-- Publish artifact preparation
-- Delivery audit records
-- Subscriber routing abstractions
-- Compliance validation gates
-- Explicit post-approval execution command
-- Shopify integration planning
-
-External distribution remains disabled until separately implemented, tested, reviewed, and approved.
+Planning-level scope should focus on hardening the governed GreenRock operating loop, documentation, compatibility, and operator confidence. External distribution remains disabled until separately implemented, tested, reviewed, and approved.
 
 ## Target Release
 

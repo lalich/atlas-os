@@ -1,8 +1,8 @@
 # Atlas OS
 
-## Atlas OS v0.8.1
+## Atlas OS v0.9.0
 
-**Executive UX**
+**Executive Workflow**
 
 Status: **Feature complete; pending Managing Director user review**
 
@@ -13,6 +13,7 @@ Core safety boundary: Atlas OS does not send email, publish externally, contact 
 Release references:
 
 - [Roadmap](ROADMAP.md)
+- [Release Notes v0.9.0](docs/RELEASE_NOTES_v0.9.0.md)
 - [Release Notes v0.8.1](docs/RELEASE_NOTES_v0.8.1.md)
 - [Release Notes v0.8.0-alpha](docs/RELEASE_NOTES_v0.8.0-alpha.md)
 - [GreenRock Report Agent Orchestration](docs/GREENROCK_REPORT_AGENT_ORCHESTRATION.md)
@@ -265,6 +266,8 @@ atlas greenrock report-from-staging --allow-underfilled
 
 Staging stores candidates locally at `.atlas/output/greenrock/staging/report_candidates.csv` with bucket, source, score, confidence, Evidence Agreement, Guardrail, Research Priority, top signals, timestamp, and operator notes. Staging does not create reports, approvals, PDFs, emails, publications, or client-facing artifacts.
 
+When a report section is already full, browser staging presents a Smart Staging Replacement decision instead of forcing a manual remove-then-add sequence. Atlas shows only the current candidates in the target section, identifies the incoming ticker, requires an explicit replacement choice, blocks stale confirmations if the section changed, and records the replacement in the local audit trail.
+
 Staged candidates should have analytics before clean report generation. Use `atlas greenrock staging enrich` to refresh missing Score, Confidence, Evidence Agreement, Guardrail, Research Priority, and top signal fields from the configured real provider. `atlas greenrock staging ready` reports both section fill status and analytics completeness.
 
 `atlas greenrock report-from-staging` creates the preferred approval-gated GreenRock draft from staged candidates. It blocks underfilled sections by default; use `--allow-underfilled` to generate a draft that clearly shows readiness warnings. Missing analytics are a separate gate: run `atlas greenrock staging enrich` first, or use `--allow-missing-analytics` only for an intentional draft with explicit data warnings. Scanner populations do not automatically feed reports: staged candidates are the curated bridge. Browser review is available at `/greenrock/reports/<run_id>/review`.
@@ -358,7 +361,7 @@ atlas greenrock universe validate
 
 ## GreenRock Picks Board
 
-The Picks Board is a local dashboard view for the latest GreenRock report run:
+The Picks Board is a local dashboard view sourced only from the most recent approved GreenRock report:
 
 ```bash
 atlas greenrock picks-board
@@ -371,7 +374,9 @@ Then open:
 http://127.0.0.1:8000/greenrock/picks
 ```
 
-The board displays one featured Mega Rock pick, eleven large-cap picks, and eleven small/mid-cap picks when available. Current report mode ranks configured watchlists; population scans are available separately and do not replace the report workflow yet. It includes ticker, company name, market cap, price, GreenRock Score, Evidence Agreement, top bullish signal, top caution signal, signal label, concise Fundamental Guardrail fields, RSI, 52-week low distance, Bollinger Band status, volume acceleration, screening rationale, and Finviz links. The page is local-only, clearly labels MOCK or REAL data, and does not publish externally.
+The board displays one featured Mega Rock pick, eleven large-cap picks, and eleven small/mid-cap picks when available. It changes only after a newer report receives Managing Director approval. Draft reports, current scans, staging changes, and unapproved workflows do not alter the board. Atlas hydrates visible fields from canonical CSV artifacts belonging to the same approved report run; missing approved-run values display as unavailable rather than being filled from newer data. Staging-sourced approved reports carry curated research fields such as score, confidence, evidence agreement, research priority, guardrail, source scan, section, and top signals; financial and technical fields remain unavailable when that approved run did not store them. Use `atlas greenrock picks-board --diagnostics` to inspect the selected approved run, artifact headers, ticker matches, and unavailable-field reasons. If no approved report exists, Atlas shows an intentional empty state; if a newer approved report cannot hydrate safely, Atlas preserves the last valid approved board where available and surfaces a warning.
+
+The board includes ticker, company name, approved section, market cap and price when present in the approved run, GreenRock Score, signal label, confidence, Evidence Agreement, research priority, Fundamental Guardrail, top bullish signal, top caution signal, source metadata, and Finviz links. The page is local-only, clearly labels MOCK or REAL data, and does not publish externally.
 
 ## GreenRock Score Calculator
 
@@ -585,7 +590,7 @@ atlas wall
 
 Open `http://127.0.0.1:8000/atlas/wall` for the office-TV view. It auto-refreshes every 60 seconds and shows agent cards, provider status, latest cycle state, Atlas Inbox counts, Market Pulse summary, Morning Brief snapshot status, pending approvals, and PDF readiness. The wall Run Agent Cycle button uses the default `use_latest_scan` policy and remains confirmation-gated.
 
-Wall Mode is designed for a common 16:9 office TV, especially 1920x1080. The layout keeps the header, action row, Daily Intelligence, top priorities, cycle signals, Atlas Inbox, Agent Room, and bottom status grid in one fixed viewport where possible. Text is clipped to summaries, Inbox/Priority lists are capped, and any external integrations are placeholders only.
+Wall Mode is designed for a common 16:9 office TV, especially 1920x1080. The layout keeps the header, action row, Daily Intelligence, top priorities, cycle signals, Atlas Inbox, Agent Room, and bottom status grid in one fixed viewport where possible. It is the fast daily-intelligence surface; deeper Executive Context, Approved Picks State, and Executive Timeline live in Command Center. Text is clipped to summaries, Inbox/Priority lists are capped, and any external integrations are placeholders only.
 
 Future Integrations are local-only notes for now:
 
@@ -642,7 +647,7 @@ Open `http://127.0.0.1:8000`, review the Atlas Inbox, then use the GreenRock Rep
 
 Atlas OS is organized into three operator layers:
 
-- Executive: Command Center, Morning Brief, Atlas Inbox, and Wall. Morning Brief explains what changed, Atlas Inbox is the operator action queue, and Wall is the passive command-center display.
+- Executive: Command Center, Morning Brief, Atlas Inbox, and Wall. Command Center contains the deeper executive context below Atlas Inbox; Morning Brief explains what changed, Atlas Inbox is the operator action queue, and Wall is the fast passive daily-intelligence display.
 - Operations: PT Projects & Tasks, Agents, and Reports. PT consolidates project lifecycle and manual task work under `/pt` with a default `Atlas OS / General Operations` project.
 - Divisions: GreenRock tools are nested under the GreenRock division: Home, Picks, Universe, Market Pulse, Scanner, Watchlists, Staging, Score, and Report Workbench.
 

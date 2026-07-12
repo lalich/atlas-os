@@ -29,19 +29,18 @@ class UserExperienceCliTests(unittest.TestCase):
 
         self.assertEqual(version_code, 0)
         self.assertEqual(roadmap_code, 0)
-        self.assertEqual(version_output.strip().splitlines(), ["Atlas OS v0.8.1", "Executive UX"])
+        self.assertEqual(version_output.strip().splitlines(), ["Atlas OS v0.9.0", "Executive Workflow"])
         self.assertIn("Atlas OS Roadmap", roadmap_output)
         self.assertIn("Current Release", roadmap_output)
-        self.assertIn("v0.8.1 — Executive UX", roadmap_output)
-        self.assertIn("v0.9 — Publishing and Distribution Foundations", roadmap_output)
+        self.assertIn("v0.9.0 — Executive Workflow", roadmap_output)
         self.assertIn("v1.0 — GreenRock Operating System", roadmap_output)
         self.assertFalse((root / "atlas.db").exists())
         self.assertFalse((root / "output").exists())
 
     def test_release_version_source_is_available_and_synchronized(self) -> None:
         self.assertTrue(version_file_path().exists())
-        self.assertEqual(load_version(), "0.8.1")
-        self.assertEqual(__version__, "0.8.1")
+        self.assertEqual(load_version(), "0.9.0")
+        self.assertEqual(__version__, "0.9.0")
 
     def test_release_commands_are_visible_in_help(self) -> None:
         root_help, root_code = _run_cli_raw(["--help"])

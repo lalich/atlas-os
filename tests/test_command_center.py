@@ -20,8 +20,10 @@ from atlas_os.agents.tasks import list_agent_tasks
 from atlas_os.agents.updates import list_agent_updates
 from atlas_os.cli import build_parser, main
 from atlas_os.config import get_settings
-from atlas_os.core.approvals import list_approvals
+from atlas_os.core.approvals import approve_approval, create_approval_request, list_approvals
+from atlas_os.core.audit_log import list_audit_logs
 from atlas_os.core.artifacts import create_artifact, list_artifacts
+from atlas_os.core.reports import create_report_record
 from atlas_os.core.manual_tasks import list_manual_tasks
 from atlas_os.daily import get_daily_brief, list_daily_briefs, run_daily_cycle
 from atlas_os.greenrock.market_pulse import stage_analyst_slate_candidates
@@ -31,12 +33,13 @@ from atlas_os.db.database import connect, initialize_database
 from atlas_os.greenrock.market_data import MarketDataProvider
 from atlas_os.greenrock.models import FundamentalSnapshot, PriceBar
 from atlas_os.greenrock.pdf_export import render_markdown_report_to_pdf
+from atlas_os.greenrock.picks_board import UNAVAILABLE, approved_picks_board, approved_picks_board_diagnostics
 from atlas_os.greenrock.report import build_sample_report
 from atlas_os.greenrock.report_agents import run_greenrock_report_agent_workflow
 from atlas_os.greenrock.sample_data import load_mock_stocks
 from atlas_os.greenrock.scanner import ScanResult, latest_scan, run_population_scan
 from atlas_os.greenrock.score import calculate_score_preview, confidence_band
-from atlas_os.greenrock.staging import add_staged_candidate, enrich_staged_candidates, load_staged_candidates
+from atlas_os.greenrock.staging import add_staged_candidate, enrich_staged_candidates, load_staged_candidates, save_staged_candidates
 from atlas_os.greenrock.universe import add_ticker_to_greenrock_list
 from atlas_os.inbox import create_inbox_item, list_inbox_items
 from atlas_os.web_app import _report_tickers, dispatch_request
@@ -154,7 +157,7 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("Run Executive Workflow", response.body)
         self.assertIn("GreenRock Research", response.body)
         self.assertIn("Powered by Atlas OS", response.body)
-        self.assertIn("v0.8.1", response.body)
+        self.assertIn("v0.9.0", response.body)
         self.assertIn("Agent Progress", detail.body)
         self.assertIn("Market Scout", detail.body)
         self.assertIn("Derivative Analyst", detail.body)
@@ -216,10 +219,14 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("Source path", response.body)
 
     def test_greenrock_picks_route_returns_200_with_finviz_links_and_23_slots(self) -> None:
-        with _isolated_env():
+        with _isolated_env() as root:
             main(["greenrock", "report-draft"])
+            with connect(initialize_database(root / "atlas.db")) as connection:
+                approve_approval(connection, list_approvals(connection)[0].id)
             response = dispatch_request("GET", "/greenrock/picks")
-            cli_exit = main(["greenrock", "picks-board"])
+            cli_output = io.StringIO()
+            with redirect_stdout(cli_output):
+                cli_exit = main(["greenrock", "picks-board"])
 
         self.assertEqual(response.status, 200)
         self.assertEqual(cli_exit, 0)
@@ -230,12 +237,297 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("https://finviz.com/quote.ashx?t=", response.body)
         self.assertIn("Powered by Atlas OS", response.body)
         self.assertIn("MOCK DATA", response.body)
+        self.assertIn("Board changes only after approval", response.body)
         self.assertIn("GreenRock Score Calculator", response.body)
         self.assertIn("/static/greenrock_logo.png", response.body)
         self.assertIn("Mega Rock: 1/1", response.body)
         self.assertIn("Large Cap: 11/11", response.body)
         self.assertIn("Small/Mid: 11/11", response.body)
+        self.assertIn("Large Cap Mock 04", response.body)
+        self.assertIn("Large Cap Mock 04", cli_output.getvalue())
+        self.assertIn("LC04 83.48", cli_output.getvalue())
+        self.assertIn("$10.0B", response.body)
+        self.assertIn("$63.16", response.body)
+        self.assertIn("82.45", response.body)
         self.assertEqual(response.body.count("data-pick-slot="), 23)
+
+    def test_greenrock_picks_board_requires_approved_report_and_ignores_newer_draft(self) -> None:
+        with _isolated_env() as root:
+            empty = dispatch_request("GET", "/greenrock/picks")
+            main(["greenrock", "report-draft"])
+            with connect(initialize_database(root / "atlas.db")) as connection:
+                approval = list_approvals(connection)[0]
+                approve_approval(connection, approval.id)
+                approved_run = approval.run_id
+            approved = dispatch_request("GET", "/greenrock/picks")
+            main(["greenrock", "report-draft"])
+            newer_draft = dispatch_request("GET", "/greenrock/picks")
+
+        self.assertIn("No approved GreenRock report exists yet", empty.body)
+        self.assertIn(approved_run, approved.body)
+        self.assertIn(approved_run, newer_draft.body)
+        self.assertEqual(newer_draft.body.count("data-pick-slot="), 23)
+
+    def test_greenrock_picks_board_ignores_newer_staging_changes(self) -> None:
+        with _isolated_env() as root:
+            main(["greenrock", "report-draft"])
+            with connect(initialize_database(root / "atlas.db")) as connection:
+                approval = list_approvals(connection)[0]
+                approve_approval(connection, approval.id)
+                approved_run = approval.run_id
+            approved = dispatch_request("GET", "/greenrock/picks")
+            add_staged_candidate(root / "output", "ZZZX", "large_cap", notes="newer staging edit")
+            staged_change = dispatch_request("GET", "/greenrock/picks")
+
+        self.assertIn(approved_run, approved.body)
+        self.assertIn(approved_run, staged_change.body)
+        self.assertNotIn("ZZZX", staged_change.body)
+        self.assertEqual(staged_change.body.count("data-pick-slot="), 23)
+
+    def test_greenrock_picks_board_hydrates_aliases_and_same_run_fallback_fields(self) -> None:
+        with _isolated_env() as root:
+            main(["greenrock", "report-draft"])
+            with connect(initialize_database(root / "atlas.db")) as connection:
+                approval = list_approvals(connection)[0]
+                approve_approval(connection, approval.id)
+                run = next(item for item in list_workflow_runs(connection) if item.run_id == approval.run_id)
+                section_path = Path(run.output_paths["large_cap"])
+                section_path.write_text("ticker\nLC04\n", encoding="utf-8")
+                board = approved_picks_board(connection, root / "output")
+
+            row = board.large_candidates[0]
+
+        self.assertEqual(row["symbol"], "LC04")
+        self.assertEqual(row["company_name"], "Large Cap Mock 04")
+        self.assertEqual(row["market_cap"], "10000000000")
+        self.assertEqual(row["latest_close"], "63.16")
+        self.assertEqual(row["score"], "83.48")
+
+    def test_greenrock_picks_board_supports_legacy_alias_columns(self) -> None:
+        with _isolated_env() as root:
+            main(["greenrock", "report-draft"])
+            with connect(initialize_database(root / "atlas.db")) as connection:
+                approval = list_approvals(connection)[0]
+                approve_approval(connection, approval.id)
+                run = next(item for item in list_workflow_runs(connection) if item.run_id == approval.run_id)
+                Path(run.output_paths["large_cap"]).write_text(
+                    (
+                        "ticker,company,market_capitalization,greenrock_score,price,"
+                        "fundamental_guardrail,greenrock_confidence,evidence_agreement\n"
+                        "AL1,Alias Co,12300000000,77.7,19.25,Acceptable,66.6,55.5\n"
+                    ),
+                    encoding="utf-8",
+                )
+                board = approved_picks_board(connection, root / "output")
+
+            row = board.large_candidates[0]
+
+        self.assertEqual(row["symbol"], "AL1")
+        self.assertEqual(row["company_name"], "Alias Co")
+        self.assertEqual(row["market_cap"], "12300000000")
+        self.assertEqual(row["score"], "77.7")
+        self.assertEqual(row["latest_close"], "19.25")
+        self.assertEqual(row["guardrail"], "Acceptable")
+        self.assertEqual(row["confidence"], "66.6")
+
+    def test_greenrock_picks_board_missing_or_malformed_fields_are_unavailable(self) -> None:
+        with _isolated_env() as root:
+            main(["greenrock", "report-draft"])
+            with connect(initialize_database(root / "atlas.db")) as connection:
+                approval = list_approvals(connection)[0]
+                approve_approval(connection, approval.id)
+                run = next(item for item in list_workflow_runs(connection) if item.run_id == approval.run_id)
+                Path(run.output_paths["large_cap"]).write_text(
+                    "symbol,company_name,market_cap,score,latest_close\nMISS,Missing Fixture,not-a-number,bad,also-bad\n",
+                    encoding="utf-8",
+                )
+                board = approved_picks_board(connection, root / "output")
+
+            row = board.large_candidates[0]
+
+        self.assertEqual(row["symbol"], "MISS")
+        self.assertEqual(row["company_name"], "Missing Fixture")
+        self.assertEqual(row["market_cap"], UNAVAILABLE)
+        self.assertEqual(row["score"], UNAVAILABLE)
+        self.assertEqual(row["latest_close"], UNAVAILABLE)
+
+    def test_greenrock_picks_board_uses_deterministic_fallback_when_timestamps_match(self) -> None:
+        with _isolated_env() as root:
+            main(["greenrock", "report-draft"])
+            main(["greenrock", "report-draft"])
+            with connect(initialize_database(root / "atlas.db")) as connection:
+                approvals = list_approvals(connection)
+                approve_approval(connection, approvals[0].id)
+                approve_approval(connection, approvals[1].id)
+                shared_timestamp = "2026-01-01T19:00:00+00:00"
+                connection.execute("UPDATE reports SET created_at = ?, approved_at = ?", (shared_timestamp, shared_timestamp))
+                connection.commit()
+                expected_run = connection.execute("SELECT run_id FROM reports ORDER BY id DESC LIMIT 1").fetchone()["run_id"]
+            response = dispatch_request("GET", "/greenrock/picks")
+
+        self.assertIn(expected_run, response.body)
+        self.assertEqual(response.body.count("data-pick-slot="), 23)
+
+    def test_greenrock_picks_board_newer_approved_replaces_and_malformed_preserves_prior(self) -> None:
+        with _isolated_env() as root:
+            main(["greenrock", "report-draft"])
+            with connect(initialize_database(root / "atlas.db")) as connection:
+                first_approval = list_approvals(connection)[0]
+                approve_approval(connection, first_approval.id)
+                first_run = first_approval.run_id
+            first_board = dispatch_request("GET", "/greenrock/picks")
+
+            main(["greenrock", "report-draft"])
+            with connect(initialize_database(root / "atlas.db")) as connection:
+                second_approval = next(item for item in list_approvals(connection) if item.status.value == "pending")
+                approve_approval(connection, second_approval.id)
+                second_run = second_approval.run_id
+                second_workflow = next(item for item in list_workflow_runs(connection) if item.run_id == second_run)
+            second_board = dispatch_request("GET", "/greenrock/picks")
+
+            main(["greenrock", "report-draft"])
+            with connect(initialize_database(root / "atlas.db")) as connection:
+                bad_approval = next(item for item in list_approvals(connection) if item.status.value == "pending")
+                approve_approval(connection, bad_approval.id)
+                bad_workflow = next(item for item in list_workflow_runs(connection) if item.run_id == bad_approval.run_id)
+            Path(bad_workflow.output_paths["large_cap"]).write_text("bad_header\nbad\n", encoding="utf-8")
+            malformed_board = dispatch_request("GET", "/greenrock/picks")
+
+        self.assertIn(first_run, first_board.body)
+        self.assertIn(second_run, second_board.body)
+        self.assertNotIn(first_run, second_board.body)
+        self.assertIn(second_run, malformed_board.body)
+        self.assertIn("Preserving last valid approved board", malformed_board.body)
+        self.assertIn("Large Cap Mock 04", malformed_board.body)
+
+    def test_greenrock_picks_board_does_not_use_newer_unapproved_run_fields(self) -> None:
+        with _isolated_env() as root:
+            main(["greenrock", "report-draft"])
+            with connect(initialize_database(root / "atlas.db")) as connection:
+                first_approval = list_approvals(connection)[0]
+                approve_approval(connection, first_approval.id)
+                approved_run = first_approval.run_id
+            main(["greenrock", "report-draft"])
+            with connect(initialize_database(root / "atlas.db")) as connection:
+                draft_approval = next(item for item in list_approvals(connection) if item.status.value == "pending")
+                draft_run = next(item for item in list_workflow_runs(connection) if item.run_id == draft_approval.run_id)
+                Path(draft_run.output_paths["large_cap"]).write_text(
+                    "symbol,company_name,market_cap,score,latest_close\nLC04,Unapproved Leak,999999999999,99.9,999.99\n",
+                    encoding="utf-8",
+                )
+                board = approved_picks_board(connection, root / "output")
+
+            row = next(item for item in board.large_candidates if item["symbol"] == "LC04")
+
+        self.assertEqual(board.source_run_id, approved_run)
+        self.assertEqual(row["company_name"], "Large Cap Mock 04")
+        self.assertNotEqual(row["company_name"], "Unapproved Leak")
+
+    def test_greenrock_picks_board_hydrates_real_staging_report_schema(self) -> None:
+        with _isolated_env() as root:
+            save_staged_candidates(
+                root / "output",
+                (
+                    _staged_row(
+                        "REAL1",
+                        "large",
+                        score="83.62",
+                        confidence="73.12",
+                        evidence="51.78",
+                        guardrail="Red Flag",
+                        priority="This Week",
+                        bullish="52-week low proximity: Price is only 0.0% above the 52-week low.",
+                        caution="Fundamental guardrails: Fundamental guardrail is Red Flag.",
+                        source_scan_id="scan-all-20260702054749",
+                    ),
+                ),
+            )
+            main(["greenrock", "report-from-staging", "--allow-underfilled", "--allow-missing-analytics"])
+            with connect(initialize_database(root / "atlas.db")) as connection:
+                approval = list_approvals(connection)[0]
+                approve_approval(connection, approval.id)
+                board = approved_picks_board(connection, root / "output")
+                diagnostics = approved_picks_board_diagnostics(connection)
+            response = dispatch_request("GET", "/greenrock/picks")
+            cli_output = io.StringIO()
+            with redirect_stdout(cli_output):
+                cli_exit = main(["greenrock", "picks-board"])
+
+        row = board.large_candidates[0]
+        candidate_artifact = next(item for item in diagnostics.artifact_diagnostics if item.artifact_type == "candidates_csv")
+
+        self.assertEqual(cli_exit, 0)
+        self.assertEqual(row["symbol"], "REAL1")
+        self.assertEqual(row["score"], "83.62")
+        self.assertEqual(row["confidence"], "73.12")
+        self.assertEqual(row["evidence_agreement"], "51.78")
+        self.assertEqual(row["guardrail"], "Red Flag")
+        self.assertEqual(row["research_priority"], "This Week")
+        self.assertEqual(row["source_scan_id"], "scan-all-20260702054749")
+        self.assertEqual(row["market_cap"], UNAVAILABLE)
+        self.assertEqual(row["latest_close"], UNAVAILABLE)
+        self.assertIn("confidence", candidate_artifact.headers)
+        self.assertIn("research_priority", candidate_artifact.headers)
+        self.assertEqual(diagnostics.matched_ticker_count, 1)
+        self.assertEqual(diagnostics.unmatched_ticker_count, 0)
+        self.assertIn("REAL1", response.body)
+        self.assertIn("This Week", response.body)
+        self.assertIn("73.12", response.body)
+        self.assertIn("REAL1 83.62 73.12 51.78 This Week", cli_output.getvalue())
+
+    def test_greenrock_picks_board_diagnostics_reports_unmatched_ticker(self) -> None:
+        with _isolated_env() as root:
+            main(["greenrock", "report-draft"])
+            with connect(initialize_database(root / "atlas.db")) as connection:
+                approval = list_approvals(connection)[0]
+                approve_approval(connection, approval.id)
+                run = next(item for item in list_workflow_runs(connection) if item.run_id == approval.run_id)
+                Path(run.output_paths["mega_rock"]).write_text("symbol,score\n", encoding="utf-8")
+                Path(run.output_paths["large_cap"]).write_text("symbol,score\nORPHAN,88.8\n", encoding="utf-8")
+                Path(run.output_paths["small_cap"]).write_text("symbol,score\n", encoding="utf-8")
+                Path(run.output_paths["all"]).write_text("symbol,score\nOTHER,77.7\n", encoding="utf-8")
+                diagnostics = approved_picks_board_diagnostics(connection)
+
+        self.assertEqual(diagnostics.matched_ticker_count, 0)
+        self.assertEqual(diagnostics.unmatched_ticker_count, 1)
+
+    def test_greenrock_picks_board_diagnostics_reports_missing_run_id(self) -> None:
+        with _isolated_env() as root:
+            with connect(initialize_database(root / "atlas.db")) as connection:
+                approval = create_approval_request(connection, "report_draft_md", "missing_run.md")
+                approve_approval(connection, approval.id)
+                create_report_record(
+                    connection,
+                    title="Approved Missing Run",
+                    report_type="greenrock_monthly_draft",
+                    content_path="missing_run.md",
+                    run_id=None,
+                    artifact_id=None,
+                    approval_id=approval.id,
+                    status="approved",
+                )
+                diagnostics = approved_picks_board_diagnostics(connection)
+
+        self.assertEqual(diagnostics.warning, "Approved report has no workflow run.")
+        self.assertIsNone(diagnostics.run_id)
+
+    def test_greenrock_picks_board_diagnostics_cli_reports_real_artifact_headers(self) -> None:
+        with _isolated_env() as root:
+            save_staged_candidates(root / "output", (_staged_row("REAL2", "large", score="80.1", confidence="70.2"),))
+            main(["greenrock", "report-from-staging", "--allow-underfilled", "--allow-missing-analytics"])
+            with connect(initialize_database(root / "atlas.db")) as connection:
+                approve_approval(connection, list_approvals(connection)[0].id)
+            cli_output = io.StringIO()
+            with redirect_stdout(cli_output):
+                exit_code = main(["greenrock", "picks-board", "--diagnostics"])
+
+        output = cli_output.getvalue()
+        self.assertEqual(exit_code, 0)
+        self.assertIn("GreenRock Picks Board Diagnostics", output)
+        self.assertIn("candidates_csv", output)
+        self.assertIn("headers: symbol,company_name,market_cap_bucket,market_cap,score", output)
+        self.assertIn("confidence", output)
+        self.assertIn("matched_ticker_count: 1", output)
 
     def test_greenrock_universe_route_returns_200(self) -> None:
         with _isolated_env():
@@ -292,6 +584,67 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("<th class=\"metric-col\">Conf.</th>", response.body)
         self.assertIn("<th class=\"actions-col\">Actions</th>", response.body)
 
+    def test_greenrock_staging_full_section_requires_explicit_replacement_and_audits(self) -> None:
+        with _isolated_env() as root:
+            add_staged_candidate(root / "output", "AAA", "mega", notes="first")
+            confirm = dispatch_request("POST", "/greenrock/staging/add", "ticker=BBB&bucket=mega&source_list=manual&notes=better")
+            stale = dispatch_request(
+                "POST",
+                "/greenrock/staging/replace",
+                "ticker=BBB&bucket=mega&replace_ticker=AAA&expected_tickers=WRONG&source_list=manual&notes=better",
+            )
+            replaced = dispatch_request(
+                "POST",
+                "/greenrock/staging/replace",
+                "ticker=BBB&bucket=mega&replace_ticker=AAA&expected_tickers=AAA&source_list=manual&notes=better",
+            )
+            rows = load_staged_candidates(root / "output")
+            with connect(initialize_database(root / "atlas.db")) as connection:
+                audit_actions = {event.action for event in list_audit_logs(connection)}
+
+        self.assertIn("Choose One Candidate To Replace", confirm.body)
+        self.assertIn("AAA", confirm.body)
+        self.assertIn("BBB", confirm.body)
+        self.assertIn("Cancel", confirm.body)
+        self.assertIn("Replacement blocked", stale.body)
+        self.assertEqual(tuple(row["ticker"] for row in rows), ("BBB",))
+        self.assertIn("BBB replaced AAA", replaced.body)
+        self.assertIn("staging_candidate_replaced", audit_actions)
+
+    def test_greenrock_staging_replacement_works_for_all_report_sections(self) -> None:
+        section_configs = (
+            ("mega", "MEG", 1, 0),
+            ("large", "LRG", 11, 5),
+            ("small_mid", "SML", 11, 5),
+        )
+        for bucket, prefix, target, replace_index in section_configs:
+            with self.subTest(bucket=bucket), _isolated_env() as root:
+                tickers = tuple(f"{prefix}{index:02d}" for index in range(target))
+                for ticker in tickers:
+                    add_staged_candidate(root / "output", ticker, bucket)
+                incoming = f"{prefix}99"
+                confirm = dispatch_request(
+                    "POST",
+                    "/greenrock/staging/add",
+                    f"ticker={incoming}&bucket={bucket}&source_list=manual&notes=upgrade",
+                )
+                replaced_ticker = tickers[replace_index]
+                replaced = dispatch_request(
+                    "POST",
+                    "/greenrock/staging/replace",
+                    (
+                        f"ticker={incoming}&bucket={bucket}&replace_ticker={replaced_ticker}"
+                        f"&expected_tickers={','.join(tickers)}&source_list=manual&notes=upgrade"
+                    ),
+                )
+                rows = tuple(row for row in load_staged_candidates(root / "output") if row["staged_bucket"] == bucket)
+                self.assertIn("Choose One Candidate To Replace", confirm.body)
+                self.assertIn(incoming, confirm.body)
+                self.assertEqual(len(rows), target)
+                self.assertEqual(rows[replace_index]["ticker"], incoming)
+                self.assertNotIn(replaced_ticker, tuple(row["ticker"] for row in rows))
+                self.assertIn(f"{incoming} replaced {replaced_ticker}", replaced.body)
+
     def test_discovery_route_preserved_and_scanner_owns_flow(self) -> None:
         with _isolated_env():
             discovery = dispatch_request("GET", "/greenrock/discovery")
@@ -308,11 +661,12 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("Scanner discovers and ranks", scanner.body)
 
     def test_picks_route_shows_incomplete_section_warnings(self) -> None:
-        with _isolated_env():
+        with _isolated_env() as root:
             main(["greenrock", "report-draft"])
             settings = get_settings()
             with connect(initialize_database(settings.db_path)) as connection:
                 run = list_workflow_runs(connection)[0]
+                approve_approval(connection, list_approvals(connection)[0].id)
             small_csv = Path(run.output_paths["small_cap"])
             header = small_csv.read_text(encoding="utf-8").splitlines()[0]
             small_csv.write_text(header + "\n", encoding="utf-8")
@@ -816,6 +1170,8 @@ ABOVE AND ATLAS ANY AIDS ALL are ordinary prose words in this disclosure.
         self.assertIn("local time", response.body)
         self.assertIn("wall-actions-top", response.body)
         self.assertIn("wall-intel-row", response.body)
+        self.assertLess(response.body.index("wall-intel-row"), response.body.index("Agent Room"))
+        self.assertLess(response.body.index("Atlas Inbox"), response.body.index("System Status"))
         self.assertIn("Agent Room", response.body)
         self.assertIn("wall-bottom-split", response.body)
         self.assertIn("system-status-panel", response.body)
@@ -853,8 +1209,26 @@ ABOVE AND ATLAS ANY AIDS ALL are ordinary prose words in this disclosure.
         self.assertIn("Future Integrations", response.body)
         self.assertIn("Slack planned", response.body)
         self.assertIn("Email / publishing / trading disabled", response.body)
+        self.assertNotIn("wall-executive-row", response.body)
+        self.assertNotIn("Executive Context", response.body)
+        self.assertNotIn("Executive Timeline", response.body)
+        self.assertNotIn("Approved Picks State", response.body)
         self.assertNotIn("<h2>Morning Brief</h2>", response.body)
         self.assertNotIn("<h2>Market Pulse</h2>", response.body)
+
+    def test_command_center_shows_recent_workflow_context_below_inbox(self) -> None:
+        with _isolated_env() as root:
+            workflow_id = _create_report_agent_workflow(root)
+            detail = dispatch_request("GET", f"/greenrock/agents/workflows/{workflow_id}")
+            command_center = dispatch_request("GET", "/")
+
+        self.assertEqual(detail.status, 200)
+        self.assertIn("Executive Context", command_center.body)
+        self.assertIn("Approved Picks State", command_center.body)
+        self.assertIn("Executive Timeline", command_center.body)
+        self.assertIn(workflow_id[:13], command_center.body)
+        self.assertLess(command_center.body.index("<h2>Atlas Inbox</h2>"), command_center.body.index("<h2>Executive Context</h2>"))
+        self.assertLess(command_center.body.index("<h2>Executive Timeline</h2>"), command_center.body.index("<h2>Morning Brief</h2>"))
 
     def test_wall_after_agent_cycle_uses_compact_status_and_short_timestamps(self) -> None:
         with _isolated_env():
@@ -1558,6 +1932,36 @@ class ConflictingSignalProvider(MarketDataProvider):
             for index in range(1512)
         )
         return (replace(stock, prices=bars),)
+
+
+def _staged_row(
+    ticker: str,
+    bucket: str,
+    *,
+    score: str = "",
+    confidence: str = "",
+    evidence: str = "",
+    guardrail: str = "",
+    priority: str = "",
+    bullish: str = "",
+    caution: str = "",
+    source_scan_id: str = "",
+) -> dict[str, str]:
+    return {
+        "ticker": ticker,
+        "staged_bucket": bucket,
+        "source_list": "latest_scan",
+        "source_scan_id": source_scan_id,
+        "greenrock_score": score,
+        "confidence": confidence,
+        "evidence_agreement": evidence,
+        "guardrail": guardrail,
+        "research_priority": priority,
+        "top_bullish_signal": bullish,
+        "top_caution_signal": caution,
+        "staged_at": "2026-07-10T07:22:01+00:00",
+        "notes": "Atlas Analyst slate candidate",
+    }
 
 
 def _run_cli_capture(args: list[str]) -> str:

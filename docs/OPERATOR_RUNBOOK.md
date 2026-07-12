@@ -150,7 +150,7 @@ The browser **Run Agent Cycle** action requires confirmation and creates local r
 
 Use `/atlas/wall` for the office-TV Mission Control view. It auto-refreshes every 60 seconds and shows provider status, latest agent cycle status, the Agent Room, Inbox counts, newest Inbox items, Market Pulse summary, approvals, report readiness, and PDF readiness. The wall Run Agent Cycle button uses `use_latest_scan` and requires confirmation.
 
-Wall Mode is tuned for a 16:9 office TV, especially 1920x1080. The intended first-screen layout is:
+Wall Mode is tuned for a 16:9 office TV, especially 1920x1080. It is the fast daily-intelligence surface. Deeper Executive Context, Approved Picks State, and Executive Timeline live in Command Center below Atlas Inbox. The intended first-screen layout is:
 
 1. Atlas/GreenRock header, clock, and provider status.
 2. Action row: Run Agent Cycle, Morning Brief, Atlas Inbox, Market Pulse, Agents, Report Workbench.
@@ -281,7 +281,9 @@ Open:
 http://127.0.0.1:8000/greenrock/picks
 ```
 
-The Picks Board shows one featured Mega Rock pick, eleven large-cap picks, and eleven small/mid-cap picks when available. It includes section counts, Finviz links, GreenRock Scores, signal labels, technical fields, and a clear mock/real data badge. Current report mode supports the preferred staging-sourced draft flow and legacy watchlist draft flow. Population scans should be reviewed and staged before report generation. If a section is incomplete, Atlas shows a data quality warning. It is local-only and not a publishing surface.
+The Picks Board shows one featured Mega Rock pick, eleven large-cap picks, and eleven small/mid-cap picks when available. It is populated only from the most recent approved GreenRock report and remains unchanged when newer drafts, scans, staging edits, or unapproved workflows exist. Atlas hydrates display fields from artifacts belonging to that same approved run, including compatible field aliases, and shows unavailable states for values not present in approved-run artifacts. Staging-sourced approved reports show persisted research fields such as score, confidence, evidence agreement, research priority, guardrail, source scan, section, and top signals; market cap, price, and technical fields remain unavailable when the approved run did not store them. If no approved report exists, Atlas shows an intentional empty state. If a newer approved report cannot hydrate safely, Atlas preserves the last valid approved board where available and shows a warning.
+
+The board includes section counts, Finviz links, GreenRock Scores, signal labels, approved research fields, and a clear mock/real data badge. Use `atlas greenrock picks-board --diagnostics` to inspect selected artifacts, headers, ticker matches, and unavailable-field reasons. It is local-only and not a publishing surface.
 
 Real-data buckets are Mega Rock at $1T+, large cap from $10B to below $1T, and small/mid below $10B.
 
@@ -401,6 +403,8 @@ atlas greenrock report-analyst-slate --overwrite-staging
 ```
 
 Without `--allow-underfilled`, Atlas blocks underfilled staging buckets. With it, Atlas creates a normal approval-gated draft and includes readiness warnings. Overfilled staging buckets show guidance to select the final 1/11/11 and include a confirmed trim-to-top-ranked helper. Scanner populations do not automatically feed reports; staged candidates are the curated bridge.
+
+When browser staging adds a candidate to a full Mega Rock, Large Cap, or Small/Mid report section, Atlas opens a Smart Staging Replacement confirmation. Choose the current staged candidate to replace or cancel. Atlas blocks duplicate incoming tickers, detects stale confirmations if the section changed, preserves deterministic row order, and writes a local audit event for completed replacements.
 
 Missing analytics are a separate readiness issue from underfilled sections. Manually staged names or list-sourced names may need Score, Confidence, Evidence Agreement, Guardrail, Research Priority, and signal fields refreshed before report generation. Run `atlas greenrock staging enrich` for staged candidates only, or use `atlas greenrock staging enrich --scope visible` / the browser **Refresh / Enrich Staging Page** button to refresh staged candidates, watchlist candidates, and latest scan candidates shown on the staging page. Watchlist and latest scan refresh values are stored in a local display cache at `.atlas/output/greenrock/staging/enrichment_cache.csv` when mutating their source records is not appropriate. If the real provider is missing, enrichment fails cleanly with setup instructions and creates no report, approval, artifact, PDF, email, Slack message, publication, trade, or client file.
 

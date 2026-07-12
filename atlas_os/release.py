@@ -5,8 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 
-RELEASE_NAME = "Executive UX"
-NEXT_RELEASE = "v0.9 — Publishing and Distribution Foundations"
+RELEASE_NAME = "Executive Workflow"
+NEXT_RELEASE = "v1.0 — GreenRock Operating System"
 TARGET_RELEASE = "v1.0 — GreenRock Operating System"
 
 
