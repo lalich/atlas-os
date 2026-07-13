@@ -1,10 +1,10 @@
 # Atlas OS
 
-## Atlas OS v0.9.0
+## Atlas OS v0.9.1
 
 **Executive Workflow**
 
-Status: **Feature complete; pending Managing Director user review**
+Status: **Release hardening complete; Managing Director review recorded**
 
 Atlas OS is a governed, local-first research operating system for GreenRock and Atlas workflows. It coordinates research, derivative context, report drafting, local agent handoffs, audit visibility, and explicit human approval without replacing the Managing Director's authority.
 
@@ -13,6 +13,7 @@ Core safety boundary: Atlas OS does not send email, publish externally, contact 
 Release references:
 
 - [Roadmap](ROADMAP.md)
+- [Release Notes v0.9.1](docs/RELEASE_NOTES_v0.9.1.md)
 - [Release Notes v0.9.0](docs/RELEASE_NOTES_v0.9.0.md)
 - [Release Notes v0.8.1](docs/RELEASE_NOTES_v0.8.1.md)
 - [Release Notes v0.8.0-alpha](docs/RELEASE_NOTES_v0.8.0-alpha.md)

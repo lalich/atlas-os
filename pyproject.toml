@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "atlas-os"
-version = "0.1.0"
-description = "Atlas OS local-first automation scaffold for approved AI workflows."
+version = "0.9.1"
+description = "Atlas OS governed local-first research operating system."
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [

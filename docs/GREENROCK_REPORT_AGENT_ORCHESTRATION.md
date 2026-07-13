@@ -1,6 +1,6 @@
 # GreenRock Report Agent Orchestration
 
-Atlas OS v0.8.0-alpha adds a local-only orchestration workflow for GreenRock draft report generation.
+Atlas OS includes a local-only orchestration workflow for GreenRock draft report generation. It was introduced in v0.8.0-alpha and remains supported in v0.9.1.
 
 Originally implemented during Phase 11C and released as Atlas OS v0.8.0-alpha.
 
@@ -23,7 +23,7 @@ The runnable local workflow is deterministic:
 6. `report_writer`
 7. `atlas_chief_of_staff`
 
-`distribution_agent` is registered for future checks only. It is disabled and non-runnable in v0.8.0-alpha.
+`distribution_agent` is registered for future checks only. It remains disabled and non-runnable in v0.9.1.
 
 ## Workflow States
 
@@ -44,7 +44,7 @@ Successful report-agent runs stop at `awaiting_human_approval`.
 
 Each workflow writes local JSON under:
 
-`output/greenrock/report_agents/<workflow-id>/`
+`.atlas/output/greenrock/report_agents/<workflow-id>/`
 
 Each agent handoff records:
 
@@ -61,9 +61,9 @@ The report writer uses the existing review-only dry-run report generator and wri
 
 ## Approval Records
 
-Approval and rejection require explicit CLI actions. v0.8.0-alpha writes append-only approval decision records to:
+Approval and rejection require explicit CLI actions. Atlas writes append-only approval decision records to:
 
-`output/greenrock/report_agents/approvals.jsonl`
+`.atlas/output/greenrock/report_agents/approvals.jsonl`
 
 Duplicate decisions for the same workflow are blocked.
 

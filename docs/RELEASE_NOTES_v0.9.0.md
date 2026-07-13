@@ -2,7 +2,7 @@
 
 ## Release Status
 
-Feature complete; pending Managing Director review.
+Feature complete; Managing Director review completed July 12, 2026.
 
 ## Summary
 

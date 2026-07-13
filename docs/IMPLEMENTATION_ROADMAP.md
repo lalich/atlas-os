@@ -1,8 +1,12 @@
 # Atlas OS — Implementation Roadmap
 
-**Version:** 1.0  
-**Status:** Draft  
-**First Target:** GreenRock Analysts Monthly Report
+**Version:** Historical planning baseline
+
+**Status:** Superseded for active sequencing by [`../ROADMAP.md`](../ROADMAP.md)
+
+**Original Target:** GreenRock Analysts Monthly Report
+
+> This document preserves the initial phase plan and is not a current statement of implemented capability. Several listed deliverables are now complete, while external LLM services, automatic distribution, and production deployment remain outside the current Atlas OS safety boundary. Use the root roadmap for current release status and next-version scope.
 
 ---
 

@@ -157,7 +157,7 @@ class CommandCenterTests(unittest.TestCase):
         self.assertIn("Run Executive Workflow", response.body)
         self.assertIn("GreenRock Research", response.body)
         self.assertIn("Powered by Atlas OS", response.body)
-        self.assertIn("v0.9.0", response.body)
+        self.assertIn("v0.9.1", response.body)
         self.assertIn("Agent Progress", detail.body)
         self.assertIn("Market Scout", detail.body)
         self.assertIn("Derivative Analyst", detail.body)

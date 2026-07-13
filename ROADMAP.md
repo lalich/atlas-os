@@ -6,9 +6,9 @@ Atlas OS is a governed research operating system that improves human decision-ma
 
 ## Current Release
 
-**v0.9.0 — Executive Workflow**
+**v0.9.1 — Executive Workflow**
 
-Status: **Feature complete; pending Managing Director review**
+Status: **Release hardening complete; Managing Director review recorded**
 
 ## Completed Release History
 
@@ -24,6 +24,8 @@ Status: **Feature complete; pending Managing Director review**
   Polishes the GreenRock web interface into an executive workflow review experience with human-readable status, workflow history, agent step presentation, warning deduplication, clearer actions, and safer error handling.
 - **v0.9.0 — Executive Workflow**
   Makes The Wall and GreenRock workflow more authoritative with approved-report Picks Board persistence, Smart Staging Replacement, persistent executive context, and a unified executive timeline while preserving the local-only safety boundary.
+- **v0.9.1 — Executive Workflow hardening**
+  Records Managing Director review, aligns package and runtime version metadata, reconciles current documentation, and corrects local artifact path guidance before v1.0 development.
 
 These are capability groupings and retrospective release classifications. They do not claim that exact historical Git releases or tags existed before v0.8.
 

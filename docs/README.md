@@ -1,8 +1,10 @@
 # Atlas OS — Documentation Index
 
-Atlas OS is a multi-division AI operating system supporting GreenRock Asset Management, Variance Capital, The Bat Signal, and GreenRock Insurance.
+Atlas OS is a governed, local-first research operating system. GreenRock is the active implemented division; Variance Capital, The Bat Signal, and GreenRock Insurance remain future expansion areas.
 
-**First implementation target:** GreenRock Analysts Monthly Report.
+**Current release:** v0.9.1 — Executive Workflow hardening
+
+**Next release:** v1.0 — GreenRock Operating System
 
 ---
 
@@ -15,8 +17,8 @@ Atlas OS is a multi-division AI operating system supporting GreenRock Asset Mana
 | [REPOSITORY_STRUCTURE.md](./REPOSITORY_STRUCTURE.md) | Repository layout — directory tree, module ownership, import rules, naming conventions |
 | [AGENT_ARCHITECTURE.md](./AGENT_ARCHITECTURE.md) | Agent design — lifecycle, GreenRock MVP roster, prompt standards, coordination patterns |
 | [ATLAS_AGENTS.md](./ATLAS_AGENTS.md) | Phase 8A local agent orchestration — responsibilities, safe mode, Atlas Inbox, run records |
-| [IMPLEMENTATION_ROADMAP.md](./IMPLEMENTATION_ROADMAP.md) | Phased build plan — Phase 0 through Phase 4 with milestones and decision gates |
-| [FUTURE_EXPANSION_ROADMAP.md](./FUTURE_EXPANSION_ROADMAP.md) | Long-term vision — division expansion, platform features, 24-month targets |
+| [IMPLEMENTATION_ROADMAP.md](./IMPLEMENTATION_ROADMAP.md) | Historical implementation baseline; superseded for current sequencing by the root roadmap |
+| [FUTURE_EXPANSION_ROADMAP.md](./FUTURE_EXPANSION_ROADMAP.md) | Noncommittal long-range expansion ideas; not an active release plan |
 
 ## Summary
 
@@ -30,10 +32,10 @@ Atlas OS is a multi-division AI operating system supporting GreenRock Asset Mana
 
 | Division | Directory | Status |
 |----------|-----------|--------|
-| GreenRock Analysts | `greenrock/` | **Phase 1 — MVP target** |
-| The Bat Signal | `batsignal/` | Phase 3 |
-| GreenRock Insurance | `insurance/` | Phase 4 |
-| Variance Capital | `variance/` (planned) | Future — scope TBD |
+| GreenRock | `atlas_os/greenrock/` | **Active — v0.9.1** |
+| The Bat Signal | Not implemented | Future consideration |
+| GreenRock Insurance | Not implemented | Future consideration |
+| Variance Capital | Not implemented | Future consideration |
 
 ---
 

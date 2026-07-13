@@ -1,7 +1,10 @@
 # Atlas OS — Future Expansion Roadmap
 
-**Version:** 1.0  
-**Status:** Draft
+**Version:** Long-range planning reference
+
+**Status:** Noncommittal; not an active release plan
+
+> This document preserves expansion ideas from the original Atlas OS planning cycle. It does not override the governed, local-only safety boundary or the active release sequence in [`../ROADMAP.md`](../ROADMAP.md). Any external distribution, publishing, commerce, subscriber, brokerage, or client-contact capability requires separate design, testing, review, and explicit approval.
 
 ---
 
@@ -9,7 +12,7 @@
 
 Atlas OS evolves from a single-division report automation tool (GreenRock Analysts) into a **multi-division AI operating system** orchestrating research, betting intelligence, insurance operations, and investment management workflows — all governed by a unified approval layer and shared agent infrastructure.
 
-This document covers expansion beyond Phase 1 MVP through a 24-month horizon.
+This document records possible expansion beyond the GreenRock operating system. Dates and phases below are historical planning assumptions, not commitments.
 
 ---
 
